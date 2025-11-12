@@ -154,7 +154,8 @@ def handle_embedding_request():
         }
         response = requests.post(endpoint_url, headers=headers, json=modified_payload)
         response.raise_for_status()
-        return jsonify(format_embedding_response(response.json(), model)), 200
+        return response.json(), 200
+        # return jsonify(format_embedding_response(response.json(), model)), 200
     except Exception as e:
         logging.error(f"Error handling embedding request: {e}")
         return jsonify({"error": str(e)}), 500
@@ -164,9 +165,11 @@ def handle_embedding_service_call(input_text, model, encoding_format):
     selected_url, subaccount_name, _, model = load_balance_url(model)
     
     # Construct the URL based on the official SAP AI Core documentation
+    # This is critical or it will return 404
+    # TODO: Follow up on what is the required
     api_version = "2023-05-15"
     endpoint_url = f"{selected_url.rstrip('/')}/embeddings?api-version={api_version}"
-    
+
     # The payload for the embeddings endpoint only requires the input.
     modified_payload = {"input": input_text}
         
