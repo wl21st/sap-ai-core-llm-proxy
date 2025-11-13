@@ -1,5 +1,5 @@
 # Configuration
-APP_NAME := sap_ai_proxy_server
+APP_NAME := sap_ai_proxy
 UV := uv
 MAIN_SCRIPT := ./proxy_server.py
 ICON_FILE := assets/icon.ico
