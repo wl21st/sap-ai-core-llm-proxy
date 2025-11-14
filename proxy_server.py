@@ -126,6 +126,53 @@ def get_sapaicore_sdk_client(model_name: str):
             _bedrock_clients[model_name] = client
     return client
 
+def handle_http_429_error(http_err, context="request"):
+    """
+    Handle HTTP 429 (Too Many Requests) errors consistently across all endpoints.
+
+    Args:
+        http_err: The HTTPError exception from requests
+        context: Description of the request context for logging
+
+    Returns:
+        Flask response tuple (response_object, status_code)
+    """
+    logging.error(f"HTTP 429 Rate Limit Error for {context}")
+    logging.error(f"HTTP 429 Response Headers:")
+
+    # Dump all response headers to console for debugging
+    for header_name, header_value in http_err.response.headers.items():
+        logging.error(f"  {header_name}: {header_value}")
+
+    # Log response body if available
+    try:
+        response_body = http_err.response.text
+        logging.error(f"HTTP 429 Response Body: {response_body}")
+    except Exception as body_err:
+        logging.error(f"Could not read 429 response body: {body_err}")
+
+    # Return 429 error to client with retry information
+    error_response = {
+        "error": "Rate limit exceeded",
+        "status_code": 429,
+        "message": "Too many requests. Please retry after some time.",
+        "headers": dict(http_err.response.headers)
+    }
+
+    # Create Flask response with the original 429 headers copied
+    flask_response = jsonify(error_response)
+    flask_response.status_code = 429
+
+    # Map both x-retry-after and Retry-After headers to retry-after in response
+    for header_name, header_value in http_err.response.headers.items():
+        header_lower = header_name.lower()
+        if header_lower in ['x-retry-after', 'retry-after']:
+            flask_response.headers['Retry-After'] = header_value
+            logging.info(f"Set Retry-After header to: {header_value}")
+            break
+
+    return flask_response
+
 @app.route('/v1/embeddings', methods=['POST'])
 def handle_embedding_request():
     logging.info("Received request to /v1/embeddings")
@@ -156,6 +203,17 @@ def handle_embedding_request():
         response.raise_for_status()
         return response.json(), 200
         # return jsonify(format_embedding_response(response.json(), model)), 200
+    except requests.exceptions.HTTPError as http_err:
+        # Handle HTTP 429 (Too Many Requests) specifically
+        if http_err.response is not None and http_err.response.status_code == 429:
+            return handle_http_429_error(http_err, "embedding request")
+        else:
+            # Handle other HTTP errors
+            logging.error(f"HTTP Error handling embedding request: {http_err}")
+            if http_err.response is not None:
+                logging.error(f"HTTP Status Code: {http_err.response.status_code}")
+                logging.error(f"Response Body: {http_err.response.text}")
+            return jsonify({"error": str(http_err)}), http_err.response.status_code if http_err.response else 500
     except Exception as e:
         logging.error(f"Error handling embedding request: {e}")
         return jsonify({"error": str(e)}), 500
