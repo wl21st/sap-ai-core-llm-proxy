@@ -157,9 +157,6 @@ def handle_embedding_request():
         }
         response = requests.post(endpoint_url, headers=headers, json=modified_payload)
         response.raise_for_status()
-<<<<<<< Updated upstream
-        return jsonify(format_embedding_response(response.json(), model)), 200
-=======
         return response.json(), 200
         # return jsonify(format_embedding_response(response.json(), model)), 200
     except requests.exceptions.HTTPError as http_err:
@@ -190,16 +187,10 @@ def handle_embedding_request():
             flask_response = jsonify(error_response)
             flask_response.status_code = 429
 
-            # Copy all headers from the upstream 429 response to our response
-            # for header_name, header_value in http_err.response.headers.items():
-            #     # Skip headers that Flask manages automatically
-            #     if header_name.lower() in [
-            #         'retry-after',
-            #         'x-ratelimit-limit-requests',
-            #         'x-ratelimit-remaining-requests',
-            #         'x-ratelimit-reset-requests',
-            #         'x-request-id']:
-            #         flask_response.headers[header_name] = header_value
+            # Transform x-retry-after value into retry-after to our response
+            for header_name, header_value in http_err.response.headers.items():
+                if header_name.lower() == 'x-retry-after':
+                    flask_response.headers['Retry-After'] = header_value
 
             return flask_response
         else:
@@ -209,7 +200,6 @@ def handle_embedding_request():
                 logging.error(f"HTTP Status Code: {http_err.response.status_code}")
                 logging.error(f"Response Body: {http_err.response.text}")
             return jsonify({"error": str(http_err)}), http_err.response.status_code if http_err.response else 500
->>>>>>> Stashed changes
     except Exception as e:
         logging.error(f"Error handling embedding request: {e}")
         return jsonify({"error": str(e)}), 500
@@ -220,9 +210,11 @@ def handle_embedding_service_call(input_text, model, encoding_format):
     selected_url, subaccount_name, _, model = load_balance_url(model)
 
     # Construct the URL based on the official SAP AI Core documentation
+    # This is critical or it will return 404
+    # TODO: Follow up on what is the required
     api_version = "2023-05-15"
     endpoint_url = f"{selected_url.rstrip('/')}/embeddings?api-version={api_version}"
-    
+
     # The payload for the embeddings endpoint only requires the input.
     modified_payload = {"input": input_text}
 
