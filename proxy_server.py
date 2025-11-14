@@ -128,6 +128,54 @@ def get_sapaicore_sdk_client(model_name: str):
     return client
 
 
+def handle_http_429_error(http_err, context="request"):
+    """
+    Handle HTTP 429 (Too Many Requests) errors consistently across all endpoints.
+    
+    Args:
+        http_err: The HTTPError exception from requests
+        context: Description of the request context for logging
+        
+    Returns:
+        Flask response tuple (response_object, status_code)
+    """
+    logging.error(f"HTTP 429 Rate Limit Error for {context}")
+    logging.error(f"HTTP 429 Response Headers:")
+    
+    # Dump all response headers to console for debugging
+    for header_name, header_value in http_err.response.headers.items():
+        logging.error(f"  {header_name}: {header_value}")
+    
+    # Log response body if available
+    try:
+        response_body = http_err.response.text
+        logging.error(f"HTTP 429 Response Body: {response_body}")
+    except Exception as body_err:
+        logging.error(f"Could not read 429 response body: {body_err}")
+    
+    # Return 429 error to client with retry information
+    error_response = {
+        "error": "Rate limit exceeded",
+        "status_code": 429,
+        "message": "Too many requests. Please retry after some time.",
+        "headers": dict(http_err.response.headers)
+    }
+    
+    # Create Flask response with the original 429 headers copied
+    flask_response = jsonify(error_response)
+    flask_response.status_code = 429
+    
+    # Map both x-retry-after and Retry-After headers to retry-after in response
+    for header_name, header_value in http_err.response.headers.items():
+        header_lower = header_name.lower()
+        if header_lower in ['x-retry-after', 'retry-after']:
+            flask_response.headers['Retry-After'] = header_value
+            logging.info(f"Set Retry-After header to: {header_value}")
+            break
+    
+    return flask_response
+
+
 @app.route('/v1/embeddings', methods=['POST'])
 def handle_embedding_request():
     logging.info("Received request to /v1/embeddings")
@@ -162,37 +210,7 @@ def handle_embedding_request():
     except requests.exceptions.HTTPError as http_err:
         # Handle HTTP 429 (Too Many Requests) specifically
         if http_err.response is not None and http_err.response.status_code == 429:
-            logging.error(f"HTTP 429 Rate Limit Error for embedding request")
-            logging.error(f"HTTP 429 Response Headers:")
-            # Dump all response headers to console for debugging
-            for header_name, header_value in http_err.response.headers.items():
-                logging.error(f"  {header_name}: {header_value}")
-
-            # Log response body if available
-            try:
-                response_body = http_err.response.text
-                logging.error(f"HTTP 429 Response Body: {response_body}")
-            except Exception as body_err:
-                logging.error(f"Could not read 429 response body: {body_err}")
-
-            # Return 429 error to client with retry information
-            error_response = {
-                "error": "Rate limit exceeded",
-                "status_code": 429,
-                "message": "Too many requests. Please retry after some time.",
-                "headers": dict(http_err.response.headers)
-            }
-
-            # Create Flask response with the original 429 headers copied
-            flask_response = jsonify(error_response)
-            flask_response.status_code = 429
-
-            # Transform x-retry-after value into retry-after to our response
-            for header_name, header_value in http_err.response.headers.items():
-                if header_name.lower() == 'x-retry-after':
-                    flask_response.headers['Retry-After'] = header_value
-
-            return flask_response
+            return handle_http_429_error(http_err, "embeddings")
         else:
             # Handle other HTTP errors
             logging.error(f"HTTP Error handling embedding request: {http_err}")
