@@ -2054,6 +2054,28 @@ def proxy_claude_request():
         # Add required anthropic_version for Bedrock
         body["anthropic_version"] = "bedrock-2023-05-31"
 
+        # Remove unsupported fields for Bedrock (e.g., context_management)
+        if "context_management" in body:
+            body.pop("context_management", None)
+            logging.info("Removed unsupported field 'context_management' from request body")
+        
+
+        # Remove unsupported fields inside tools for Bedrock
+        tools_list = body.get("tools")
+        removed_count = 0
+        if isinstance(tools_list, list):
+            for idx, tool in enumerate(tools_list):
+                if isinstance(tool, dict):
+                    # Remove top-level input_examples
+                    if "input_examples" in tool:
+                        tool.pop("input_examples", None)
+                        removed_count += 1
+                    # Remove nested custom.input_examples
+                    custom = tool.get("custom")
+                    if isinstance(custom, dict) and "input_examples" in custom:
+                        custom.pop("input_examples", None)
+                        removed_count += 1
+
         # Ensure max_tokens obeys thinking budget constraints
         thinking_cfg = body.get("thinking")
         raw_max_tokens = body.get("max_tokens")
@@ -2099,7 +2121,13 @@ def proxy_claude_request():
         # Convert body to JSON string for Bedrock API
         body_json = json.dumps(body)
         
-        logging.debug(f"Request body for Bedrock: {body_json}")
+        # logging.debug(f"Request body for Bedrock: {body_json}")
+        # Pretty-print the body JSON for easier debugging
+        try:
+            pretty_body_json = json.dumps(json.loads(body_json), indent=2, ensure_ascii=False)
+        except Exception:
+            pretty_body_json = body_json
+        logging.info("Request body for Bedrock (pretty):\n%s", pretty_body_json)
 
         if stream:
             # Handle streaming response
