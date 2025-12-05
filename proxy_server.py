@@ -52,12 +52,18 @@ class SubAccountConfig:
             url=key_data.get('url'),
             identityzoneid=key_data.get('identityzoneid')
         )
-        
+
     def normalize_model_names(self):
-        """Normalize model names by removing prefixes like 'anthropic--'"""
+      """Normalize model names by removing prefixes like 'anthropic--'"""
+      if False:
         self.normalized_models = {
-            key.replace("anthropic--", ""): value 
-            for key, value in self.deployment_models.items()
+          key.replace("anthropic--", ""): value
+          for key, value in self.deployment_models.items()
+        }
+      else:
+        self.normalized_models = {
+          key: value
+          for key, value in self.deployment_models.items()
         }
 
 @dataclass
@@ -2047,6 +2053,9 @@ def proxy_claude_request():
         # Prepare the request body for Bedrock
         body = request_json.copy()
         
+        # Log the original request body for debugging
+        logging.info("Original request body keys: %s", list(body.keys()))
+        
         # Remove model and stream from body as they're handled separately
         body.pop("model", None)
         body.pop("stream", None)
@@ -2054,10 +2063,19 @@ def proxy_claude_request():
         # Add required anthropic_version for Bedrock
         body["anthropic_version"] = "bedrock-2023-05-31"
 
-        # Remove unsupported fields for Bedrock (e.g., context_management)
-        if "context_management" in body:
-            body.pop("context_management", None)
-            logging.info("Removed unsupported field 'context_management' from request body")
+        # Remove unsupported fields for Bedrock
+        unsupported_fields = ["context_management", "metadata"]
+        for field in unsupported_fields:
+            if field in body:
+                logging.info("Removing unsupported top-level field '%s' from request body", field)
+                body.pop(field, None)
+        
+        # Check for context_management in thinking config
+        thinking_cfg = body.get("thinking")
+        if isinstance(thinking_cfg, dict):
+            if "context_management" in thinking_cfg:
+                logging.info("Removing 'context_management' from thinking config")
+                thinking_cfg.pop("context_management", None)
         
 
         # Remove unsupported fields inside tools for Bedrock
@@ -2118,10 +2136,14 @@ def proxy_claude_request():
         else:
             logging.info("No max_tokens specified after adjustment for model %s", model)
         
+        # Log final body keys before sending to Bedrock
+        logging.info("Final request body keys before Bedrock: %s", list(body.keys()))
+        if "thinking" in body:
+            logging.info("Thinking config keys: %s", list(body["thinking"].keys()) if isinstance(body["thinking"], dict) else type(body["thinking"]))
+        
         # Convert body to JSON string for Bedrock API
         body_json = json.dumps(body)
         
-        # logging.debug(f"Request body for Bedrock: {body_json}")
         # Pretty-print the body JSON for easier debugging
         try:
             pretty_body_json = json.dumps(json.loads(body_json), indent=2, ensure_ascii=False)
