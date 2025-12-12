@@ -50,13 +50,13 @@ e.g.
   "data": [
     {
       "created": 1750833737,
-      "id": "4-sonnet",
+      "id": "4.5-sonnet",
       "object": "model",
       "owned_by": "sap-ai-core"
     },
     {
       "created": 1750833737,
-      "id": "anthropic/claude-4-sonnet",
+      "id": "anthropic/claude-4.5-sonnet",
       "object": "model",
       "owned_by": "sap-ai-core"
     }
@@ -76,7 +76,7 @@ The proxy server now supports OpenAI-compatible embeddings API:
 
 Now it supports the following LLM models
 - OpenAI: gpt-4o, gpt-4.1, gpt-o3-mini, gpt-o3, gpt-o4-mini
-- Claude: 3.5-sonnet, 3.7-sonnet, 4-sonnet
+- Claude: 4-sonnet, 4.5-sonnet
 - Google Gemini: gemini-2.5-pro
 
 ## Features
@@ -100,7 +100,12 @@ Now it supports the following LLM models
     cd sap-ai-core-llm-proxy
     ```
 
-2. Install the required Python packages:
+2. Install the required Python packages using uv (recommended):
+    ```sh
+    uv sync
+    ```
+
+    Or using pip:
     ```sh
     pip install -r requirements.txt
     ```
@@ -127,9 +132,7 @@ Now it supports the following LLM models
                    "gpt-4.1": [
                        "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_1b>"
                    ],
-                   "3.5-sonnet": [
-                       "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_2>"
-                   ]
+
                }
            },
            "subAccount2": {
@@ -139,12 +142,12 @@ Now it supports the following LLM models
                    "gpt-4o": [
                        "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_3>"
                    ],
-                   "3.7-sonnet": [
-                       "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_4>"
-                   ],
-                   "4-sonnet": [
-                       "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_5>"
-                   ]
+                    "4-sonnet": [
+                        "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_4>"
+                    ],
+                    "4.5-sonnet": [
+                        "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_5>"
+                    ]
                }
            }
        },
@@ -245,7 +248,7 @@ You need to set the enviroment variables before run the claude code.
 ```shell
 export ANTHROPIC_AUTH_TOKEN=your_secret_key
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3001
-export ANTHROPIC_MODEL=anthropic--claude-4-sonnet
+export ANTHROPIC_MODEL=anthropic--claude-4.5-sonnet
 ```
 
 Then run the claude code
@@ -345,7 +348,7 @@ You can integrate the SAP AI Core with Cline
 Choose the API Provider -> OpenAI API Compatible
 - Base URL: http://127.0.0.1:3001/v1
 - API key: will be one of secret_authentication_tokens. 
-- Model ID: models you configured in the `deployment_models`, e.g. 4-sonnet
+- Model ID: models you configured in the `deployment_models`, e.g. 4.5-sonnet
 
 Note: Cline is already official support SAP AI Core.
 
@@ -373,23 +376,23 @@ cat ~/.claude-code-router/config.json
 {
   "OPENAI_API_KEY": "your secret key",
   "OPENAI_BASE_URL": "http://127.0.0.1:3001/v1",
-  "OPENAI_MODEL": "3.7-sonnet",
+  "OPENAI_MODEL": "4-sonnet",
   "Providers": [
     {
       "name": "openrouter",
       "api_base_url": "http://127.0.0.1:3001/v1",
       "api_key": "your secret key",
-      "models": [
-        "gpt-4o",
-	    "3.7-sonnet",
-	    "4-sonnet"
-      ]
+       "models": [
+         "gpt-4o",
+ 	    "4-sonnet",
+ 	    "4.5-sonnet"
+       ]
     }
   ],
   "Router": {
     "background": "gpt-4o",
     "think": "deepseek,deepseek-reasoner",
-    "longContext": "openrouter,3.7-sonnet"
+    "longContext": "openrouter,4-sonnet"
   }
 }
 ```
@@ -463,7 +466,26 @@ It seems the Cursor IDE will block the request if the model contains claude, so 
 - claud
 - sonnet
 
-Now I am using `3.7-sonnet`
+Now I am using `4-sonnet`
+
+## Building Native Binary
+
+You can build a standalone executable binary using PyInstaller:
+
+```sh
+# Install PyInstaller if not already installed
+uv sync
+
+# Build the binary
+pyinstaller --onefile --name sap-ai-core-llm-proxy proxy_server.py
+```
+
+The binary will be created in the `dist/` directory as `sap-ai-core-llm-proxy.exe` (on Windows) or `sap-ai-core-llm-proxy` (on Linux/macOS).
+
+To run the binary:
+```sh
+./dist/sap-ai-core-llm-proxy --config config.json
+```
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
