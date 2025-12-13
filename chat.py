@@ -18,7 +18,16 @@ def load_config(file_path):
         raise
 
 config = load_config('config.json')
-openai.api_key = config['secret_authentication_tokens'][0]
+
+# Get API key from config or environment variable, or use a default placeholder
+api_key = None
+if 'secret_authentication_tokens' in config and config['secret_authentication_tokens']:
+    api_key = config['secret_authentication_tokens'][0]
+else:
+    api_key = os.environ.get('OPENAI_API_KEY', 'dummy-key')
+    logging.debug("No secret_authentication_tokens in config, using environment variable or placeholder")
+
+openai.api_key = api_key
 openai.base_url = "http://127.0.0.1:3001/v1/"
 
 @click.command()
