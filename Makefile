@@ -159,6 +159,8 @@ tag-push:
 # Create and push tag in one step
 tag-and-push: tag tag-push
 	@echo "Pushing local changes before tagging..."
+	git add .
+	git commit -m "Prepare release v$(VERSION)"
 	git push origin main
 
 # ============================================================================
