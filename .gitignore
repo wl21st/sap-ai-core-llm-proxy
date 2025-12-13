@@ -235,3 +235,4 @@ config.json
 key.pem
 cert.pem
 *.json
+releases/
