@@ -2495,9 +2495,30 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                 }
                                 yield f"{json.dumps(error_payload)}\n\n"
                 
-                # Token usage is already extracted in the metadata handling above
-                # Log it here at the end of streaming
+                # Send final chunk with usage information before [DONE]
                 if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
+                    final_usage_chunk = {
+                        "id": f"chatcmpl-claude37-{random.randint(10000, 99999)}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": None
+                        }],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": total_tokens
+                        }
+                    }
+                    final_usage_chunk_str = f"data: {json.dumps(final_usage_chunk)}\n\n"
+                    logging.info(f"Sending final usage chunk with SSE format: {final_usage_chunk_str[:200]}...")
+                    yield final_usage_chunk_str
+                    logging.info(f"Sent final usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+                    
+                    # Log token usage
                     user_id = request.headers.get("Authorization", "unknown")
                     if user_id and len(user_id) > 20:
                         user_id = f"{user_id[:20]}..."
@@ -2615,17 +2636,19 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                             except Exception:
                                 pass
             
-            # Log token usage at the end of the stream
-            user_id = request.headers.get("Authorization", "unknown")
-            if user_id and len(user_id) > 20:
-                user_id = f"{user_id[:20]}..."
-            ip_address = request.remote_addr or request.headers.get("X-Forwarded-For", "unknown_ip")
-            
-            # Log with subAccount information
-            token_logger.info(f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
-                             f"PromptTokens: {prompt_tokens if 'prompt_tokens' in locals() else 0}, "
-                             f"CompletionTokens: {completion_tokens if 'completion_tokens' in locals() else 0}, "
-                             f"TotalTokens: {total_tokens} (Streaming)")
+            # Log token usage at the end of the stream (only for non-Claude 3.7/4 models)
+            # Claude 3.7/4 models already log their token usage after sending the final usage chunk
+            if not (is_claude_model(model) and is_claude_37_or_4(model)):
+                user_id = request.headers.get("Authorization", "unknown")
+                if user_id and len(user_id) > 20:
+                    user_id = f"{user_id[:20]}..."
+                ip_address = request.remote_addr or request.headers.get("X-Forwarded-For", "unknown_ip")
+                
+                # Log with subAccount information
+                token_logger.info(f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
+                                 f"PromptTokens: {prompt_tokens if 'prompt_tokens' in locals() else 0}, "
+                                 f"CompletionTokens: {completion_tokens if 'completion_tokens' in locals() else 0}, "
+                                 f"TotalTokens: {total_tokens} (Streaming)")
             
             # Standard stream end
             yield "data: [DONE]\n\n"

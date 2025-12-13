@@ -1,7 +1,7 @@
 # SAP AI Core LLM Proxy - Development Backlog
 
 This document tracks planned improvements, features, and technical debt items for the SAP AI Core LLM Proxy project.
-**Last Updated**: 2025-12-04
+**Last Updated**: 2025-12-13
 
 **Risk Levels**:
 
@@ -18,17 +18,20 @@ This document tracks planned improvements, features, and technical debt items fo
   - [3. Standardize Configuration File Naming](#3-standardize-configuration-file-naming)
   - [4. Add Transport Logging with Timestamp Rotation](#4-add-transport-logging-with-timestamp-rotation)
   - [5. Make Logging Configurable](#5-make-logging-configurable)
+  - [6. Add Automatic HTTP 429 Throttling Handler](#6-add-automatic-http-429-throttling-handler)
+  - [7. Split proxy_server.py into Multiple Modules](#7-split-proxy_serverpy-into-multiple-modules)
+  - [8. Fix Claude Model ID Mapping](#8-fix-claude-model-id-mapping)
 - [Medium Priority](#medium-priority)
-  - [6. Refactor Python Classes to Follow SOLID Principles](#6-refactor-python-classes-to-follow-solid-principles)
-  - [7. Generate profile.json from SAP AI Core Service Connection](#7-generate-profilejson-from-sap-ai-core-service-connection)
-  - [8. Add Abbreviated Request/Response Logging](#8-add-abbreviated-requestresponse-logging)
-  - [9. Implement Stable Connection Management and Reconnect](#9-implement-stable-connection-management-and-reconnect)
-  - [10. Add SAP AI Service Model Transport Speed and Health Monitoring](#10-add-sap-ai-service-model-transport-speed-and-health-monitoring)
+  - [9. Refactor Python Classes to Follow SOLID Principles](#9-refactor-python-classes-to-follow-solid-principles)
+  - [10. Generate profile.json from SAP AI Core Service Connection](#10-generate-profilejson-from-sap-ai-core-service-connection)
+  - [11. Add Abbreviated Request/Response Logging](#11-add-abbreviated-requestresponse-logging)
+  - [12. Implement Stable Connection Management and Reconnect](#12-implement-stable-connection-management-and-reconnect)
+  - [13. Add SAP AI Service Model Transport Speed and Health Monitoring](#13-add-sap-ai-service-model-transport-speed-and-health-monitoring)
 - [Low Priority / Future Enhancements](#low-priority--future-enhancements)
-  - [11. Add Metrics and Monitoring](#11-add-metrics-and-monitoring)
-  - [12. Add Rate Limiting](#12-add-rate-limiting)
-  - [13. Add Request Caching](#13-add-request-caching)
-  - [14. Add WebSocket Support](#14-add-websocket-support)
+  - [14. Add Metrics and Monitoring](#14-add-metrics-and-monitoring)
+  - [15. Add Rate Limiting](#15-add-rate-limiting)
+  - [16. Add Request Caching](#16-add-request-caching)
+  - [17. Add WebSocket Support](#17-add-websocket-support)
 - [Completed Items](#completed-items)
 - [Notes](#notes)
 
@@ -44,15 +47,18 @@ This document tracks planned improvements, features, and technical debt items fo
 | 4 | [Standardize Configuration File Naming](#4-standardize-configuration-file-naming) | High | Small (1-3d) | Medium | 🔴 To Do |
 | 5 | [Add Transport Logging with Timestamp Rotation](#5-add-transport-logging-with-timestamp-rotation) | High | Medium (1-2w) | Low | 🔴 To Do |
 | 6 | [Make Logging Configurable](#6-make-logging-configurable) | High | Small (1-3d) | Low | 🔴 To Do |
-| 6 | [Refactor Python Classes to Follow SOLID Principles](#6-refactor-python-classes-to-follow-solid-principles) | Medium | Large (2-4w) | High | 🔴 To Do |
-| 7 | [Generate profile.json from SAP AI Core Service Connection](#7-generate-profilejson-from-sap-ai-core-service-connection) | Medium | Medium (1-2w) | Low | 🔴 To Do |
-| 8 | [Add Abbreviated Request/Response Logging](#8-add-abbreviated-requestresponse-logging) | Medium | Small (1-3d) | Low | 🔴 To Do |
-| 9 | [Implement Stable Connection Management and Reconnect](#9-implement-stable-connection-management-and-reconnect) | Medium | Medium (1-2w) | Medium | 🔴 To Do |
-| 10 | [Add SAP AI Service Model Transport Speed and Health Monitoring](#10-add-sap-ai-service-model-transport-speed-and-health-monitoring) | Medium | Medium (1-2w) | Low | 🔴 To Do |
-| 11 | [Add Metrics and Monitoring](#11-add-metrics-and-monitoring) | Low | Medium (1-2w) | Low | 🔴 To Do |
-| 12 | [Add Rate Limiting](#12-add-rate-limiting) | Low | Small (1-3d) | Low | 🔴 To Do |
-| 13 | [Add Request Caching](#13-add-request-caching) | Low | Medium (1-2w) | Medium | 🔴 To Do |
-| 14 | [Add WebSocket Support](#14-add-websocket-support) | Low | Large (2-4w) | High | 🔴 To Do |
+| 6 | [Add Automatic HTTP 429 Throttling Handler](#6-add-automatic-http-429-throttling-handler) | High | Small (1-3d) | Low | 🔴 To Do |
+| 7 | [Split proxy_server.py into Multiple Modules](#7-split-proxy_serverpy-into-multiple-modules) | High | Medium (1-2w) | Medium | 🔴 To Do |
+| 8 | [Fix Claude Model ID Mapping](#8-fix-claude-model-id-mapping) | High | Small (1-3d) | Low | 🔴 To Do |
+| 9 | [Refactor Python Classes to Follow SOLID Principles](#9-refactor-python-classes-to-follow-solid-principles) | Medium | Large (2-4w) | High | 🔴 To Do |
+| 10 | [Generate profile.json from SAP AI Core Service Connection](#10-generate-profilejson-from-sap-ai-core-service-connection) | Medium | Medium (1-2w) | Low | 🔴 To Do |
+| 11 | [Add Abbreviated Request/Response Logging](#11-add-abbreviated-requestresponse-logging) | Medium | Small (1-3d) | Low | 🔴 To Do |
+| 12 | [Implement Stable Connection Management and Reconnect](#12-implement-stable-connection-management-and-reconnect) | Medium | Medium (1-2w) | Medium | 🔴 To Do |
+| 13 | [Add SAP AI Service Model Transport Speed and Health Monitoring](#13-add-sap-ai-service-model-transport-speed-and-health-monitoring) | Medium | Medium (1-2w) | Low | 🔴 To Do |
+| 14 | [Add Metrics and Monitoring](#14-add-metrics-and-monitoring) | Low | Medium (1-2w) | Low | 🔴 To Do |
+| 15 | [Add Rate Limiting](#15-add-rate-limiting) | Low | Small (1-3d) | Low | 🔴 To Do |
+| 16 | [Add Request Caching](#16-add-request-caching) | Low | Medium (1-2w) | Medium | 🔴 To Do |
+| 17 | [Add WebSocket Support](#17-add-websocket-support) | Low | Large (2-4w) | High | 🔴 To Do |
 
 ## High Priority
 
@@ -570,9 +576,350 @@ NOTSET (0)    - All messages
 
 ---
 
+### 6. Add Automatic HTTP 429 Throttling Handler
+
+**Status**: 🔴 To Do
+**Priority**: High
+**Effort**: Small (1-3 days)
+**Risk**: Low
+**Related Files**: [`proxy_server.py`](../proxy_server.py)
+
+#### Description
+
+Implement automatic handling of HTTP 429 (Too Many Requests) status codes from SAP AI Core backend services. The proxy currently has a [`handle_http_429_error()`](../proxy_server.py) function but needs enhanced automatic retry logic with exponential backoff and proper rate limit header parsing.
+
+#### Current State
+
+- Basic HTTP 429 error handling exists
+- No automatic retry mechanism
+- No rate limit header parsing (Retry-After, X-RateLimit-*)
+- No configurable retry strategy
+
+#### Proposed Solution
+
+Enhance the existing throttling handler with:
+
+1. **Automatic retry with exponential backoff**
+2. **Parse and respect Retry-After headers**
+3. **Parse rate limit headers** (X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset)
+4. **Configurable retry attempts and delays**
+5. **Logging of throttling events**
+
+#### Implementation
+
+```python
+import time
+from typing import Optional
+
+def handle_http_429_with_retry(response, max_retries=3, base_delay=1.0):
+    """
+    Handle HTTP 429 errors with automatic retry and exponential backoff.
+    
+    Args:
+        response: HTTP response object with 429 status
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds for exponential backoff
+    
+    Returns:
+        Retry delay in seconds, or None if max retries exceeded
+    """
+    retry_after = response.headers.get('Retry-After')
+    
+    if retry_after:
+        # Retry-After can be seconds or HTTP date
+        try:
+            delay = int(retry_after)
+        except ValueError:
+            # Parse HTTP date format
+            from email.utils import parsedate_to_datetime
+            retry_date = parsedate_to_datetime(retry_after)
+            delay = (retry_date - datetime.now(timezone.utc)).total_seconds()
+    else:
+        # Use exponential backoff if no Retry-After header
+        delay = base_delay * (2 ** (max_retries - 1))
+    
+    # Log rate limit information
+    rate_limit_info = {
+        'limit': response.headers.get('X-RateLimit-Limit'),
+        'remaining': response.headers.get('X-RateLimit-Remaining'),
+        'reset': response.headers.get('X-RateLimit-Reset'),
+        'retry_after': retry_after,
+        'calculated_delay': delay
+    }
+    
+    logging.warning(f"HTTP 429 throttling detected. Rate limit info: {rate_limit_info}")
+    
+    return delay
+
+def make_request_with_throttling(url, method='POST', max_retries=3, **kwargs):
+    """
+    Make HTTP request with automatic 429 throttling handling.
+    
+    Args:
+        url: Request URL
+        method: HTTP method
+        max_retries: Maximum retry attempts
+        **kwargs: Additional request parameters
+    
+    Returns:
+        Response object
+    """
+    for attempt in range(max_retries + 1):
+        response = requests.request(method, url, **kwargs)
+        
+        if response.status_code == 429:
+            if attempt < max_retries:
+                delay = handle_http_429_with_retry(response, max_retries - attempt)
+                logging.info(f"Retrying after {delay}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+                continue
+            else:
+                logging.error(f"Max retries ({max_retries}) exceeded for HTTP 429")
+                raise Exception(f"Rate limit exceeded after {max_retries} retries")
+        
+        return response
+```
+
+#### Configuration
+
+Add to `profile.json`:
+
+```json
+{
+  "throttling": {
+    "enabled": true,
+    "max_retries": 3,
+    "base_delay": 1.0,
+    "max_delay": 60.0,
+    "respect_retry_after": true,
+    "log_throttling_events": true
+  }
+}
+```
+
+#### Acceptance Criteria
+
+- [ ] Automatic retry on HTTP 429 errors
+- [ ] Parse and respect Retry-After header
+- [ ] Parse rate limit headers (X-RateLimit-*)
+- [ ] Exponential backoff when no Retry-After header
+- [ ] Configurable max retries and delays
+- [ ] Comprehensive logging of throttling events
+- [ ] Unit tests for retry logic
+- [ ] Documentation with configuration examples
+
+---
+
+### 7. Split proxy_server.py into Multiple Modules
+
+**Status**: 🔴 To Do
+**Priority**: High
+**Effort**: Medium (1-2 weeks)
+**Risk**: Medium
+**Related Files**: [`proxy_server.py`](../proxy_server.py)
+
+#### Description
+
+The [`proxy_server.py`](../proxy_server.py) file has grown to over 2900 lines and contains multiple responsibilities. Split it into logical modules to improve maintainability, readability, and testability. This is a prerequisite for the larger SOLID refactoring effort.
+
+#### Current Issues
+
+- Single file with 2900+ lines
+- Multiple responsibilities mixed together
+- Difficult to navigate and maintain
+- Hard to test individual components
+- Violates Single Responsibility Principle
+
+#### Proposed Module Structure
+
+```text
+proxy_server/
+├── __init__.py
+├── main.py                      # Entry point, Flask app setup
+├── config.py                    # Configuration classes (ProxyConfig, SubAccountConfig)
+├── auth.py                      # Authentication and token management
+├── models.py                    # Model routing and load balancing
+├── converters/
+│   ├── __init__.py
+│   ├── claude.py                # Claude format conversions
+│   ├── gemini.py                # Gemini format conversions
+│   └── openai.py                # OpenAI format conversions
+├── streaming/
+│   ├── __init__.py
+│   ├── claude_stream.py         # Claude streaming handlers
+│   ├── gemini_stream.py         # Gemini streaming handlers
+│   └── openai_stream.py         # OpenAI streaming handlers
+├── endpoints/
+│   ├── __init__.py
+│   ├── chat_completions.py      # /v1/chat/completions
+│   ├── messages.py              # /v1/messages
+│   ├── models.py                # /v1/models
+│   └── embeddings.py            # /v1/embeddings
+└── utils.py                     # Utility functions
+
+# Keep proxy_server.py as backward-compatible entry point
+proxy_server.py                  # Import and run from proxy_server/main.py
+```
+
+#### Migration Strategy
+
+1. **Phase 1: Extract configuration** (config.py)
+   - Move ProxyConfig, SubAccountConfig, ServiceKey classes
+   - Keep backward compatibility
+2. **Phase 2: Extract converters** (converters/)
+   - Move conversion functions to separate files
+   - Maintain function signatures
+3. **Phase 3: Extract streaming** (streaming/)
+   - Move streaming handlers to separate files
+4. **Phase 4: Extract endpoints** (endpoints/)
+   - Move Flask route handlers to separate files
+   - Use Flask Blueprints
+5. **Phase 5: Create main entry point** (main.py)
+   - Import and wire up all modules
+   - Keep proxy_server.py as wrapper for backward compatibility
+
+#### Backward Compatibility
+
+```python
+# proxy_server.py - backward compatible wrapper
+"""
+SAP AI Core LLM Proxy Server
+This file is maintained for backward compatibility.
+The actual implementation is in the proxy_server/ module.
+"""
+from proxy_server.main import app, main
+
+if __name__ == "__main__":
+    main()
+```
+
+#### Acceptance Criteria
+
+- [ ] Code split into logical modules (<500 lines each)
+- [ ] Each module has single, clear responsibility
+- [ ] Backward compatibility maintained
+- [ ] All existing functionality works unchanged
+- [ ] Import paths updated throughout codebase
+- [ ] Documentation updated with new structure
+- [ ] No breaking changes for existing users
+- [ ] Tests pass after refactoring
+
+---
+
+### 8. Fix Claude Model ID Mapping
+
+**Status**: 🔴 To Do
+**Priority**: High
+**Effort**: Small (1-3 days)
+**Risk**: Low
+**Related Files**: [`proxy_server.py`](../proxy_server.py)
+
+#### Description
+
+The proxy needs to return correct model IDs for Claude 4.5 and Claude 4 models in responses. Currently, model ID mapping may not correctly handle all Claude model variants, especially when converting between OpenAI and Claude API formats.
+
+#### Current Issues
+
+- Model ID inconsistencies in responses
+- Claude 4.5 Sonnet may return incorrect ID
+- Claude 4 (Opus) may return incorrect ID
+- Model name normalization affects ID mapping
+
+#### Affected Models
+
+- `claude-4.5-sonnet` (should map to `claude-sonnet-4-20250514`)
+- `claude-4-opus` (should map to `claude-opus-4-20250514`)
+- `anthropic--claude-4.5-sonnet` (with prefix)
+- `anthropic--claude-4-opus` (with prefix)
+
+#### Proposed Solution
+
+Create a comprehensive model ID mapping configuration:
+
+```python
+# Model ID mappings for Claude models
+CLAUDE_MODEL_ID_MAP = {
+    # Claude 4.5 variants
+    "claude-4.5-sonnet": "claude-sonnet-4-20250514",
+    "anthropic--claude-4.5-sonnet": "claude-sonnet-4-20250514",
+    "claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
+    
+    # Claude 4 variants
+    "claude-4-opus": "claude-opus-4-20250514",
+    "anthropic--claude-4-opus": "claude-opus-4-20250514",
+    "claude-opus-4-20250514": "claude-opus-4-20250514",
+    
+    # Claude 3.5 variants (for reference)
+    "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
+    "anthropic--claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
+}
+
+def get_correct_claude_model_id(model_name: str) -> str:
+    """
+    Get the correct Claude model ID for API responses.
+    
+    Args:
+        model_name: Input model name (may have prefix or be normalized)
+    
+    Returns:
+        Correct Claude model ID for API responses
+    """
+    # Normalize the model name (remove common prefixes)
+    normalized = model_name.replace("anthropic--", "")
+    
+    # Look up in mapping
+    return CLAUDE_MODEL_ID_MAP.get(normalized, model_name)
+```
+
+#### Update Response Conversion
+
+```python
+def convert_claude_to_openai(claude_response, model, stream=False):
+    """Convert Claude API response to OpenAI format"""
+    # ... existing code ...
+    
+    # Use correct model ID in response
+    correct_model_id = get_correct_claude_model_id(model)
+    
+    openai_response = {
+        "id": f"chatcmpl-{claude_response.get('id', '')}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": correct_model_id,  # Use correct ID
+        # ... rest of response ...
+    }
+```
+
+#### Configuration
+
+Add to `profile.json`:
+
+```json
+{
+  "model_id_mappings": {
+    "claude-4.5-sonnet": "claude-sonnet-4-20250514",
+    "claude-4-opus": "claude-opus-4-20250514",
+    "claude-3.5-sonnet": "claude-3-5-sonnet-20241022"
+  }
+}
+```
+
+#### Acceptance Criteria
+
+- [ ] Correct model IDs returned for Claude 4.5 Sonnet
+- [ ] Correct model IDs returned for Claude 4 Opus
+- [ ] Model ID mapping handles prefixed names
+- [ ] Model ID mapping handles normalized names
+- [ ] Configuration-based model ID mappings
+- [ ] Backward compatibility maintained
+- [ ] Unit tests for model ID mapping
+- [ ] Documentation with model ID reference
+
+---
+
 ## Medium Priority
 
-### 6. Refactor Python Classes to Follow SOLID Principles
+### 9. Refactor Python Classes to Follow SOLID Principles
 
 **Status**: 🔴 To Do  
 **Priority**: Medium  
@@ -702,7 +1049,7 @@ src/
 
 ---
 
-### 7. Generate profile.json from SAP AI Core Service Connection
+### 10. Generate profile.json from SAP AI Core Service Connection
 
 **Status**: 🔴 To Do  
 **Priority**: Medium  
@@ -825,7 +1172,7 @@ GET /v2/lm/resourceGroups
 
 ---
 
-### 8. Add Abbreviated Request/Response Logging
+### 11. Add Abbreviated Request/Response Logging
 
 **Status**: 🔴 To Do  
 **Priority**: Medium  
@@ -919,7 +1266,7 @@ Add to `profile.json`:
 
 ---
 
-### 9. Implement Stable Connection Management and Reconnect
+### 12. Implement Stable Connection Management and Reconnect
 
 **Status**: 🔴 To Do  
 **Priority**: Medium  
@@ -1120,7 +1467,7 @@ def health_check_worker(connection_manager, interval=30):
 
 ---
 
-### 10. Add SAP AI Service Model Transport Speed and Health Monitoring
+### 13. Add SAP AI Service Model Transport Speed and Health Monitoring
 
 **Status**: 🔴 To Do  
 **Priority**: Medium  
@@ -1496,7 +1843,7 @@ Add to `profile.json`:
 
 ## Low Priority / Future Enhancements
 
-### 11. Add Metrics and Monitoring
+### 14. Add Metrics and Monitoring
 
 **Status**: 🔴 To Do  
 **Priority**: Low  
@@ -1519,7 +1866,7 @@ Add Prometheus metrics and health check endpoints for monitoring proxy performan
 
 ---
 
-### 12. Add Rate Limiting
+### 15. Add Rate Limiting
 
 **Status**: 🔴 To Do  
 **Priority**: Low  
@@ -1540,7 +1887,7 @@ Implement rate limiting to prevent abuse and ensure fair usage across clients.
 
 ---
 
-### 13. Add Request Caching
+### 16. Add Request Caching
 
 **Status**: 🔴 To Do  
 **Priority**: Low  
@@ -1561,7 +1908,7 @@ Implement caching for identical requests to reduce API calls and improve respons
 
 ---
 
-### 14. Add WebSocket Support
+### 17. Add WebSocket Support
 
 **Status**: 🔴 To Do  
 **Priority**: Low  
