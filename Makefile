@@ -87,18 +87,46 @@ build-bundle: sync
 	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --collect-all your_package $(MAIN_SCRIPT)
 
 # Run tests before building
-test: sync
+test:
 	@echo "Running tests..."
 	@if [ -d "tests" ]; then \
-		if $(UV) run python -c "import pytest" 2>/dev/null; then \
-			$(UV) run pytest tests/; \
-		else \
-			echo "Warning: pytest not installed. Skipping tests."; \
-			echo "To add pytest, run: uv add --dev pytest"; \
-		fi \
+		$(UV) sync --extra dev && $(UV) run pytest tests/; \
 	else \
 		echo "Warning: tests/ directory not found. Skipping tests."; \
 	fi
+
+# Run tests with coverage
+test-cov:
+	@echo "Running tests with coverage..."
+	$(UV) sync --extra dev && $(UV) run pytest --cov=proxy_server --cov-report=html --cov-report=term-missing
+
+# Run tests in verbose mode
+test-verbose:
+	@echo "Running tests (verbose)..."
+	$(UV) sync --extra dev && $(UV) run pytest -v
+
+# Run specific test file
+test-file:
+	@echo "Running specific test file..."
+	@if [ -z "$(FILE)" ]; then \
+		echo "Error: Please specify FILE=path/to/test_file.py"; \
+		exit 1; \
+	fi
+	$(UV) sync --extra dev && $(UV) run pytest $(FILE) -v
+
+# Run tests matching a pattern
+test-pattern:
+	@echo "Running tests matching pattern..."
+	@if [ -z "$(PATTERN)" ]; then \
+		echo "Error: Please specify PATTERN=your_pattern"; \
+		exit 1; \
+	fi
+	$(UV) sync --extra dev && $(UV) run pytest -k $(PATTERN) -v
+
+# Install test dependencies
+install-test-deps:
+	@echo "Installing test dependencies..."
+	$(UV) sync --extra dev
 
 # Build after testing
 build-tested: test build
@@ -297,8 +325,13 @@ help:
 	@echo "  Recommended: Build on Intel Mac for x86_64, ARM Mac for arm64"
 	@echo ""
 	@echo "TESTING:"
-	@echo "  make build-gui          - Build GUI version (no console)"
+	@echo "  make test               - Run all tests"
+	@echo "  make test-cov           - Run tests with coverage report"
+	@echo "  make test-verbose       - Run tests with verbose output"
+	@echo "  make test-file FILE=... - Run specific test file"
+	@echo "  make test-pattern PATTERN=... - Run tests matching pattern"
 	@echo "  make build-tested       - Run tests then build"
+	@echo "  make install-test-deps  - Install test dependencies"
 	@echo ""
 	@echo "VERSION MANAGEMENT:"
 	@echo "  make version-show       - Show current version"
