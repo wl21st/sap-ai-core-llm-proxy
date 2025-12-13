@@ -333,9 +333,9 @@ class TestConversionFunctions:
             "max_tokens": 2000,
             "temperature": 0.5
         }
-        
+
         result = convert_openai_to_claude37(openai_payload)
-        
+
         assert "messages" in result
         assert "inferenceConfig" in result
         assert result["inferenceConfig"]["maxTokens"] == 2000
@@ -1152,13 +1152,11 @@ class TestFlaskEndpointsEdgeCases:
         assert response.status_code == 204
 
 
-class TestStreamingHelpers:
-    """Tests for streaming helper functions."""
-    
+class TestStreamingHelpersExtended:
+    """Additional tests for streaming helper functions."""
+
     def test_convert_gemini_chunk_to_claude_delta(self):
         """Test Gemini chunk to Claude delta conversion."""
-        from proxy_server import convert_gemini_chunk_to_claude_delta
-        
         gemini_chunk = {
             "candidates": [{
                 "content": {
@@ -1166,53 +1164,47 @@ class TestStreamingHelpers:
                 }
             }]
         }
-        
-        result = convert_gemini_chunk_to_claude_delta(gemini_chunk)
-        
+
+        result = proxy_server.convert_gemini_chunk_to_claude_delta(gemini_chunk)
+
         assert result is not None
         assert result["type"] == "content_block_delta"
         assert result["delta"]["text"] == "Hello"
-    
+
     def test_convert_openai_chunk_to_claude_delta(self):
         """Test OpenAI chunk to Claude delta conversion."""
-        from proxy_server import convert_openai_chunk_to_claude_delta
-        
         openai_chunk = {
             "choices": [{
                 "delta": {"content": "World"}
             }]
         }
-        
-        result = convert_openai_chunk_to_claude_delta(openai_chunk)
-        
+
+        result = proxy_server.convert_openai_chunk_to_claude_delta(openai_chunk)
+
         assert result is not None
         assert result["type"] == "content_block_delta"
         assert result["delta"]["text"] == "World"
-    
+
     def test_get_claude_stop_reason_from_gemini_chunk(self):
         """Test extracting stop reason from Gemini chunk."""
-        from proxy_server import get_claude_stop_reason_from_gemini_chunk
-        
         gemini_chunk = {
             "candidates": [{
                 "finishReason": "STOP"
             }]
         }
-        
-        result = get_claude_stop_reason_from_gemini_chunk(gemini_chunk)
+
+        result = proxy_server.get_claude_stop_reason_from_gemini_chunk(gemini_chunk)
         assert result == "end_turn"
-    
+
     def test_get_claude_stop_reason_from_openai_chunk(self):
         """Test extracting stop reason from OpenAI chunk."""
-        from proxy_server import get_claude_stop_reason_from_openai_chunk
-        
         openai_chunk = {
             "choices": [{
                 "finish_reason": "length"
             }]
         }
-        
-        result = get_claude_stop_reason_from_openai_chunk(openai_chunk)
+
+        result = proxy_server.get_claude_stop_reason_from_openai_chunk(openai_chunk)
         assert result == "max_tokens"
 
 
@@ -1341,6 +1333,463 @@ class TestResponseConversionEdgeCases:
         
         result = convert_gemini_to_openai(gemini_response)
         assert result["choices"][0]["finish_reason"] == "content_filter"
+
+
+# ============================================================================
+# SDK SESSION AND CLIENT TESTS
+# ============================================================================
+
+class TestSDKSessionManagement:
+    """Tests for SAP AI Core SDK session and client management."""
+
+    @patch('proxy_server.Session')
+    def test_get_sapaicore_sdk_session_creates_new_session(self, mock_session_class):
+        """Test that get_sapaicore_sdk_session creates a new session when none exists."""
+        # Reset global state
+        proxy_server._sdk_session = None
+
+        mock_session = Mock()
+        mock_session_class.return_value = mock_session
+
+        result = proxy_server.get_sapaicore_sdk_session()
+
+        assert result == mock_session
+        mock_session_class.assert_called_once()
+        assert proxy_server._sdk_session == mock_session
+
+    @patch('proxy_server.Session')
+    def test_get_sapaicore_sdk_session_returns_cached_session(self, mock_session_class):
+        """Test that get_sapaicore_sdk_session returns cached session."""
+        mock_session = Mock()
+        proxy_server._sdk_session = mock_session
+
+        result = proxy_server.get_sapaicore_sdk_session()
+
+        assert result == mock_session
+        mock_session_class.assert_not_called()
+
+    @patch('proxy_server.get_sapaicore_sdk_session')
+    def test_get_sapaicore_sdk_client_creates_new_client(self, mock_get_session):
+        """Test that get_sapaicore_sdk_client creates a new client when none exists."""
+        # Reset global state
+        proxy_server._bedrock_clients.clear()
+
+        mock_session = Mock()
+        mock_client = Mock()
+        mock_session.client.return_value = mock_client
+        mock_get_session.return_value = mock_session
+
+        result = proxy_server.get_sapaicore_sdk_client("gpt-4")
+
+        assert result == mock_client
+        mock_session.client.assert_called_once_with(model_name="gpt-4")
+        assert proxy_server._bedrock_clients["gpt-4"] == mock_client
+
+    @patch('proxy_server.get_sapaicore_sdk_session')
+    def test_get_sapaicore_sdk_client_returns_cached_client(self, mock_get_session):
+        """Test that get_sapaicore_sdk_client returns cached client."""
+        mock_client = Mock()
+        proxy_server._bedrock_clients["gpt-4"] = mock_client
+
+        result = proxy_server.get_sapaicore_sdk_client("gpt-4")
+
+        assert result == mock_client
+        mock_get_session.assert_not_called()
+
+
+# ============================================================================
+# EMBEDDING TESTS
+# ============================================================================
+
+class TestEmbeddingFunctions:
+    """Tests for embedding-related functions."""
+
+    def test_format_embedding_response(self):
+        """Test format_embedding_response function."""
+        response = {
+            "embedding": [0.1, 0.2, 0.3, 0.4, 0.5]
+        }
+
+        result = proxy_server.format_embedding_response(response, "text-embedding-3-large")
+
+        assert result["object"] == "list"
+        assert result["data"][0]["object"] == "embedding"
+        assert result["data"][0]["embedding"] == [0.1, 0.2, 0.3, 0.4, 0.5]
+        assert result["data"][0]["index"] == 0
+        assert result["model"] == "text-embedding-3-large"
+        assert result["usage"]["prompt_tokens"] == 5
+        assert result["usage"]["total_tokens"] == 5
+
+
+# ============================================================================
+# CLAUDE CONVERSION TESTS
+# ============================================================================
+
+class TestClaudeRequestConversions:
+    """Tests for Claude request conversion functions."""
+
+    def test_convert_claude_request_to_openai(self):
+        """Test convert_claude_request_to_openai function."""
+        claude_payload = {
+            "system": "You are helpful",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "stream": True,
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "input_schema": {"type": "object", "properties": {}}
+                }
+            ]
+        }
+
+        result = proxy_server.convert_claude_request_to_openai(claude_payload)
+
+        assert result["model"] is None  # Not set in input
+        assert result["messages"][0]["role"] == "system"
+        assert result["messages"][0]["content"] == "You are helpful"
+        assert result["messages"][1]["role"] == "user"
+        assert result["messages"][1]["content"] == "Hello"
+        assert result["max_completion_tokens"] == 1000
+        assert result["temperature"] == 0.7
+        assert result["stream"] is True
+        assert len(result["tools"]) == 1
+        assert result["tools"][0]["function"]["name"] == "get_weather"
+
+    def test_convert_claude_request_to_gemini(self):
+        """Test convert_claude_request_to_gemini function."""
+        claude_payload = {
+            "system": "You are helpful",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "input_schema": {"type": "object", "properties": {}}
+                }
+            ]
+        }
+
+        result = proxy_server.convert_claude_request_to_gemini(claude_payload)
+
+        # The function returns contents as a list for multiple messages
+        assert isinstance(result["contents"], list)
+        assert len(result["contents"]) == 1  # System message is prepended to first user message
+        assert result["contents"][0]["role"] == "user"
+        assert "You are helpful" in result["contents"][0]["parts"]["text"]
+        assert "Hello" in result["contents"][0]["parts"]["text"]
+        assert result["generation_config"]["maxOutputTokens"] == 1000
+        assert result["generation_config"]["temperature"] == 0.7
+        assert len(result["tools"]) == 1
+
+    def test_convert_claude_request_for_bedrock(self):
+        """Test convert_claude_request_for_bedrock function."""
+        claude_payload = {
+            "model": "claude-3.5-sonnet",
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "system": "You are helpful",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ],
+            "tools": [
+                {"name": "get_weather", "description": "Get weather", "input_schema": {}}
+            ]
+        }
+
+        result = proxy_server.convert_claude_request_for_bedrock(claude_payload)
+
+        assert result["model"] == "claude-3.5-sonnet"
+        assert result["max_tokens"] == 1000
+        assert result["temperature"] == 0.7
+        assert result["system"] == "You are helpful"
+        assert len(result["messages"]) == 1
+        assert result["anthropic_version"] == "bedrock-2023-05-31"
+        assert "tools" in result
+
+
+# ============================================================================
+# RESPONSE CONVERSION TESTS
+# ============================================================================
+
+class TestResponseConversions:
+    """Tests for response conversion functions."""
+
+    def test_convert_claude_to_openai_standard(self):
+        """Test convert_claude_to_openai for standard Claude models."""
+        claude_response = {
+            "id": "msg_123",
+            "content": [{"text": "Hello world"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        }
+
+        result = proxy_server.convert_claude_to_openai(claude_response, "claude-3.5-sonnet")
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Hello world"
+        assert result["choices"][0]["finish_reason"] == "end_turn"
+        assert result["usage"]["prompt_tokens"] == 10
+        assert result["usage"]["completion_tokens"] == 20
+        assert result["usage"]["total_tokens"] == 30
+
+    def test_convert_claude37_to_openai(self):
+        """Test convert_claude37_to_openai function."""
+        claude37_response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "Hello from Claude 3.7"}]
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {
+                "inputTokens": 15,
+                "outputTokens": 25,
+                "totalTokens": 40
+            }
+        }
+
+        result = proxy_server.convert_claude37_to_openai(claude37_response, "claude-3.7-sonnet")
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Hello from Claude 3.7"
+        assert result["choices"][0]["finish_reason"] == "stop"
+        assert result["usage"]["prompt_tokens"] == 15
+        assert result["usage"]["completion_tokens"] == 25
+        assert result["usage"]["total_tokens"] == 40
+
+    def test_convert_gemini_to_openai(self):
+        """Test convert_gemini_to_openai function."""
+        gemini_response = {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Hello from Gemini"}],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 10,
+                "totalTokenCount": 15
+            }
+        }
+
+        result = proxy_server.convert_gemini_to_openai(gemini_response, "gemini-pro")
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Hello from Gemini"
+        assert result["choices"][0]["finish_reason"] == "stop"
+        assert result["usage"]["prompt_tokens"] == 5
+        assert result["usage"]["completion_tokens"] == 10
+        assert result["usage"]["total_tokens"] == 15
+
+    def test_convert_gemini_response_to_claude(self):
+        """Test convert_gemini_response_to_claude function."""
+        gemini_response = {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Hello from Gemini"}],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 10
+            }
+        }
+
+        result = proxy_server.convert_gemini_response_to_claude(gemini_response, "gemini-pro")
+
+        assert result["id"].startswith("msg_gemini_")
+        assert result["type"] == "message"
+        assert result["role"] == "assistant"
+        assert result["content"][0]["text"] == "Hello from Gemini"
+        assert result["stop_reason"] == "end_turn"
+        assert result["usage"]["input_tokens"] == 5
+        assert result["usage"]["output_tokens"] == 10
+
+    def test_convert_openai_response_to_claude(self):
+        """Test convert_openai_response_to_claude function."""
+        openai_response = {
+            "choices": [{
+                "message": {
+                    "content": "Hello from OpenAI",
+                    "tool_calls": [
+                        {
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": '{"location": "NYC"}'
+                            }
+                        }
+                    ]
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20
+            }
+        }
+
+        result = proxy_server.convert_openai_response_to_claude(openai_response)
+
+        assert result["id"].startswith("msg_openai_")
+        assert result["type"] == "message"
+        assert result["role"] == "assistant"
+        assert result["content"][0]["text"] == "Hello from OpenAI"
+        assert result["content"][1]["type"] == "tool_use"
+        assert result["content"][1]["name"] == "get_weather"
+        assert result["usage"]["input_tokens"] == 10
+        assert result["usage"]["output_tokens"] == 20
+
+
+# ============================================================================
+# STREAMING HELPER TESTS
+# ============================================================================
+
+class TestStreamingHelpers:
+    """Tests for streaming helper functions."""
+
+    def test_convert_gemini_chunk_to_claude_delta(self):
+        """Test convert_gemini_chunk_to_claude_delta function."""
+        gemini_chunk = {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Hello"}]
+                }
+            }]
+        }
+
+        result = proxy_server.convert_gemini_chunk_to_claude_delta(gemini_chunk)
+
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "Hello"
+
+    def test_convert_openai_chunk_to_claude_delta(self):
+        """Test convert_openai_chunk_to_claude_delta function."""
+        openai_chunk = {
+            "choices": [{
+                "delta": {"content": "World"}
+            }]
+        }
+
+        result = proxy_server.convert_openai_chunk_to_claude_delta(openai_chunk)
+
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "World"
+
+    def test_get_claude_stop_reason_from_gemini_chunk(self):
+        """Test get_claude_stop_reason_from_gemini_chunk function."""
+        gemini_chunk = {
+            "candidates": [{
+                "finishReason": "STOP"
+            }]
+        }
+
+        result = proxy_server.get_claude_stop_reason_from_gemini_chunk(gemini_chunk)
+        assert result == "end_turn"
+
+    def test_get_claude_stop_reason_from_openai_chunk(self):
+        """Test get_claude_stop_reason_from_openai_chunk function."""
+        openai_chunk = {
+            "choices": [{
+                "finish_reason": "stop"
+            }]
+        }
+
+        result = proxy_server.get_claude_stop_reason_from_openai_chunk(openai_chunk)
+        assert result == "end_turn"
+
+
+# ============================================================================
+# REQUEST HANDLER TESTS
+# ============================================================================
+
+class TestRequestHandlers:
+    """Tests for request handler functions."""
+
+    def test_handle_claude_request_streaming(self, reset_proxy_config):
+        """Test handle_claude_request with streaming."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"anthropic--claude-4.5-sonnet": ["https://url1.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"anthropic--claude-4.5-sonnet": ["account1"]}
+
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": True
+        }
+
+        url, modified_payload, subaccount_name = proxy_server.handle_claude_request(payload, "anthropic--claude-4.5-sonnet")
+
+        assert "/converse-stream" in url
+        assert subaccount_name == "account1"
+        assert "messages" in modified_payload
+
+    def test_handle_gemini_request_streaming(self, reset_proxy_config):
+        """Test handle_gemini_request with streaming."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"gemini-2.5-pro": ["https://url1.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gemini-2.5-pro": ["account1"]}
+
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": True
+        }
+
+        url, modified_payload, subaccount_name = proxy_server.handle_gemini_request(payload, "gemini-2.5-pro")
+
+        assert ":streamGenerateContent" in url
+        assert subaccount_name == "account1"
+        assert "contents" in modified_payload
+
+    def test_handle_default_request_o3_model(self, reset_proxy_config):
+        """Test handle_default_request with o3 model."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"o3-mini": ["https://url1.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"o3-mini": ["account1"]}
+
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.7
+        }
+
+        url, modified_payload, subaccount_name = proxy_server.handle_default_request(payload, "o3-mini")
+
+        assert "2024-12-01-preview" in url
+        assert "temperature" not in modified_payload
+        assert subaccount_name == "account1"
 
 
 # ============================================================================
