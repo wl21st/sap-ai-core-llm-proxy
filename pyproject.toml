@@ -1,6 +1,6 @@
 [project]
 name = "sap-ai-core-llm-proxy"
-version = "0.1.13"
+version = "0.1.14"
 description = "SAP AI Core Service Proxy Server"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"

@@ -22,7 +22,6 @@ make release-github
 
 ```bash
 make workflow-patch    # Bumps version, builds, tags locally
-git push origin main    # Push version changes
 make tag-push          # Push tag to remote
 make release-github    # Upload to GitHub
 ```
