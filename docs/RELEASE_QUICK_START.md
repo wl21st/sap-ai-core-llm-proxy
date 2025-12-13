@@ -13,7 +13,6 @@ make build-tested
 
 # When satisfied, version and release
 make version-bump-patch
-git push origin main    # Push version changes
 make release-prepare
 make tag-and-push
 make release-github
