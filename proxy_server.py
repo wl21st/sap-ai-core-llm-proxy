@@ -2434,6 +2434,37 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                     }]
                                 }
                                 yield f"{json.dumps(error_payload)}\n\n"
+
+                # Send final chunk with usage information before [DONE] for Gemini
+                if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
+                    final_usage_chunk = {
+                        "id": f"chatcmpl-gemini-{random.randint(10000, 99999)}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": None
+                        }],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": total_tokens
+                        }
+                    }
+                    final_usage_chunk_str = f"{json.dumps(final_usage_chunk)}\n\n"
+                    logging.info(f"Sending final Gemini usage chunk with SSE format: {final_usage_chunk_str[:200]}...")
+                    yield final_usage_chunk_str
+                    logging.info(f"Sent final Gemini usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+                    
+                    # Log token usage
+                    user_id = request.headers.get("Authorization", "unknown")
+                    if user_id and len(user_id) > 20:
+                        user_id = f"{user_id[:20]}..."
+                    ip_address = request.remote_addr or request.headers.get("X-Forwarded-For", "unknown_ip")
+                    token_logger.info(f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
+                                     f"PromptTokens: {prompt_tokens}, CompletionTokens: {completion_tokens}, TotalTokens: {total_tokens} (Streaming)")
             
             # --- Other Models (including older Claude) ---
             else:

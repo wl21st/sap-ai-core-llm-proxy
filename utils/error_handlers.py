@@ -6,21 +6,21 @@ This module provides consistent error handling across all endpoints.
 
 import logging
 from flask import jsonify, Response
-from typing import Tuple
+from requests.exceptions import HTTPError
 
 
-def handle_http_429_error(http_err, context: str = "request") -> Tuple[Response, int]:
+def handle_http_429_error(http_err: HTTPError, context: str = "request") -> Response:
     """Handle HTTP 429 (Too Many Requests) errors consistently across all endpoints.
-    
+
     This function logs detailed information about rate limit errors and returns
     a properly formatted Flask response with retry information.
-    
+
     Args:
-        http_err: The HTTPError exception from requests library
-        context: Description of the request context for logging (e.g., "embedding request")
-        
+        http_err: The HTTPError exception from the requests library.
+        context: Description of the request context for logging (e.g., "embedding request").
+
     Returns:
-        Tuple of (Flask response object, status code 429)
+        A Flask response object with status code 429.
         
     Example:
         >>> try:
@@ -64,4 +64,4 @@ def handle_http_429_error(http_err, context: str = "request") -> Tuple[Response,
             logging.info(f"Set Retry-After header to: {header_value}")
             break
 
-    return flask_response, 429
+    return flask_response
