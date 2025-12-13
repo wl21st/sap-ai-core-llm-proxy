@@ -1888,6 +1888,19 @@ def list_models():
     
     return jsonify({"object": "list", "data": models}), 200
 
+@app.route('/api/event_logging/batch', methods=['POST', 'OPTIONS'])
+def handle_event_logging():
+    """Dummy endpoint for Claude Code event logging to prevent 404 errors."""
+    logging.info("Received request to /api/event_logging/batch")
+    logging.debug(f"Request headers: {request.headers}")
+    logging.debug(f"Request body: {request.get_json(silent=True)}")
+    
+    # Return success response for event logging
+    return jsonify({
+        "status": "success",
+        "message": "Events logged successfully"
+    }), 200
+
 content_type="Application/json"
 @app.route('/v1/chat/completions', methods=['POST'])
 def proxy_openai_stream():
