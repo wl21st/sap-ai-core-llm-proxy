@@ -2355,12 +2355,24 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         logging.info(f"Non-streaming request succeeded for model '{model}' using subAccount '{subaccount_name}'")
         
         # Process response based on model type
+        try:
+            response_data = response.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            logging.error(f"Failed to parse JSON response from backend API: {e}")
+            logging.error(f"Response text: {response.text}")
+            logging.error(f"Response headers: {dict(response.headers)}")
+            return jsonify({
+                "error": "Invalid JSON response from backend API",
+                "details": str(e),
+                "response_text": response.text
+            }), 500
+        
         if is_claude_model(model):
-            final_response = convert_claude_to_openai(response.json(), model)
+            final_response = convert_claude_to_openai(response_data, model)
         elif is_gemini_model(model):
-            final_response = convert_gemini_to_openai(response.json(), model)
+            final_response = convert_gemini_to_openai(response_data, model)
         else:
-            final_response = response.json()
+            final_response = response_data
         
         # Extract token usage
         total_tokens = final_response.get("usage", {}).get("total_tokens", 0)
@@ -2415,6 +2427,8 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
     
     buffer = ""
     total_tokens = 0
+    prompt_tokens = 0
+    completion_tokens = 0
     claude_metadata = {}  # For Claude 3.7 metadata
     chunk = None  # Initialize chunk variable to avoid reference errors
     
@@ -2436,12 +2450,18 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                 line_content = ast.literal_eval(line_content)
                                 line_content = json.dumps(line_content)
                                 claude_dict_chunk = json.loads(line_content)
-                                chunk_type = claude_dict_chunk.get("type")
-                                
-                                # Handle metadata chunk
-                                if chunk_type == "metadata":
+
+                                # Check if this is a metadata chunk by looking for 'metadata' key directly
+                                if "metadata" in claude_dict_chunk:
                                     claude_metadata = claude_dict_chunk.get("metadata", {})
-                                    logging.debug(f"Received Claude 3.7 metadata from '{subaccount_name}': {claude_metadata}")
+                                    logging.info(f"Found metadata chunk from '{subaccount_name}': {claude_metadata}")
+                                    # Extract token counts immediately
+                                    if isinstance(claude_metadata.get("usage"), dict):
+                                        total_tokens = claude_metadata["usage"].get("totalTokens", 0)
+                                        prompt_tokens = claude_metadata["usage"].get("inputTokens", 0)
+                                        completion_tokens = claude_metadata["usage"].get("outputTokens", 0)
+                                        logging.info(f"Extracted token usage from metadata: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+                                    # Don't process this chunk further, just continue to next
                                     continue
                                 
                                 # Convert chunk to OpenAI format
@@ -2461,13 +2481,17 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                         "finish_reason": "stop"
                                     }]
                                 }
-                                yield f"data: {json.dumps(error_payload)}\n\n"
+                                yield f"{json.dumps(error_payload)}\n\n"
                 
-                # Extract token counts from metadata
-                if claude_metadata and isinstance(claude_metadata.get("usage"), dict):
-                    total_tokens = claude_metadata["usage"].get("totalTokens", 0)
-                    prompt_tokens = claude_metadata["usage"].get("inputTokens", 0)
-                    completion_tokens = claude_metadata["usage"].get("outputTokens", 0)
+                # Token usage is already extracted in the metadata handling above
+                # Log it here at the end of streaming
+                if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
+                    user_id = request.headers.get("Authorization", "unknown")
+                    if user_id and len(user_id) > 20:
+                        user_id = f"{user_id[:20]}..."
+                    ip_address = request.remote_addr or request.headers.get("X-Forwarded-For", "unknown_ip")
+                    token_logger.info(f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
+                                     f"PromptTokens: {prompt_tokens}, CompletionTokens: {completion_tokens}, TotalTokens: {total_tokens} (Streaming)")
             
             # --- Gemini Streaming Logic ---
             elif is_gemini_model(model):
