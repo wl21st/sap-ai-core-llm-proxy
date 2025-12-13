@@ -119,7 +119,7 @@ sequenceDiagram
     
     Flask->>Conv: convert_openai_to_claude()
     Conv-->>Flask: claude_payload
-    
+
     Flask->>SAP: POST /invoke (with token)
     SAP-->>Flask: claude_response
     
@@ -153,7 +153,7 @@ sequenceDiagram
     SAP-->>Stream: metadata chunk (usage)
     Stream->>Stream: Extract token usage
     Stream-->>Client: data: [DONE]\n\n
-    
+
     Note over Stream: Log token usage
 ```
 
@@ -292,7 +292,7 @@ stateDiagram-v2
     RequestToken --> Timeout: Connection timeout
     RequestToken --> HTTPError: 4xx/5xx
     RequestToken --> NetworkError: Network failure
-    
+
     Success --> CacheToken: Store with expiry
     CacheToken --> [*]: Return new token
     

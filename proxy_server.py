@@ -947,7 +947,7 @@ def convert_claude_chunk_to_openai(chunk, model):
 
 def convert_claude37_chunk_to_openai(claude_chunk, model_name):
     """
-    Converts a single parsed Claude 3.7/4 /converse-stream chunk (dictionary)
+    Converts a single parsed Claude 3.7/4/4.5 /converse-stream chunk (dictionary)
     into an OpenAI-compatible Server-Sent Event (SSE) string.
     Returns None if the chunk doesn't map to an OpenAI event (e.g., metadata).
     """
@@ -1067,19 +1067,19 @@ def is_claude_model(model):
 def is_claude_37_or_4(model):
     """
     Check if the model is Claude 3.7 or Claude 4.
-    
+
     Args:
         model: The model name to check
-        
+
     Returns:
         bool: True if the model is Claude 3.7 or Claude 4, False otherwise
     """
-    return any(version in model for version in ["3.7", "4"]) or "3.5" not in model
+    return any(version in model for version in ["3.7", "4", "4.5"]) or "3.5" not in model
 
 def is_gemini_model(model):
     """
     Check if the model is a Gemini model.
-    
+
     Args:
         model: The model name to check
         
