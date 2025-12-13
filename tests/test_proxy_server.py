@@ -14,6 +14,7 @@ import json
 import pytest
 import threading
 import time
+import requests.exceptions
 from unittest.mock import Mock, patch, MagicMock, mock_open
 from dataclasses import dataclass
 from flask import Flask
@@ -878,6 +879,468 @@ class TestIntegration:
         assert response.status_code == 200
         data = json.loads(response.data)
         assert data["choices"][0]["message"]["content"] == "Hello!"
+
+
+# ============================================================================
+# ADDITIONAL EDGE CASE TESTS
+# ============================================================================
+
+class TestConversionEdgeCases:
+    """Tests for edge cases in conversion functions."""
+    
+    def test_convert_openai_to_claude_with_tools(self):
+        """Test OpenAI to Claude conversion with tools."""
+        openai_payload = {
+            "messages": [{"role": "user", "content": "Use a tool"}],
+            "max_tokens": 1000,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather",
+                        "parameters": {"type": "object"}
+                    }
+                }
+            ]
+        }
+        
+        result = convert_openai_to_claude(openai_payload)
+        assert "messages" in result
+        assert result["max_tokens"] == 1000
+    
+    def test_convert_claude37_with_stop_sequences(self):
+        """Test Claude 3.7 conversion with stop sequences."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stop": ["STOP", "END"]
+        }
+        
+        result = convert_openai_to_claude37(payload)
+        assert "inferenceConfig" in result
+        assert result["inferenceConfig"]["stopSequences"] == ["STOP", "END"]
+    
+    def test_convert_claude37_with_single_stop_string(self):
+        """Test Claude 3.7 conversion with single stop string."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stop": "STOP"
+        }
+        
+        result = convert_openai_to_claude37(payload)
+        assert result["inferenceConfig"]["stopSequences"] == ["STOP"]
+    
+    def test_convert_openai_to_gemini_multiple_messages(self):
+        """Test Gemini conversion with multiple messages."""
+        payload = {
+            "messages": [
+                {"role": "user", "content": "First message"},
+                {"role": "assistant", "content": "Response"},
+                {"role": "user", "content": "Second message"}
+            ],
+            "temperature": 0.5
+        }
+        
+        result = convert_openai_to_gemini(payload)
+        assert isinstance(result["contents"], list)
+        assert len(result["contents"]) == 3
+        assert result["contents"][0]["role"] == "user"
+        assert result["contents"][1]["role"] == "model"
+    
+    def test_convert_gemini_to_openai_max_tokens_stop(self):
+        """Test Gemini to OpenAI conversion with max_tokens stop."""
+        gemini_response = {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Response"}],
+                    "role": "model"
+                },
+                "finishReason": "MAX_TOKENS"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+                "totalTokenCount": 150
+            }
+        }
+        
+        result = convert_gemini_to_openai(gemini_response)
+        assert result["choices"][0]["finish_reason"] == "length"
+        assert result["usage"]["total_tokens"] == 150
+
+
+class TestTokenManagementEdgeCases:
+    """Additional token management tests."""
+    
+    @patch('proxy_server.requests.post')
+    def test_fetch_token_http_error(self, mock_post, reset_proxy_config, sample_service_key):
+        """Test token fetch with HTTP error."""
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        mock_error = requests.exceptions.HTTPError(response=mock_response)
+        mock_post.side_effect = mock_error
+        
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={}
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+        
+        with pytest.raises(ConnectionError, match="HTTP Error"):
+            fetch_token("test-account")
+    
+    @patch('proxy_server.requests.post')
+    def test_fetch_token_timeout(self, mock_post, reset_proxy_config, sample_service_key):
+        """Test token fetch with timeout."""
+        mock_post.side_effect = requests.exceptions.Timeout("Connection timeout")
+        
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={}
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+        
+        with pytest.raises(TimeoutError, match="Timeout connecting"):
+            fetch_token("test-account")
+    
+    @patch('proxy_server.requests.post')
+    def test_fetch_token_empty_token(self, mock_post, reset_proxy_config, sample_service_key):
+        """Test token fetch with empty token response."""
+        mock_response = Mock()
+        mock_response.json.return_value = {"access_token": ""}
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+        
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={}
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+        
+        # The function wraps ValueError in RuntimeError
+        with pytest.raises(RuntimeError, match="Unexpected error processing token response"):
+            fetch_token("test-account")
+    
+    def test_verify_request_token_bearer_format(self, reset_proxy_config):
+        """Test token verification with Bearer format."""
+        proxy_server.proxy_config.secret_authentication_tokens = ["my-secret-token"]
+        
+        mock_request = Mock()
+        mock_request.headers = {"Authorization": "Bearer my-secret-token"}
+        
+        assert verify_request_token(mock_request) is True
+
+
+class TestLoadBalancingEdgeCases:
+    """Additional load balancing tests."""
+    
+    def test_load_balance_url_multiple_urls_per_subaccount(self, reset_proxy_config):
+        """Test load balancing with multiple URLs per subaccount."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"gpt-4": ["https://url1.com", "https://url2.com", "https://url3.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+        
+        if hasattr(load_balance_url, "counters"):
+            load_balance_url.counters.clear()
+        
+        url1, _, _, _ = load_balance_url("gpt-4")
+        assert url1 == "https://url1.com"
+        
+        url2, _, _, _ = load_balance_url("gpt-4")
+        assert url2 == "https://url2.com"
+        
+        url3, _, _, _ = load_balance_url("gpt-4")
+        assert url3 == "https://url3.com"
+        
+        url4, _, _, _ = load_balance_url("gpt-4")
+        assert url4 == "https://url1.com"
+    
+    def test_load_balance_url_gemini_fallback(self, reset_proxy_config):
+        """Test Gemini model fallback."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"gemini-2.5-pro": ["https://url1.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gemini-2.5-pro": ["account1"]}
+        
+        url, subaccount_name, _, model = load_balance_url("gemini-1.5-flash")
+        
+        assert model == "gemini-2.5-pro"
+        assert subaccount_name == "account1"
+    
+    def test_load_balance_url_no_urls_configured(self, reset_proxy_config):
+        """Test load balancing when model has no URLs."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"gpt-4": []}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+        
+        with pytest.raises(ValueError, match="No URLs for model"):
+            load_balance_url("gpt-4")
+
+
+class TestFlaskEndpointsEdgeCases:
+    """Additional Flask endpoint tests."""
+    
+    def test_list_models_empty(self, flask_client, reset_proxy_config):
+        """Test /v1/models with no models configured."""
+        proxy_server.proxy_config.model_to_subaccounts = {}
+        
+        response = flask_client.get('/v1/models')
+        
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["object"] == "list"
+        assert len(data["data"]) == 0
+    
+    @patch('proxy_server.verify_request_token')
+    def test_embeddings_missing_input(self, mock_verify, flask_client):
+        """Test embeddings endpoint with missing input."""
+        mock_verify.return_value = True
+        
+        response = flask_client.post(
+            '/v1/embeddings',
+            json={"model": "text-embedding-3-large"},
+            headers={"Authorization": "Bearer test-token"}
+        )
+        
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert "error" in data
+    
+    @patch('proxy_server.verify_request_token')
+    def test_embeddings_unauthorized(self, mock_verify, flask_client):
+        """Test embeddings endpoint without authorization."""
+        mock_verify.return_value = False
+        
+        response = flask_client.post(
+            '/v1/embeddings',
+            json={"input": "test", "model": "text-embedding-3-large"}
+        )
+        
+        assert response.status_code == 401
+    
+    def test_options_request(self, flask_client):
+        """Test OPTIONS request to chat completions."""
+        response = flask_client.options('/v1/chat/completions')
+        
+        assert response.status_code == 204
+
+
+class TestStreamingHelpers:
+    """Tests for streaming helper functions."""
+    
+    def test_convert_gemini_chunk_to_claude_delta(self):
+        """Test Gemini chunk to Claude delta conversion."""
+        from proxy_server import convert_gemini_chunk_to_claude_delta
+        
+        gemini_chunk = {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Hello"}]
+                }
+            }]
+        }
+        
+        result = convert_gemini_chunk_to_claude_delta(gemini_chunk)
+        
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "Hello"
+    
+    def test_convert_openai_chunk_to_claude_delta(self):
+        """Test OpenAI chunk to Claude delta conversion."""
+        from proxy_server import convert_openai_chunk_to_claude_delta
+        
+        openai_chunk = {
+            "choices": [{
+                "delta": {"content": "World"}
+            }]
+        }
+        
+        result = convert_openai_chunk_to_claude_delta(openai_chunk)
+        
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "World"
+    
+    def test_get_claude_stop_reason_from_gemini_chunk(self):
+        """Test extracting stop reason from Gemini chunk."""
+        from proxy_server import get_claude_stop_reason_from_gemini_chunk
+        
+        gemini_chunk = {
+            "candidates": [{
+                "finishReason": "STOP"
+            }]
+        }
+        
+        result = get_claude_stop_reason_from_gemini_chunk(gemini_chunk)
+        assert result == "end_turn"
+    
+    def test_get_claude_stop_reason_from_openai_chunk(self):
+        """Test extracting stop reason from OpenAI chunk."""
+        from proxy_server import get_claude_stop_reason_from_openai_chunk
+        
+        openai_chunk = {
+            "choices": [{
+                "finish_reason": "length"
+            }]
+        }
+        
+        result = get_claude_stop_reason_from_openai_chunk(openai_chunk)
+        assert result == "max_tokens"
+
+
+class TestRequestHandlers:
+    """Tests for request handler functions."""
+    
+    def test_handle_claude_request_streaming(self, reset_proxy_config):
+        """Test Claude request handler with streaming."""
+        from proxy_server import handle_claude_request
+        
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"anthropic--claude-4.5-sonnet": ["https://url1.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"anthropic--claude-4.5-sonnet": ["account1"]}
+        
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": True
+        }
+        
+        url, modified_payload, subaccount_name = handle_claude_request(payload, "anthropic--claude-4.5-sonnet")
+        
+        assert "/converse-stream" in url
+        assert subaccount_name == "account1"
+        assert "messages" in modified_payload
+    
+    def test_handle_gemini_request_non_streaming(self, reset_proxy_config):
+        """Test Gemini request handler without streaming."""
+        from proxy_server import handle_gemini_request
+        
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"gemini-2.5-pro": ["https://url1.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gemini-2.5-pro": ["account1"]}
+        
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": False
+        }
+        
+        url, modified_payload, subaccount_name = handle_gemini_request(payload, "gemini-2.5-pro")
+        
+        assert ":generateContent" in url
+        assert ":streamGenerateContent" not in url
+        assert subaccount_name == "account1"
+    
+    def test_handle_default_request_o3_model(self, reset_proxy_config):
+        """Test default request handler with o3 model."""
+        from proxy_server import handle_default_request
+        
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            deployment_models={"o3-mini": ["https://url1.com"]}
+        )
+        subaccount.normalized_models = subaccount.deployment_models
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"o3-mini": ["account1"]}
+        
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.7
+        }
+        
+        url, modified_payload, subaccount_name = handle_default_request(payload, "o3-mini")
+        
+        assert "2024-12-01-preview" in url
+        assert "temperature" not in modified_payload
+
+
+class TestResponseConversionEdgeCases:
+    """Tests for response conversion edge cases."""
+    
+    def test_convert_claude37_to_openai_with_cache_tokens(self):
+        """Test Claude 3.7 to OpenAI with cache tokens."""
+        claude37_response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Cached response"}]
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 80,
+                "cacheCreationInputTokens": 20
+            }
+        }
+        
+        result = convert_claude37_to_openai(claude37_response, "claude-3.7-sonnet")
+        
+        assert "prompt_tokens_details" in result["usage"]
+        assert result["usage"]["prompt_tokens_details"]["cached_tokens"] == 80
+        assert result["usage"]["prompt_tokens_details"]["cache_creation_tokens"] == 20
+    
+    def test_convert_gemini_to_openai_safety_stop(self):
+        """Test Gemini conversion with safety stop reason."""
+        gemini_response = {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Filtered content"}],
+                    "role": "model"
+                },
+                "finishReason": "SAFETY"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 5,
+                "totalTokenCount": 15
+            }
+        }
+        
+        result = convert_gemini_to_openai(gemini_response)
+        assert result["choices"][0]["finish_reason"] == "content_filter"
 
 
 # ============================================================================
