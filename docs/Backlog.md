@@ -40,9 +40,10 @@ This document tracks planned improvements, features, and technical debt items fo
 |---|------|----------|--------|------|--------|
 | 1 | [Fix Model Name Normalization Configuration](#1-fix-model-name-normalization-configuration) | High | Small (1-3d) | Low | 🔴 To Do |
 | 2 | [Add Automated Test Cases](#2-add-automated-test-cases) | High | Large (2-4w) | Low | 🔴 To Do |
-| 3 | [Standardize Configuration File Naming](#3-standardize-configuration-file-naming) | High | Small (1-3d) | Medium | 🔴 To Do |
-| 4 | [Add Transport Logging with Timestamp Rotation](#4-add-transport-logging-with-timestamp-rotation) | High | Medium (1-2w) | Low | 🔴 To Do |
-| 5 | [Make Logging Configurable](#5-make-logging-configurable) | High | Small (1-3d) | Low | 🔴 To Do |
+| 3 | [Security filter to prevent uploading of the sensitive information to LLM](#3-security-filter-to-prevent-uploading-of-the-sensitive-information-to-llm) | High | Small (1-3d) | Medium | 🔴 To Do |
+| 4 | [Standardize Configuration File Naming](#4-standardize-configuration-file-naming) | High | Small (1-3d) | Medium | 🔴 To Do |
+| 5 | [Add Transport Logging with Timestamp Rotation](#5-add-transport-logging-with-timestamp-rotation) | High | Medium (1-2w) | Low | 🔴 To Do |
+| 6 | [Make Logging Configurable](#6-make-logging-configurable) | High | Small (1-3d) | Low | 🔴 To Do |
 | 6 | [Refactor Python Classes to Follow SOLID Principles](#6-refactor-python-classes-to-follow-solid-principles) | Medium | Large (2-4w) | High | 🔴 To Do |
 | 7 | [Generate profile.json from SAP AI Core Service Connection](#7-generate-profilejson-from-sap-ai-core-service-connection) | Medium | Medium (1-2w) | Low | 🔴 To Do |
 | 8 | [Add Abbreviated Request/Response Logging](#8-add-abbreviated-requestresponse-logging) | Medium | Small (1-3d) | Low | 🔴 To Do |

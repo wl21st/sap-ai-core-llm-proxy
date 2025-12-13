@@ -833,6 +833,13 @@ def convert_claude37_to_openai(response, model_name="claude-3.7"):
         # Claude 3.7/4 /converse should provide totalTokens, but calculate as fallback
         total_tokens = usage.get("totalTokens", input_tokens + output_tokens)
 
+        # Extract cache/context tokens if available
+        prompt_tokens_details = {}
+        if "cacheReadInputTokens" in usage or "cacheCreationInputTokens" in usage:
+            prompt_tokens_details["cached_tokens"] = usage.get("cacheReadInputTokens", 0)
+            if usage.get("cacheCreationInputTokens", 0) > 0:
+                prompt_tokens_details["cache_creation_tokens"] = usage.get("cacheCreationInputTokens", 0)
+
 
         # --- Map Claude stopReason to OpenAI finish_reason ---
         stop_reason_map = {
@@ -867,8 +874,13 @@ def convert_claude37_to_openai(response, model_name="claude-3.7"):
                 "prompt_tokens": input_tokens,
                 "total_tokens": total_tokens
             }
-            # "system_fingerprint": None # Not available from Claude /converse
         }
+        
+        # Add prompt_tokens_details if cache tokens are present
+        if prompt_tokens_details:
+            openai_response["usage"]["prompt_tokens_details"] = prompt_tokens_details
+            logging.debug(f"Added prompt_tokens_details to response: {prompt_tokens_details}")
+        
         logging.debug(f"Converted response to OpenAI format: {json.dumps(openai_response, indent=2)}")
         return openai_response
 

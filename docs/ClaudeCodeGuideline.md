@@ -17,10 +17,7 @@ Until now, Claude Code couldn't connect to SAP AI Core because it requires Anthr
 ```bash
 git clone https://github.com/pjq/sap-ai-core-llm-proxy.git
 cd sap-ai-core-llm-proxy
-pip install -r requirements.txt
-uv init
-uv venv -p 3.13
-uv add -r requirements.txt
+uv sync
 ```
 
 ### 2. Configure SAP AI Core SDK (Recommended Method)
