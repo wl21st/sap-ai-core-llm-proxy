@@ -20,6 +20,7 @@ from gen_ai_hub.proxy.native.amazon.clients import Session
 # Import from new modular structure
 from config import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig, load_config
 from utils import setup_logging, get_token_logger, handle_http_429_error
+from auth import TokenManager, RequestValidator
 
 # Global configuration
 proxy_config = ProxyConfig()
@@ -77,7 +78,8 @@ def handle_embedding_request():
 
     try:
         endpoint_url, modified_payload, subaccount_name = handle_embedding_service_call(input_text, model, encoding_format)
-        subaccount_token = fetch_token(subaccount_name)
+        token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
+        subaccount_token = token_manager.get_token()
         subaccount = proxy_config.subaccounts[subaccount_name]
         resource_group = subaccount.resource_group
         service_key = subaccount.service_key
@@ -1747,7 +1749,8 @@ def proxy_openai_stream():
     logging.debug(f"Request body:\n{json.dumps(request.get_json(), indent=4)}")
     
     # Verify client authentication token
-    if not verify_request_token(request):
+    validator = RequestValidator(proxy_config.secret_authentication_tokens)
+    if not validator.validate(request):
         logging.info("Unauthorized request received. Token verification failed.")
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -1779,7 +1782,8 @@ def proxy_openai_stream():
             endpoint_url, modified_payload, subaccount_name = handle_default_request(payload, model)
         
         # Get token for the selected subAccount
-        subaccount_token = fetch_token(subaccount_name)
+        token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
+        subaccount_token = token_manager.get_token()
         
         # Get resource group for the selected subAccount
         resource_group = proxy_config.subaccounts[subaccount_name].resource_group
@@ -1830,7 +1834,8 @@ def proxy_claude_request():
     if not api_key:
         api_key = request.headers.get("Authorization", "").replace("Bearer ", "")
     
-    if not verify_request_token(request):
+    validator = RequestValidator(proxy_config.secret_authentication_tokens)
+    if not validator.validate(request):
         return jsonify({
             "type": "error",
             "error": { "type": "authentication_error", "message": "Invalid API Key provided." }
@@ -2092,7 +2097,8 @@ def proxy_claude_request_original():
     """Original implementation preserved as fallback."""
     logging.info("Using original Claude request implementation")
     
-    if not verify_request_token(request):
+    validator = RequestValidator(proxy_config.secret_authentication_tokens)
+    if not validator.validate(request):
         return jsonify({
             "type": "error",
             "error": { "type": "authentication_error", "message": "Invalid API Key provided." }
@@ -2108,7 +2114,8 @@ def proxy_claude_request_original():
 
     try:
         base_url, subaccount_name, resource_group, model = load_balance_url(model)
-        subaccount_token = fetch_token(subaccount_name)
+        token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
+        subaccount_token = token_manager.get_token()
 
         # Convert incoming Claude payload to the format expected by the backend model
         if is_gemini_model(model):
