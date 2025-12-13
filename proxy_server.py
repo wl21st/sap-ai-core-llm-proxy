@@ -11,88 +11,15 @@ from datetime import datetime
 import argparse
 import re
 import ast
-from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 
 # SAP AI SDK imports
 from gen_ai_hub.proxy.core.utils import kwargs_if_set
 from gen_ai_hub.proxy.native.amazon.clients import Session
 
-
-
-@dataclass
-class ServiceKey:
-    clientid: str
-    clientsecret: str
-    url: str
-    identityzoneid: str
-
-@dataclass
-class TokenInfo:
-    token: Optional[str] = None
-    expiry: float = 0
-    lock: threading.Lock = field(default_factory=threading.Lock)
-
-@dataclass
-class SubAccountConfig:
-    name: str
-    resource_group: str
-    service_key_json: str
-    deployment_models: Dict[str, List[str]]
-    service_key: Optional[ServiceKey] = None
-    token_info: TokenInfo = field(default_factory=TokenInfo)
-    normalized_models: Dict[str, List[str]] = field(default_factory=dict)
-    
-    def load_service_key(self):
-        """Load service key from file"""
-        key_data = load_config(self.service_key_json)
-        self.service_key = ServiceKey(
-            clientid=key_data.get('clientid'),
-            clientsecret=key_data.get('clientsecret'),
-            url=key_data.get('url'),
-            identityzoneid=key_data.get('identityzoneid')
-        )
-
-    def normalize_model_names(self):
-      """Normalize model names by removing prefixes like 'anthropic--'"""
-      if False:
-        self.normalized_models = {
-          key.replace("anthropic--", ""): value
-          for key, value in self.deployment_models.items()
-        }
-      else:
-        self.normalized_models = {
-          key: value
-          for key, value in self.deployment_models.items()
-        }
-
-@dataclass
-class ProxyConfig:
-    subaccounts: Dict[str, SubAccountConfig] = field(default_factory=dict)
-    secret_authentication_tokens: List[str] = field(default_factory=list)
-    port: int = 3001
-    host: str = "127.0.0.1"
-    # Global model to subaccount mapping for load balancing
-    model_to_subaccounts: Dict[str, List[str]] = field(default_factory=dict)
-    
-    def initialize(self):
-        """Initialize all subaccounts and build model mappings"""
-        for subaccount in self.subaccounts.values():
-            subaccount.load_service_key()
-            subaccount.normalize_model_names()
-            
-        # Build model to subaccounts mapping for load balancing
-        self.build_model_mapping()
-    
-    def build_model_mapping(self):
-        """Build a mapping of models to the subaccounts that have them"""
-        self.model_to_subaccounts = {}
-        for subaccount_name, subaccount in self.subaccounts.items():
-            for model in subaccount.normalized_models.keys():
-                if model not in self.model_to_subaccounts:
-                    self.model_to_subaccounts[model] = []
-                self.model_to_subaccounts[model].append(subaccount_name)
-
+# Import from new modular structure
+from config import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig, load_config
+from utils import setup_logging, get_token_logger, handle_http_429_error
 
 # Global configuration
 proxy_config = ProxyConfig()
@@ -132,52 +59,7 @@ def get_sapaicore_sdk_client(model_name: str):
             _bedrock_clients[model_name] = client
     return client
 
-def handle_http_429_error(http_err, context="request"):
-    """
-    Handle HTTP 429 (Too Many Requests) errors consistently across all endpoints.
-
-    Args:
-        http_err: The HTTPError exception from requests
-        context: Description of the request context for logging
-
-    Returns:
-        Flask response tuple (response_object, status_code)
-    """
-    logging.error(f"HTTP 429 Rate Limit Error for {context}")
-    logging.error(f"HTTP 429 Response Headers:")
-
-    # Dump all response headers to console for debugging
-    for header_name, header_value in http_err.response.headers.items():
-        logging.error(f"  {header_name}: {header_value}")
-
-    # Log response body if available
-    try:
-        response_body = http_err.response.text
-        logging.error(f"HTTP 429 Response Body: {response_body}")
-    except Exception as body_err:
-        logging.error(f"Could not read 429 response body: {body_err}")
-
-    # Return 429 error to client with retry information
-    error_response = {
-        "error": "Rate limit exceeded",
-        "status_code": 429,
-        "message": "Too many requests. Please retry after some time.",
-        "headers": dict(http_err.response.headers)
-    }
-
-    # Create Flask response with the original 429 headers copied
-    flask_response = jsonify(error_response)
-    flask_response.status_code = 429
-
-    # Map both x-retry-after and Retry-After headers to retry-after in response
-    for header_name, header_value in http_err.response.headers.items():
-        header_lower = header_name.lower()
-        if header_lower in ['x-retry-after', 'retry-after']:
-            flask_response.headers['Retry-After'] = header_value
-            logging.info(f"Set Retry-After header to: {header_value}")
-            break
-
-    return flask_response
+# handle_http_429_error is now imported from utils.error_handlers
 
 @app.route('/v1/embeddings', methods=['POST'])
 def handle_embedding_request():
@@ -258,60 +140,15 @@ def format_embedding_response(response, model):
         }
     }
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Initialize token logger (will be configured on first use)
+token_logger = get_token_logger()
 
-# Create a new logger for token usage
-token_logger = logging.getLogger('token_usage')
-token_logger.setLevel(logging.INFO)
-
-# Create a file handler for token usage logging
-log_directory = 'logs'
-if not os.path.exists(log_directory):
-    os.makedirs(log_directory)
-log_file = os.path.join(log_directory, 'token_usage.log')
-file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(logging.INFO)
-
-# Create a formatter for token usage logging
-formatter = logging.Formatter('%(asctime)s - %(message)s')
-file_handler.setFormatter(formatter)
-
-# Add the file handler to the token usage logger
-token_logger.addHandler(file_handler)
-
-# Global variables for token management
+# Legacy global variables for token management (deprecated, kept for compatibility)
 token = None
 token_expiry = 0
 lock = threading.Lock()
 
-def load_config(file_path):
-    """Loads configuration from a JSON file with support for multiple subAccounts."""
-    with open(file_path, 'r') as file:
-        config_json = json.load(file)
-    
-    # Check if this is the new format with subAccounts
-    if 'subAccounts' in config_json:
-        # Create a proper ProxyConfig instance
-        proxy_conf = ProxyConfig(
-            secret_authentication_tokens=config_json.get('secret_authentication_tokens', []),
-            port=config_json.get('port', 3001),
-            host=config_json.get('host', '127.0.0.1')
-        )
-        
-        # Parse each subAccount
-        for sub_name, sub_config in config_json.get('subAccounts', {}).items():
-            proxy_conf.subaccounts[sub_name] = SubAccountConfig(
-                name=sub_name,
-                resource_group=sub_config.get('resource_group', 'default'),
-                service_key_json=sub_config.get('service_key_json', ''),
-                deployment_models=sub_config.get('deployment_models', {})
-            )
-        
-        return proxy_conf
-    else:
-        # For backward compatibility - return the raw JSON
-        return config_json
+# load_config is now imported from config.loader
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Proxy server for AI models")
@@ -2957,10 +2794,8 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
 if __name__ == '__main__':
     args = parse_arguments()
     
-    # Set logging level based on debug flag
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logging.debug("Debug mode enabled")
+    # Setup logging using the new modular function
+    setup_logging(debug=args.debug)
     
     logging.info(f"Loading configuration from: {args.config}")
     config = load_config(args.config)
