@@ -2,8 +2,9 @@
 
 This project establishes a proxy server to interface with SAP AI Core services, it transform the SAP AI Core LLM API to Open AI Compatible API, no matter it's gpt-4o or claude sonnet 4.
 
-So it is compatible with any application that supports the OpenAI API, so you can use the SAP AI Core in other Applications, e.g. 
-- [Cursor IDE](https://www.cursor.com/) 
+So it is compatible with any application that supports the OpenAI API, so you can use the SAP AI Core in other Applications, e.g.
+
+- [Cursor IDE](https://www.cursor.com/)
 - Cherry Studio
 - Cline
 - Lobe Chat
@@ -12,39 +13,45 @@ So it is compatible with any application that supports the OpenAI API, so you ca
 - Open Code
 - ChatWise
 - Or [Chitchat](https://github.com/pjq/ChitChat/)
-- Or [ChatCat](https://github.com/pjq/ChatCat/) 
+- Or [ChatCat](https://github.com/pjq/ChatCat/)
 
 **Important Reminder**: It is crucial to follow the documentation precisely to ensure the successful deployment of the LLM model. Please refer to the official SAP AI Core documentation for detailed instructions and guidelines.
-- https://developers.sap.com/tutorials/ai-core-generative-ai.html
+
+- <https://developers.sap.com/tutorials/ai-core-generative-ai.html>
 
 Once the LLM model is deployed, obtain the URL and update it in the config.json file: `deployment_models`.
 
-
 ## Quick Start
+
 ```shell
 python proxy_server.py --config config.json
 ```
 
 ### Debug Mode
+
 For detailed logging and troubleshooting, you can enable debug mode:
+
 ```shell
 python proxy_server.py --config config.json --debug
 ```
 
 After you run the proxy server, you will get
-- API BaseUrl: http://127.0.0.1:3001/v1
-- API key will be one of secret_authentication_tokens. 
+
+- API BaseUrl: <http://127.0.0.1:3001/v1>
+- API key will be one of secret_authentication_tokens.
 - Model ID: models you configured in the `deployment_models`
 
 So two major end point
-- OpenAI Compatible API: http://127.0.0.1:3001/v1/chat/completion
-- Anthrophic Claude Sonnet API: http://127.0.0.1:3001/v1/messages
 
+- OpenAI Compatible API: <http://127.0.0.1:3001/v1/chat/completion>
+- Anthrophic Claude Sonnet API: <http://127.0.0.1:3001/v1/messages>
 
 You can check the models list
-- http://127.0.0.1:3001/v1/models
+
+- <http://127.0.0.1:3001/v1/models>
 
 e.g.
+
 ```json
 {
   "data": [
@@ -66,20 +73,25 @@ e.g.
 ```
 
 ### OpenAI Embeddings API
+
 The proxy server now supports OpenAI-compatible embeddings API:
-- Endpoint: http://127.0.0.1:3001/v1/embeddings
+
+- Endpoint: <http://127.0.0.1:3001/v1/embeddings>
 - Compatible with OpenAI embeddings request format
 - Transforms requests for SAP AI Core compatibility
 
 ## Overview
+
 `sap-ai-core-llm-proxy` is a Python-based project that includes functionalities for token management, forwarding requests to the SAP AI Core API, and handling responses. The project uses Flask to implement the proxy server.
 
 Now it supports the following LLM models
+
 - OpenAI: gpt-4o, gpt-4.1, gpt-o3-mini, gpt-o3, gpt-o4-mini
 - Claude: 4-sonnet, 4.5-sonnet
 - Google Gemini: gemini-2.5-pro
 
 ## Features
+
 - **Token Management**: Fetch and cache tokens for authentication.
 - **Proxy Server**: Forward requests to the AI API with token management.
 - **Load Balance**: Support the load balancing across multiple subAccounts and deployments.
@@ -89,36 +101,44 @@ Now it supports the following LLM models
 - **Debug Mode**: Enhanced logging capabilities with `--debug` command line flag for detailed troubleshooting.
 
 ## Prerequisites
+
 - Python 3.x
 - Flask
 - Requests library
 
 ## Installation
+
 1. Clone the repository:
+
     ```sh
     git clone git@github.com:pjq/sap-ai-core-llm-proxy.git
     cd sap-ai-core-llm-proxy
     ```
 
 2. Install the required Python packages using uv (recommended):
+
     ```sh
     uv sync
     ```
 
     Or using pip:
+
     ```sh
     pip install -r requirements.txt
     ```
 
 ## Configuration
+
 1. Copy the example configuration file to create your own configuration file:
+
     ```sh
     cp config.json.example config.json
     ```
 
 2. Edit `config.json` to include your specific details. The file supports multi-account configurations for different model types:
 
-   ### Multi-Account Configuration 
+   ### Multi-Account Configuration
+
    ```json
    {
        "subAccounts": {
@@ -158,6 +178,7 @@ Now it supports the following LLM models
    ```
 
 3. Get the service key files (e.g., `demokey.json`) with the following structure from the SAP AI Core Guidelines for each subAccount:
+
     ```json
     {
       "serviceurls": {
@@ -191,17 +212,23 @@ The proxy now supports distributing requests across multiple subAccounts:
 ## Running the Proxy Server
 
 ### Running the Proxy Server over HTTP
+
 Start the proxy server using the following command:
+
 ```sh
 python proxy_server.py
 ```
+
 The server will run on `http://127.0.0.1:3001`.
 
 ### Anthropic Claude Messages API Compatibility
+
 The proxy server provides full compatibility with the Anthropic Claude Messages API through the `/v1/messages` endpoint. This allows you to use any application that supports the Claude Messages API directly with SAP AI Core.
+
 - **Endpoint**: `http://127.0.0.1:3001/v1/messages`
 
 ### Supported Features
+
 - **Non-streaming requests**: Standard request/response format
 - **Streaming requests**: Server-sent events (SSE) with `"stream": true`
 - **Multi-model support**: Works with Claude, GPT, and Gemini models deployed in SAP AI Core
@@ -210,15 +237,21 @@ The proxy server provides full compatibility with the Anthropic Claude Messages 
 - **Multi-turn conversations**: Full conversation history support
 
 ### Anthropic Claude Integration with SAP AI Core
+
 The project is use the official SAP AI SDK (`sap-ai-sdk-gen`) for Anthropic Claude integration. This method provides better compatibility and follows SAP's official guidelines.
-- https://help.sap.com/doc/generative-ai-hub-sdk/CLOUD/en-US/_reference/README_sphynx.html
+
+- <https://help.sap.com/doc/generative-ai-hub-sdk/CLOUD/en-US/_reference/README_sphynx.html>
+
 #### Configuration
+
 1. Create the configuration directory and file:
+
 ```shell
 mkdir -p ~/.aicore
 ```
 
 2. Create `~/.aicore/config.json` with your SAP AI Core credentials:
+
 ```json
 {
   "AICORE_AUTH_URL": "https://*****.authentication.sap.hana.ondemand.com",
@@ -230,6 +263,7 @@ mkdir -p ~/.aicore
 ```
 
 Replace the `*****` placeholders with your actual SAP AI Core service credentials:
+
 - `AICORE_AUTH_URL`: Your SAP AI Core authentication URL
 - `AICORE_CLIENT_ID`: Your client ID from the service key
 - `AICORE_CLIENT_SECRET`: Your client secret from the service key
@@ -237,14 +271,18 @@ Replace the `*****` placeholders with your actual SAP AI Core service credential
 - `AICORE_BASE_URL`: Your SAP AI Core API base URL
 
 ### Compatible Applications
+
 Any application that supports the Anthropic Claude Messages API can now work with SAP AI Core through this proxy, including:
+
 - Claude Code
 - Claude SDK
 - Anthropic API clients
 - Custom applications using the Messages API format
 
 ### Claude Code
+
 You need to set the enviroment variables before run the claude code.
+
 ```shell
 export ANTHROPIC_AUTH_TOKEN=your_secret_key
 export ANTHROPIC_BASE_URL=http://127.0.0.1:3001
@@ -252,11 +290,13 @@ export ANTHROPIC_MODEL=anthropic--claude-4.5-sonnet
 ```
 
 Then run the claude code
+
 ```shell
 claude
 ```
 
 ## Running the Proxy Server over HTTPS
+
 To run the proxy server over HTTPS, you need to generate SSL certificates. You can use the following command to generate a self-signed certificate and key:
 
 ```sh
@@ -264,19 +304,25 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -node
 ```
 
 This will generate `cert.pem` and `key.pem` files. Place these files in the project root directory. Then, start the proxy server using the following command:
+
 ```sh
 python proxy_server.py
 ```
+
 Ensure that your `proxy_server.py` includes the following line to enable HTTPS:
+
 ```python
 if __name__ == '__main__':
     logging.info("Starting proxy server...")
     app.run(host='127.0.0.1', port=8443, debug=True, ssl_context=('cert.pem', 'key.pem'))
 ```
+
 The server will run on `https://127.0.0.1:8443`.
 
 ### Sending a Demo Request
+
 You can send a demo request to the proxy server using the `proxy_server_demo_request.py` script:
+
 ```sh
 python proxy_server_demo_request.py
 ```
@@ -284,11 +330,14 @@ python proxy_server_demo_request.py
 ## Running the Local Chat Application
 
 To start the local chat application using `chat.py`, use the following command:
+
 ```shell
 python3 chat.py 
 python3 chat.py --model gpt-4o 
 ```
+
 Example
+
 ```shell
 python3 chat.py 
 Starting chat with model: gpt-4o. Type 'exit' to end.
@@ -302,16 +351,19 @@ You:
 You can use the SAP AI Core with the OpenAI Codex CLI via the Proxy Server
 
 Install codex
+
 ```shell
 npm install -g @openai/codex
 ```
 
 Create the codex config.toml
+
 ```shell
 vim  ~/.codex/config.toml
 ```
 
 Update the config.toml
+
 ```toml
 model_provider="sapaicore"
 model="gpt-5"
@@ -330,24 +382,30 @@ export OPENAI_API_KEY=your_secret_key
 ```
 
 Then run codex
+
 ```shell
 codex
 ```
 
-For more codex config please check 
-- https://github.com/openai/codex/blob/main/docs/config.md
+For more codex config please check
+
+- <https://github.com/openai/codex/blob/main/docs/config.md>
 
 ## Cursor(AI IDE) Integration with SAP AI Core
+
 You can run the proxy_server in your public server, then you can update the base_url in the Cursor model settings.
 **Now ONLY gpt-4o supported**
 Check the details
-- https://forum.cursor.com/t/custom-api-keys-fail-with-the-model-does-not-work-with-your-current-plan-or-api-key/97422
+
+- <https://forum.cursor.com/t/custom-api-keys-fail-with-the-model-does-not-work-with-your-current-plan-or-api-key/97422>
 
 ## Cline Integration with SAP AI Core
+
 You can integrate the SAP AI Core with Cline
 Choose the API Provider -> OpenAI API Compatible
-- Base URL: http://127.0.0.1:3001/v1
-- API key: will be one of secret_authentication_tokens. 
+
+- Base URL: <http://127.0.0.1:3001/v1>
+- API key: will be one of secret_authentication_tokens.
 - Model ID: models you configured in the `deployment_models`, e.g. 4.5-sonnet
 
 Note: Cline is already official support SAP AI Core.
@@ -355,13 +413,16 @@ Note: Cline is already official support SAP AI Core.
 ### Alternative: Claude Code Integration via Proxy
 
 You can also use the proxy server approach with Claude Code Router:
-- https://github.com/musistudio/claude-code-router
+
+- <https://github.com/musistudio/claude-code-router>
 
 ```shell
 npm install -g @anthropic-ai/claude-code
 npm install -g @musistudio/claude-code-router
 ```
+
 Then start Claude Code
+
 ```shell
 ccr code
 ```
@@ -384,8 +445,8 @@ cat ~/.claude-code-router/config.json
       "api_key": "your secret key",
        "models": [
          "gpt-4o",
- 	    "4-sonnet",
- 	    "4.5-sonnet"
+      "4-sonnet",
+      "4.5-sonnet"
        ]
     }
   ],
@@ -398,30 +459,35 @@ cat ~/.claude-code-router/config.json
 ```
 
 ## Cherry Studio Integration
+
 Add Provider->Provider Type -> OpenAI
 
-- API Key: will be one of secret_authentication_tokens. 
+- API Key: will be one of secret_authentication_tokens.
 
 ## Deploy with Docker
 
 You can run the proxy server in a container. A `Dockerfile` is provided.
 
 ### Build the image
+
 ```sh
 docker build -t sap-ai-core-llm-proxy:latest .
 ```
 
 ### Prepare configuration
+
 - Ensure you have a `config.json` in the project root (or elsewhere) with your subAccounts and models.
 - Ensure you have your SAP AI Core SDK config at `~/.aicore/config.json` on the host if using the SDK for Anthropic Claude.
 
 Example SDK config path on host:
+
 ```sh
 mkdir -p ~/.aicore
 vim ~/.aicore/config.json
 ```
 
 ### Run the container
+
 ```sh
 docker run --rm \
   -p 3001:3001 \
@@ -435,11 +501,13 @@ docker run --rm \
 ```
 
 Notes:
+
 - Map your `config.json` into the container and point `CONFIG_PATH` accordingly.
 - Mount your `~/.aicore` directory (read-only) to provide SAP AI Core SDK credentials for Anthropic Claude (`/v1/messages`).
 - The service will listen on `0.0.0.0:3001` inside the container and be available on the host at `http://localhost:3001`.
 
 ### Run with debug logs
+
 ```sh
 docker run --rm \
   -p 3001:3001 \
@@ -454,41 +522,108 @@ docker run --rm \
 ```
 
 ### Verify
+
 ```sh
 curl http://localhost:3001/v1/models
 ```
+
 You should see your configured models returned.
-- API Host: http://127.0.0.1:3001
-- Add Models: models you configured in the `deployment_models` 
+
+- API Host: <http://127.0.0.1:3001>
+- Add Models: models you configured in the `deployment_models`
 
 ### Claude Integration
+
 It seems the Cursor IDE will block the request if the model contains claude, so we need to rename it to the name don't contains claude
+
 - claud
 - sonnet
 
 Now I am using `4-sonnet`
 
-## Building Native Binary
+## Building and Releasing
 
-You can build a standalone executable binary using PyInstaller:
+### Quick Build
+
+Build a standalone executable binary using the Makefile:
 
 ```sh
-# Install PyInstaller if not already installed
+# Standard build
+make build
+
+# Build with tests
+make build-tested
+
+# Debug build (with console)
+make build-debug
+```
+
+The binary will be created in the `dist/` directory as `sap_ai_proxy` (or `.exe` on Windows).
+
+To run the binary:
+
+```sh
+./dist/sap_ai_proxy --config config.json
+```
+
+### Release Workflow
+
+The project uses a decoupled build and release process that separates:
+
+- **Building** binaries (independent of versioning)
+- **Version management** (bumping version numbers)
+- **Git tagging** (creating release tags)
+- **Multi-platform distribution** (uploading to GitHub, Docker, etc.)
+
+#### Quick Release
+
+```sh
+# Build and test
+make build-tested
+
+# Bump version and prepare release
+make version-bump-patch
+make release-prepare
+
+# Tag and upload
+make tag-and-push
+make release-github
+```
+
+#### Available Commands
+
+```sh
+make help                  # Show all available commands
+make version-show          # Display current version
+make version-bump-patch    # Bump patch version (0.1.0 -> 0.1.1)
+make version-bump-minor    # Bump minor version (0.1.0 -> 0.2.0)
+make version-bump-major    # Bump major version (0.1.0 -> 1.0.0)
+make release-prepare       # Package release artifacts
+make release-github        # Upload to GitHub Releases
+make release-docker        # Build Docker image
+```
+
+For detailed release workflow documentation, see:
+
+- [Release Quick Start Guide](docs/RELEASE_QUICK_START.md) - Quick reference for common workflows
+- [Release Workflow Guide](docs/RELEASE_WORKFLOW.md) - Complete documentation
+
+### Manual Build (Alternative)
+
+You can also build manually using PyInstaller:
+
+```sh
+# Install dependencies
 uv sync
 
 # Build the binary
-pyinstaller --onefile --name sap-ai-core-llm-proxy proxy_server.py
-```
-
-The binary will be created in the `dist/` directory as `sap-ai-core-llm-proxy.exe` (on Windows) or `sap-ai-core-llm-proxy` (on Linux/macOS).
-
-To run the binary:
-```sh
-./dist/sap-ai-core-llm-proxy --config config.json
+pyinstaller --onefile --name sap_ai_proxy proxy_server.py
 ```
 
 ## License
+
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Contact
+
 For any questions or issues, please contact [pengjianqing@gmail.com].
