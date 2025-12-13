@@ -18,15 +18,11 @@ PYINSTALLER_OPTS := --onefile \
 
 # macOS universal binary options
 ifeq ($(shell uname -s),Darwin)
-    # Universal binary support (Intel + Apple Silicon)
-    # Note: Requires all dependencies to be available as universal binaries
-    # Enable with: UNIVERSAL=1 make build
-    # If dependencies are ARM64-only, universal build will fail
-    ifdef UNIVERSAL
-        ifeq ($(UNIVERSAL),1)
-            PYINSTALLER_OPTS += --target-arch universal2
-        endif
-    endif
+    # Universal binary support is not available due to Python package ecosystem limitations.
+    # Most Python packages from PyPI are distributed as architecture-specific wheels,
+    # making true universal builds impossible without significant manual work.
+    #
+    # For multi-architecture distribution, build separately on Intel and ARM64 machines.
     PLATFORM := macos
     BINARY_EXT :=
 else ifeq ($(OS),Windows_NT)
@@ -42,7 +38,7 @@ ifneq ($(wildcard $(ICON_FILE)),)
     PYINSTALLER_OPTS += --icon=$(ICON_FILE)
 endif
 
-.PHONY: all build build-debug clean install test package sync \
+.PHONY: all build build-debug build-universal clean install test package sync \
         version-show version-bump-patch version-bump-minor version-bump-major \
         tag tag-push release-prepare release-github release-docker release-all \
         build-all-platforms
@@ -106,6 +102,7 @@ test: sync
 
 # Build after testing
 build-tested: test build
+
 
 # ============================================================================
 # VERSION MANAGEMENT (Separate from build)
@@ -255,7 +252,8 @@ workflow-major: version-bump-major build-tested release-prepare tag
 
 # Clean build artifacts only
 clean:
-	rm -rf $(DIST_DIR) $(BUILD_DIR) *.spec __pycache__
+	rm -rf $(DIST_DIR) $(BUILD_DIR) __pycache__
+	rm -f sap_ai_proxy.spec
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 
@@ -285,10 +283,16 @@ help:
 	@echo "SAP AI Core LLM Proxy - Makefile Commands"
 	@echo ""
 	@echo "BUILD COMMANDS:"
-	@echo "  make build              - Build standard binary (current architecture)"
-	@echo "  UNIVERSAL=1 make build  - Build universal binary (Intel + Apple Silicon)"
-	@echo "                            Note: Requires universal dependencies"
+	@echo "  make build              - Build native binary (current architecture)"
 	@echo "  make build-debug        - Build with console output"
+	@echo "  make build-gui          - Build GUI version (no console)"
+	@echo ""
+	@echo "MULTI-ARCHITECTURE BUILDING (macOS):"
+	@echo "  Universal binary support is not available due to Python package ecosystem limitations."
+	@echo "  For multi-architecture distribution, build separately on Intel and ARM64 machines."
+	@echo "  Recommended: Build on Intel Mac for x86_64, ARM Mac for arm64"
+	@echo ""
+	@echo "TESTING:"
 	@echo "  make build-gui          - Build GUI version (no console)"
 	@echo "  make build-tested       - Run tests then build"
 	@echo ""
