@@ -13,6 +13,7 @@ make build-tested
 
 # When satisfied, version and release
 make version-bump-patch
+git push origin main    # Push version changes
 make release-prepare
 make tag-and-push
 make release-github
@@ -22,6 +23,7 @@ make release-github
 
 ```bash
 make workflow-patch    # Bumps version, builds, tags locally
+git push origin main    # Push version changes
 make tag-push          # Push tag to remote
 make release-github    # Upload to GitHub
 ```
@@ -38,6 +40,7 @@ make build
 
 # Finally release
 make version-bump-minor
+git push origin main    # Push version changes
 make release-prepare
 make tag-and-push
 make release-github
@@ -112,6 +115,7 @@ make build
 
 # Thursday: Ready to release
 make version-bump-minor      # Now commit to version
+git push origin main        # Push version changes
 make release-prepare         # Package it
 make tag                     # Tag locally
 # ... final review of artifacts ...
