@@ -99,7 +99,7 @@ class StreamingConverter(ABC):
         """Extract token usage from metadata chunk.
         
         Args:
-            metaMetadata chunk containing usage information
+            Metadata chunk containing usage information
             
         Returns:
             Dictionary with 'prompt_tokens', 'completion_tokens', 'total_tokens'
