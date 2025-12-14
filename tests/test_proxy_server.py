@@ -23,14 +23,7 @@ from io import BytesIO
 # Import the module under test
 import proxy_server
 from proxy_server import (
-    ServiceKey,
-    TokenInfo,
-    SubAccountConfig,
-    ProxyConfig,
     app,
-    load_config,
-    fetch_token,
-    verify_request_token,
     load_balance_url,
     is_claude_model,
     is_claude_37_or_4,
@@ -41,8 +34,12 @@ from proxy_server import (
     convert_claude37_to_openai,
     convert_openai_to_gemini,
     convert_gemini_to_openai,
-    handle_http_429_error,
 )
+
+# Import from modular structure
+from config import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig, load_config
+from auth import TokenManager, fetch_token, verify_request_token
+from utils import handle_http_429_error
 
 
 # ============================================================================
@@ -494,7 +491,7 @@ class TestTokenManagement:
         mock_request = Mock()
         mock_request.headers = {"Authorization": "Bearer valid-token"}
 
-        assert verify_request_token(mock_request) is True
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
 
     def test_verify_request_token_invalid(self, reset_proxy_config):
         """Test token verification with invalid token."""
@@ -505,7 +502,7 @@ class TestTokenManagement:
 
         # The function checks if any secret_key is IN the token string
         # "wrong-token-xyz" doesn't contain "secret-abc-123"
-        result = verify_request_token(mock_request)
+        result = verify_request_token(mock_request, proxy_server.proxy_config)
         assert result is False
 
     def test_verify_request_token_no_auth_configured(self, reset_proxy_config):
@@ -516,7 +513,7 @@ class TestTokenManagement:
         mock_request.headers = {}
 
         # Should return True when no authentication is configured
-        assert verify_request_token(mock_request) is True
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
 
     def test_verify_request_token_x_api_key(self, reset_proxy_config):
         """Test token verification with x-api-key header."""
@@ -525,7 +522,7 @@ class TestTokenManagement:
         mock_request = Mock()
         mock_request.headers = {"x-api-key": "api-key-123"}
 
-        assert verify_request_token(mock_request) is True
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
 
     @patch("proxy_server.requests.post")
     def test_fetch_token_success(
@@ -551,7 +548,7 @@ class TestTokenManagement:
         subaccount.service_key = ServiceKey(**sample_service_key)
         proxy_server.proxy_config.subaccounts["test-account"] = subaccount
 
-        token = fetch_token("test-account")
+        token = fetch_token("test-account", proxy_server.proxy_config)
 
         assert token == "new-token-123"
         assert subaccount.token_info.token == "new-token-123"
@@ -574,7 +571,7 @@ class TestTokenManagement:
         subaccount.token_info.expiry = time.time() + 3600  # Valid for 1 hour
         proxy_server.proxy_config.subaccounts["test-account"] = subaccount
 
-        token = fetch_token("test-account")
+        token = fetch_token("test-account", proxy_server.proxy_config)
 
         assert token == "cached-token"
         # Should not make HTTP request
@@ -583,7 +580,7 @@ class TestTokenManagement:
     def test_fetch_token_invalid_subaccount(self, reset_proxy_config):
         """Test token fetch with invalid subaccount."""
         with pytest.raises(ValueError, match="SubAccount .* not found"):
-            fetch_token("nonexistent-account")
+            fetch_token("nonexistent-account", proxy_server.proxy_config)
 
 
 # ============================================================================
@@ -719,13 +716,13 @@ class TestFlaskEndpoints:
         data = json.loads(response.data)
         assert data["status"] == "success"
 
-    @patch("proxy_server.verify_request_token")
+    @patch("auth.request_validator.RequestValidator.validate")
     @patch("proxy_server.requests.post")
     def test_embeddings_endpoint(
-        self, mock_post, mock_verify, flask_client, reset_proxy_config
+        self, mock_post, mock_validate, flask_client, reset_proxy_config
     ):
         """Test /v1/embeddings endpoint."""
-        mock_verify.return_value = True
+        mock_validate.return_value = True
 
         # Setup mock response
         mock_response = Mock()
@@ -838,13 +835,13 @@ class TestConfigLoading:
 class TestIntegration:
     """Integration tests for complete workflows."""
 
-    @patch("proxy_server.verify_request_token")
+    @patch("auth.request_validator.RequestValidator.validate")
     @patch("proxy_server.requests.post")
     def test_chat_completion_flow(
-        self, mock_post, mock_verify, flask_client, reset_proxy_config
+        self, mock_post, mock_validate, flask_client, reset_proxy_config
     ):
         """Test complete chat completion flow."""
-        mock_verify.return_value = True
+        mock_validate.return_value = True
 
         def mock_post_side_effect(*args, **kwargs):
             url = args[0] if args else kwargs.get("url", "")
@@ -1025,7 +1022,7 @@ class TestTokenManagementEdgeCases:
         proxy_server.proxy_config.subaccounts["test-account"] = subaccount
 
         with pytest.raises(ConnectionError, match="HTTP Error"):
-            fetch_token("test-account")
+            fetch_token("test-account", proxy_server.proxy_config)
 
     @patch("proxy_server.requests.post")
     def test_fetch_token_timeout(
@@ -1044,7 +1041,7 @@ class TestTokenManagementEdgeCases:
         proxy_server.proxy_config.subaccounts["test-account"] = subaccount
 
         with pytest.raises(TimeoutError, match="Timeout connecting"):
-            fetch_token("test-account")
+            fetch_token("test-account", proxy_server.proxy_config)
 
     @patch("proxy_server.requests.post")
     def test_fetch_token_empty_token(
@@ -1069,7 +1066,7 @@ class TestTokenManagementEdgeCases:
         with pytest.raises(
             RuntimeError, match="Unexpected error processing token response"
         ):
-            fetch_token("test-account")
+            fetch_token("test-account", proxy_server.proxy_config)
 
     def test_verify_request_token_bearer_format(self, reset_proxy_config):
         """Test token verification with Bearer format."""
@@ -1078,7 +1075,7 @@ class TestTokenManagementEdgeCases:
         mock_request = Mock()
         mock_request.headers = {"Authorization": "Bearer my-secret-token"}
 
-        assert verify_request_token(mock_request) is True
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
 
 
 class TestLoadBalancingEdgeCases:
@@ -1162,10 +1159,10 @@ class TestFlaskEndpointsEdgeCases:
         assert data["object"] == "list"
         assert len(data["data"]) == 0
 
-    @patch("proxy_server.verify_request_token")
-    def test_embeddings_missing_input(self, mock_verify, flask_client):
+    @patch("auth.request_validator.RequestValidator.validate")
+    def test_embeddings_missing_input(self, mock_validate, flask_client):
         """Test embeddings endpoint with missing input."""
-        mock_verify.return_value = True
+        mock_validate.return_value = True
 
         response = flask_client.post(
             "/v1/embeddings",
@@ -1177,10 +1174,10 @@ class TestFlaskEndpointsEdgeCases:
         data = json.loads(response.data)
         assert "error" in data
 
-    @patch("proxy_server.verify_request_token")
-    def test_embeddings_unauthorized(self, mock_verify, flask_client):
+    @patch("auth.request_validator.RequestValidator.validate")
+    def test_embeddings_unauthorized(self, mock_validate, flask_client):
         """Test embeddings endpoint without authorization."""
-        mock_verify.return_value = False
+        mock_validate.return_value = False
 
         response = flask_client.post(
             "/v1/embeddings", json={"input": "test", "model": "text-embedding-3-large"}

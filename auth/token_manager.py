@@ -122,10 +122,31 @@ def fetch_token(subaccount_name: str, proxy_config) -> str:
 
     Returns:
         Valid authentication token
+        
+    Raises:
+        ValueError: If subaccount is not found or service key is missing
+        ConnectionError: If there's a network issue during token fetch
+        TimeoutError: If token fetch times out
+        RuntimeError: For unexpected errors
     """
     import warnings
     warnings.warn("fetch_token() is deprecated, use TokenManager", DeprecationWarning, stacklevel=2)
 
+    # Check if subaccount exists (backward compatibility with old error message)
+    if subaccount_name not in proxy_config.subaccounts:
+        raise ValueError(f"SubAccount '{subaccount_name}' not found in configuration")
+    
     subaccount = proxy_config.subaccounts[subaccount_name]
+    
+    # Check if service key is loaded (backward compatibility)
+    if not subaccount.service_key:
+        raise ValueError(f"Service key not loaded for subAccount '{subaccount_name}'")
+    
     manager = TokenManager(subaccount)
-    return manager.get_token()
+    
+    try:
+        return manager.get_token()
+    except ValueError as err:
+        # Wrap ValueError in RuntimeError for backward compatibility with old behavior
+        # Old code: raise RuntimeError(f"Unexpected error processing token response...")
+        raise RuntimeError(f"Unexpected error processing token response for '{subaccount_name}': {err}") from err

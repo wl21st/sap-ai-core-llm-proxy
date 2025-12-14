@@ -65,7 +65,8 @@ def get_sapaicore_sdk_client(model_name: str):
 @app.route('/v1/embeddings', methods=['POST'])
 def handle_embedding_request():
     logging.info("Received request to /v1/embeddings")
-    if not verify_request_token(request):
+    validator = RequestValidator(proxy_config.secret_authentication_tokens)
+    if not validator.validate(request):
         return jsonify({"error": "Unauthorized"}), 401
     
     payload = request.json
@@ -145,11 +146,6 @@ def format_embedding_response(response, model):
 # Initialize token logger (will be configured on first use)
 token_logger = get_token_logger()
 
-# Legacy global variables for token management (deprecated, kept for compatibility)
-token = None
-token_expiry = 0
-lock = threading.Lock()
-
 # load_config is now imported from config.loader
 
 def parse_arguments():
@@ -157,108 +153,6 @@ def parse_arguments():
     parser.add_argument("--config", type=str, default="config.json", help="Path to the configuration file")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     return parser.parse_args()
-
-def fetch_token(subaccount_name: str) -> str:
-    """Fetches or retrieves a cached SAP AI Core authentication token for a specific subAccount.
-    
-    Args:
-        subaccount_name: Name of the subAccount to fetch token for
-        
-    Returns:
-        The authentication token
-        
-    Raises:
-        ValueError: If subaccount is not found or service key is missing
-        ConnectionError: If there's a network issue during token fetch
-    """
-    if subaccount_name not in proxy_config.subaccounts:
-        raise ValueError(f"SubAccount '{subaccount_name}' not found in configuration")
-    
-    subaccount = proxy_config.subaccounts[subaccount_name]
-    if not subaccount.service_key:
-        raise ValueError(f"Service key not loaded for subAccount '{subaccount_name}'")
-    
-    with subaccount.token_info.lock:
-        now = time.time()
-        # Return cached token if still valid
-        if subaccount.token_info.token and now < subaccount.token_info.expiry:
-            logging.info(f"Using cached token for subAccount '{subaccount_name}'.")
-            return subaccount.token_info.token
-
-        logging.info(f"Fetching new token for subAccount '{subaccount_name}'.")
-
-        # Build auth header with Base64 encoded clientid:clientsecret
-        service_key = subaccount.service_key
-        auth_string = f"{service_key.clientid}:{service_key.clientsecret}"
-        encoded_auth = base64.b64encode(auth_string.encode()).decode()
-        
-        # Build token endpoint URL and headers
-        token_url = f"{service_key.url}/oauth/token?grant_type=client_credentials"
-        headers = {"Authorization": f"Basic {encoded_auth}"}
-
-        try:
-            response = requests.post(token_url, headers=headers, timeout=15)
-            response.raise_for_status()
-            
-            token_data = response.json()
-            new_token = token_data.get('access_token')
-            
-            # Check for empty token
-            if not new_token:
-                raise ValueError("Fetched token is empty")
-            
-            # Calculate expiry (use expires_in from response, default to 4 hours, with 5-minute buffer)
-            expires_in = int(token_data.get('expires_in', 14400))
-            subaccount.token_info.token = new_token
-            subaccount.token_info.expiry = now + expires_in - 300  # 5-minute buffer
-            
-            logging.info(f"Token fetched successfully for subAccount '{subaccount_name}'.")
-            return new_token
-        
-        except requests.exceptions.Timeout as err:
-            logging.error(f"Timeout fetching token for '{subaccount_name}': {err}")
-            subaccount.token_info.token = None
-            subaccount.token_info.expiry = 0
-            raise TimeoutError(f"Timeout connecting token endpoint for '{subaccount_name}'") from err
-            
-        except requests.exceptions.HTTPError as err:
-            logging.error(f"HTTP error fetching token for '{subaccount_name}': {err.response.status_code}-{err.response.text}")
-            subaccount.token_info.token = None
-            subaccount.token_info.expiry = 0
-            raise ConnectionError(f"HTTP Error {err.response.status_code} fetching token for '{subaccount_name}'") from err
-            
-        except requests.exceptions.RequestException as err:
-            logging.error(f"Network/Request error fetching token for '{subaccount_name}': {err}")
-            subaccount.token_info.token = None
-            subaccount.token_info.expiry = 0
-            raise ConnectionError(f"Network error fetching token for '{subaccount_name}': {err}") from err
-            
-        except Exception as err:
-            logging.error(f"Unexpected token fetch error for '{subaccount_name}': {err}", exc_info=True)
-            subaccount.token_info.token = None
-            subaccount.token_info.expiry = 0
-            raise RuntimeError(f"Unexpected error processing token response for '{subaccount_name}': {err}") from err
-
-def verify_request_token(request):
-    """Verifies the Authorization or x-api-key header from the incoming client request."""
-    token = request.headers.get("Authorization") or request.headers.get("x-api-key")
-    logging.info(f"verify_request_token, Token received in request: {token[:15]}..." if token and len(token) > 15 else token)
-
-    if not proxy_config.secret_authentication_tokens:
-        logging.warning("Client authentication disabled - no tokens configured.")
-        return True
-
-    if not token:
-        logging.error("Missing token in request. Checked Authorization and x-api-key headers.")
-        return False
-
-    # The check `secret_key in token` handles both "Bearer <token>" and just "<token>"
-    if not any(secret_key in token for secret_key in proxy_config.secret_authentication_tokens):
-        logging.error("Invalid token - no matching token found.")
-        return False
-
-    logging.debug("Client token verified successfully.")
-    return True
 
 def convert_openai_to_claude(payload):
     # Extract system message if present
