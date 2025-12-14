@@ -1,10 +1,12 @@
 name: AI Code Review
 
+# Temporarily disabled - not working
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  issue_comment:
-    types: [created, edited]
+  workflow_dispatch:
+  # pull_request:
+  #   types: [opened, synchronize, reopened]
+  # issue_comment:
+  #   types: [created, edited]
 
 permissions:
   contents: read
