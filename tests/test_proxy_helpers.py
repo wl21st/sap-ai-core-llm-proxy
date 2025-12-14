@@ -774,5 +774,754 @@ class TestConvertersErrorHandling:
         assert "proxy_conversion_error" in result["error"]["type"]
 
 
+class TestConvertersOpenAIToClaude37EdgeCases:
+    """Test edge cases for OpenAI to Claude 3.7 conversion."""
+    
+    def test_convert_openai_to_claude37_invalid_max_tokens_type_error(self):
+        """Test handling of invalid max_tokens type."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "max_tokens": "invalid"
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            mock_warning.assert_called()
+            # Should not have maxTokens in inferenceConfig due to invalid value
+            assert "inferenceConfig" not in result or "maxTokens" not in result.get("inferenceConfig", {})
+    
+    def test_convert_openai_to_claude37_invalid_max_tokens_value_error(self):
+        """Test handling of non-numeric max_tokens."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "max_tokens": None
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            mock_warning.assert_called()
+    
+    def test_convert_openai_to_claude37_invalid_temperature(self):
+        """Test handling of invalid temperature."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "temperature": "hot"
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            mock_warning.assert_called()
+            assert "inferenceConfig" not in result or "temperature" not in result.get("inferenceConfig", {})
+    
+    def test_convert_openai_to_claude37_stop_single_string(self):
+        """Test stop sequences with single string."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "stop": "STOP"
+        }
+        
+        result = Converters.convert_openai_to_claude37(payload)
+        assert result["inferenceConfig"]["stopSequences"] == ["STOP"]
+    
+    def test_convert_openai_to_claude37_stop_invalid_type(self):
+        """Test stop sequences with invalid type."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "stop": 123
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            mock_warning.assert_called()
+            assert "stopSequences" not in result.get("inferenceConfig", {})
+    
+    def test_convert_openai_to_claude37_content_with_string_items(self):
+        """Test conversion with string items in content list."""
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": ["plain string", {"text": "dict text"}]
+                }
+            ]
+        }
+        
+        result = Converters.convert_openai_to_claude37(payload)
+        content = result["messages"][0]["content"]
+        assert len(content) == 2
+        assert content[0]["text"] == "plain string"
+        assert content[1]["text"] == "dict text"
+    
+    def test_convert_openai_to_claude37_invalid_content_block(self):
+        """Test handling of invalid content blocks."""
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"invalid": "block"}, {"text": "valid"}]
+                }
+            ]
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            mock_warning.assert_called()
+            # Should only include valid block
+            assert len(result["messages"][0]["content"]) == 1
+    
+    def test_convert_openai_to_claude37_unsupported_content_type(self):
+        """Test handling of unsupported content types."""
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": 123  # Invalid type
+                }
+            ]
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            mock_warning.assert_called()
+            # Message should be skipped
+            assert len(result["messages"]) == 0
+    
+    def test_convert_openai_to_claude37_missing_content(self):
+        """Test handling of missing content field."""
+        payload = {
+            "messages": [
+                {"role": "user"}  # No content
+            ]
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            mock_warning.assert_called()
+    
+    def test_convert_openai_to_claude37_unsupported_role(self):
+        """Test handling of unsupported roles."""
+        payload = {
+            "messages": [
+                {"role": "system", "content": "System"},
+                {"role": "tool", "content": "Tool message"},
+                {"role": "user", "content": "User"}
+            ]
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_claude37(payload)
+            # System should be converted to first user message, tool should be skipped
+            # Should have system as first user message + user message
+            assert len(result["messages"]) == 2
+
+
+class TestConvertersClaudeStreaming:
+    """Test Claude streaming chunk conversion."""
+    
+    def test_convert_claude_chunk_to_openai_content_block_delta(self):
+        """Test conversion of content block delta."""
+        chunk = 'data: {"type": "content_block_delta", "delta": {"text": "Hello"}, "message": {"id": "msg_123"}}'
+        
+        result = Converters.convert_claude_chunk_to_openai(chunk, "claude-3.5-sonnet")
+        
+        assert "data: " in result
+        data = json.loads(result.replace("data: ", "").strip())
+        assert data["choices"][0]["delta"]["content"] == "Hello"
+    
+    def test_convert_claude_chunk_to_openai_message_delta_end_turn(self):
+        """Test conversion of message delta with end_turn."""
+        chunk = 'data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}'
+        
+        result = Converters.convert_claude_chunk_to_openai(chunk, "claude-3.5-sonnet")
+        
+        data = json.loads(result.replace("data: ", "").strip())
+        assert data["choices"][0]["finish_reason"] == "stop"
+    
+    def test_convert_claude_chunk_to_openai_invalid_json(self):
+        """Test handling of invalid JSON."""
+        chunk = 'data: {invalid json}'
+        
+        result = Converters.convert_claude_chunk_to_openai(chunk, "claude-3.5-sonnet")
+        
+        assert "error" in result
+        assert "Invalid JSON" in result
+    
+    def test_convert_claude_chunk_to_openai_exception(self):
+        """Test error handling for general exceptions."""
+        chunk = None  # Will cause exception
+        
+        result = Converters.convert_claude_chunk_to_openai(chunk, "claude-3.5-sonnet")
+        
+        assert "error" in result
+
+
+class TestConvertersClaude37Streaming:
+    """Test Claude 3.7/4 streaming chunk conversion."""
+    
+    def test_convert_claude37_chunk_to_openai_message_start(self):
+        """Test conversion of messageStart chunk."""
+        chunk = {
+            "messageStart": {
+                "role": "assistant"
+            }
+        }
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        assert result is not None
+        assert "data: " in result
+        data = json.loads(result.replace("data: ", "").strip())
+        assert data["choices"][0]["delta"]["role"] == "assistant"
+    
+    def test_convert_claude37_chunk_to_openai_content_block_delta(self):
+        """Test conversion of contentBlockDelta chunk."""
+        chunk = {
+            "contentBlockDelta": {
+                "delta": {
+                    "text": "streaming text"
+                }
+            }
+        }
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        assert result is not None
+        data = json.loads(result.replace("data: ", "").strip())
+        assert data["choices"][0]["delta"]["content"] == "streaming text"
+    
+    def test_convert_claude37_chunk_to_openai_content_block_delta_no_text(self):
+        """Test handling of contentBlockDelta without text."""
+        chunk = {
+            "contentBlockDelta": {
+                "delta": {}
+            }
+        }
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        # Should return None when no text delta
+        assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_message_stop(self):
+        """Test conversion of messageStop chunk."""
+        chunk = {
+            "messageStop": {
+                "stopReason": "end_turn"
+            }
+        }
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        assert result is not None
+        data = json.loads(result.replace("data: ", "").strip())
+        assert data["choices"][0]["finish_reason"] == "stop"
+    
+    def test_convert_claude37_chunk_to_openai_message_stop_max_tokens(self):
+        """Test conversion with max_tokens stop reason."""
+        chunk = {
+            "messageStop": {
+                "stopReason": "max_tokens"
+            }
+        }
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        data = json.loads(result.replace("data: ", "").strip())
+        assert data["choices"][0]["finish_reason"] == "length"
+    
+    def test_convert_claude37_chunk_to_openai_message_stop_tool_use(self):
+        """Test conversion with tool_use stop reason."""
+        chunk = {
+            "messageStop": {
+                "stopReason": "tool_use"
+            }
+        }
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        data = json.loads(result.replace("data: ", "").strip())
+        assert data["choices"][0]["finish_reason"] == "tool_calls"
+    
+    def test_convert_claude37_chunk_to_openai_message_stop_unmapped(self):
+        """Test handling of unmapped stop reason."""
+        chunk = {
+            "messageStop": {
+                "stopReason": "unknown_reason"
+            }
+        }
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        # Should return None for unmapped stop reasons
+        assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_content_block_start(self):
+        """Test that contentBlockStart is ignored."""
+        chunk = {"contentBlockStart": {}}
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_content_block_stop(self):
+        """Test that contentBlockStop is ignored."""
+        chunk = {"contentBlockStop": {}}
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_metadata(self):
+        """Test that metadata chunk is ignored."""
+        chunk = {"metadata": {"usage": {}}}
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+        
+        assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_unknown_type(self):
+        """Test handling of unknown chunk type."""
+        chunk = {"unknownType": {}}
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+            mock_warning.assert_called()
+            assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_string_input(self):
+        """Test conversion with string input (JSON parsing)."""
+        chunk_str = '{"messageStart": {"role": "assistant"}}'
+        
+        result = Converters.convert_claude37_chunk_to_openai(chunk_str, "claude-3.7-sonnet")
+        
+        assert result is not None
+        assert "assistant" in result
+    
+    def test_convert_claude37_chunk_to_openai_invalid_json_string(self):
+        """Test handling of invalid JSON string."""
+        chunk_str = '{invalid json}'
+        
+        with patch('logging.error') as mock_error:
+            result = Converters.convert_claude37_chunk_to_openai(chunk_str, "claude-3.7-sonnet")
+            mock_error.assert_called()
+            assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_empty_chunk(self):
+        """Test handling of empty chunk."""
+        chunk = {}
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+            mock_warning.assert_called()
+            assert result is None
+    
+    def test_convert_claude37_chunk_to_openai_error_handling(self):
+        """Test error handling returns error SSE."""
+        chunk = {"messageStart": None}  # Will cause error
+        
+        with patch('logging.error') as mock_error:
+            result = Converters.convert_claude37_chunk_to_openai(chunk, "claude-3.7-sonnet")
+            mock_error.assert_called()
+            assert "PROXY ERROR" in result
+
+
+class TestConvertersOpenAIToGeminiEdgeCases:
+    """Test edge cases for OpenAI to Gemini conversion."""
+    
+    def test_convert_openai_to_gemini_list_content_extraction(self):
+        """Test extraction of text from list content."""
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Part 1"},
+                        {"type": "text", "text": "Part 2"}
+                    ]
+                }
+            ]
+        }
+        
+        result = Converters.convert_openai_to_gemini(payload)
+        
+        assert "Part 1Part 2" in result["contents"]["parts"]["text"]
+    
+    def test_convert_openai_to_gemini_list_content_with_strings(self):
+        """Test handling of string items in content list."""
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": ["string1", "string2"]
+                }
+            ]
+        }
+        
+        result = Converters.convert_openai_to_gemini(payload)
+        
+        assert "string1string2" in result["contents"]["parts"]["text"]
+    
+    def test_convert_openai_to_gemini_non_string_non_list_content(self):
+        """Test handling of non-string, non-list content."""
+        payload = {
+            "messages": [
+                {"role": "user", "content": 12345}
+            ]
+        }
+        
+        result = Converters.convert_openai_to_gemini(payload)
+        
+        assert "12345" in result["contents"]["parts"]["text"]
+    
+    def test_convert_openai_to_gemini_role_merging(self):
+        """Test merging of consecutive messages with same role."""
+        payload = {
+            "messages": [
+                {"role": "user", "content": "First"},
+                {"role": "user", "content": "Second"},
+                {"role": "assistant", "content": "Response"}
+            ]
+        }
+        
+        result = Converters.convert_openai_to_gemini(payload)
+        
+        # First two user messages should be merged
+        assert len(result["contents"]) == 2
+        assert "First" in result["contents"][0]["parts"]["text"]
+        assert "Second" in result["contents"][0]["parts"]["text"]
+    
+    def test_convert_openai_to_gemini_unsupported_role(self):
+        """Test handling of unsupported roles."""
+        payload = {
+            "messages": [
+                {"role": "system", "content": "System"},
+                {"role": "tool", "content": "Tool"},
+                {"role": "user", "content": "User"}
+            ]
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_gemini(payload)
+            mock_warning.assert_called()
+    
+    def test_convert_openai_to_gemini_with_top_p(self):
+        """Test conversion with top_p parameter."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "top_p": 0.9
+        }
+        
+        result = Converters.convert_openai_to_gemini(payload)
+        
+        assert result["generation_config"]["topP"] == 0.9
+    
+    def test_convert_openai_to_gemini_invalid_top_p(self):
+        """Test handling of invalid top_p."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "top_p": "invalid"
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_openai_to_gemini(payload)
+            mock_warning.assert_called()
+
+
+class TestConvertersClaudeToGeminiEdgeCases:
+    """Test edge cases for Claude to Gemini conversion."""
+    
+    def test_convert_claude_request_to_gemini_list_content(self):
+        """Test conversion with list content."""
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Part 1"},
+                        {"type": "text", "text": "Part 2"}
+                    ]
+                }
+            ]
+        }
+        
+        result = Converters.convert_claude_request_to_gemini(payload)
+        
+        assert "Part 1 Part 2" in result["contents"][0]["parts"]["text"]
+    
+    def test_convert_claude_request_to_gemini_role_merging(self):
+        """Test consecutive messages with same role are merged."""
+        payload = {
+            "messages": [
+                {"role": "user", "content": "First"},
+                {"role": "user", "content": "Second"}
+            ]
+        }
+        
+        result = Converters.convert_claude_request_to_gemini(payload)
+        
+        # Should be merged into one message
+        assert len(result["contents"]) == 1
+        assert "First" in result["contents"][0]["parts"]["text"]
+        assert "Second" in result["contents"][0]["parts"]["text"]
+    
+    def test_convert_claude_request_to_gemini_with_tools(self):
+        """Test conversion with tools."""
+        payload = {
+            "messages": [{"role": "user", "content": "Test"}],
+            "tools": [
+                {
+                    "name": "search",
+                    "description": "Search tool",
+                    "input_schema": {"type": "object"}
+                }
+            ]
+        }
+        
+        result = Converters.convert_claude_request_to_gemini(payload)
+        
+        assert "tools" in result
+        assert len(result["tools"]) == 1
+        assert result["tools"][0]["function_declarations"][0]["name"] == "search"
+
+
+class TestConvertersBedrockEdgeCases:
+    """Test edge cases for Bedrock conversion."""
+    
+    def test_convert_claude_request_for_bedrock_string_content_normalization(self):
+        """Test conversion of string content to list format."""
+        payload = {
+            "messages": [
+                {"role": "user", "content": "Plain string"}
+            ]
+        }
+        
+        result = Converters.convert_claude_request_for_bedrock(payload)
+        
+        # String content should be converted to list format
+        assert isinstance(result["messages"][0]["content"], list)
+        assert result["messages"][0]["content"][0]["type"] == "text"
+        assert result["messages"][0]["content"][0]["text"] == "Plain string"
+    
+    def test_convert_claude_request_for_bedrock_system_array_preserved(self):
+        """Test that system field is preserved as-is."""
+        payload = {
+            "system": [{"type": "text", "text": "System prompt"}],
+            "messages": [{"role": "user", "content": "Test"}]
+        }
+        
+        result = Converters.convert_claude_request_for_bedrock(payload)
+        
+        assert result["system"] == [{"type": "text", "text": "System prompt"}]
+    
+    def test_convert_claude_request_for_bedrock_all_fields_copied(self):
+        """Test that all supported fields are copied."""
+        payload = {
+            "model": "claude-3",
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 50,
+            "stop_sequences": ["STOP"],
+            "messages": [{"role": "user", "content": "Test"}]
+        }
+        
+        result = Converters.convert_claude_request_for_bedrock(payload)
+        
+        assert result["model"] == "claude-3"
+        assert result["max_tokens"] == 1000
+        assert result["temperature"] == 0.7
+        assert result["top_p"] == 0.9
+        assert result["top_k"] == 50
+        assert result["stop_sequences"] == ["STOP"]
+
+
+class TestConvertersClaude37ResponseEdgeCases:
+    """Test edge cases for Claude 3.7 response conversion."""
+    
+    def test_convert_claude37_to_openai_non_text_first_block(self):
+        """Test handling when first content block is not text."""
+        response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tool_123"},
+                        {"type": "text", "text": "Found text"}
+                    ]
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 10, "outputTokens": 20}
+        }
+        
+        result = Converters.convert_claude37_to_openai(response)
+        
+        # Should find the text block
+        assert result["choices"][0]["message"]["content"] == "Found text"
+    
+    def test_convert_claude37_to_openai_no_text_block(self):
+        """Test error when no text block found."""
+        response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "tool_123"}
+                    ]
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {}
+        }
+        
+        result = Converters.convert_claude37_to_openai(response)
+        
+        assert result["object"] == "error"
+    
+    def test_convert_claude37_to_openai_missing_usage(self):
+        """Test handling of missing usage information."""
+        response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "Response"}]
+                }
+            },
+            "stopReason": "end_turn"
+        }
+        
+        with patch('logging.warning') as mock_warning:
+            result = Converters.convert_claude37_to_openai(response)
+            mock_warning.assert_called()
+            assert result["usage"]["prompt_tokens"] == 0
+            assert result["usage"]["completion_tokens"] == 0
+    
+    def test_convert_claude37_to_openai_unknown_stop_reason(self):
+        """Test handling of unknown stop reason."""
+        response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "Response"}]
+                }
+            },
+            "stopReason": "unknown_reason",
+            "usage": {"inputTokens": 10, "outputTokens": 20}
+        }
+        
+        result = Converters.convert_claude37_to_openai(response)
+        
+        # Should default to 'stop'
+        assert result["choices"][0]["finish_reason"] == "stop"
+    
+    def test_convert_claude37_to_openai_missing_stop_reason(self):
+        """Test handling of missing stop reason."""
+        response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "Response"}]
+                }
+            },
+            "usage": {"inputTokens": 10, "outputTokens": 20}
+        }
+        
+        result = Converters.convert_claude37_to_openai(response)
+        
+        # Should default to 'stop'
+        assert result["choices"][0]["finish_reason"] == "stop"
+
+
+class TestConvertersStreamingEdgeCases:
+    """Test edge cases for streaming conversions."""
+    
+    def test_convert_gemini_chunk_to_claude_delta_no_text(self):
+        """Test when Gemini chunk has no text."""
+        chunk = {
+            "candidates": [
+                {"content": {"parts": [{}]}}  # Empty part, no text field
+            ]
+        }
+        
+        result = Converters.convert_gemini_chunk_to_claude_delta(chunk)
+        
+        assert result is None
+    
+    def test_convert_openai_chunk_to_claude_delta_no_content(self):
+        """Test when OpenAI chunk has no content."""
+        chunk = {
+            "choices": [
+                {"delta": {}}
+            ]
+        }
+        
+        result = Converters.convert_openai_chunk_to_claude_delta(chunk)
+        
+        assert result is None
+    
+    def test_convert_gemini_chunk_to_openai_no_candidates(self):
+        """Test handling of chunk with no candidates."""
+        chunk = {"candidates": []}
+        
+        result = Converters.convert_gemini_chunk_to_openai(chunk, "gemini-pro")
+        
+        assert result is None
+    
+    def test_convert_gemini_chunk_to_openai_invalid_chunk(self):
+        """Test handling of invalid chunk type."""
+        chunk = "not a dict"
+        
+        with patch('logging.error') as mock_error:
+            result = Converters.convert_gemini_chunk_to_openai(chunk, "gemini-pro")
+            # The function logs an error when JSON parsing fails
+            assert result is None or mock_error.called
+
+
+class TestConvertersResponseErrorHandling:
+    """Additional error handling tests."""
+    
+    def test_convert_gemini_response_to_claude_invalid_candidates(self):
+        """Test error handling for invalid candidates structure."""
+        response = {
+            "candidates": []
+        }
+        
+        result = Converters.convert_gemini_response_to_claude(response)
+        
+        assert result["type"] == "error"
+    
+    def test_convert_gemini_response_to_claude_missing_text(self):
+        """Test error handling for missing text in parts."""
+        response = {
+            "candidates": [
+                {
+                    "content": {"parts": [{"type": "other"}]},
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        
+        result = Converters.convert_gemini_response_to_claude(response)
+        
+        assert result["type"] == "error"
+    
+    def test_convert_claude_to_openai_routes_to_claude37(self):
+        """Test that Claude 3.7/4 models are routed correctly."""
+        response = {
+            "output": {
+                "message": {
+                    "content": [{"text": "Response"}]
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 10, "outputTokens": 20}
+        }
+        
+        with patch('logging.info') as mock_info:
+            result = Converters.convert_claude_to_openai(response, "claude-3.7-sonnet")
+            # Should log that it's using claude37 conversion
+            assert any("3.7/4" in str(call) for call in mock_info.call_args_list)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
