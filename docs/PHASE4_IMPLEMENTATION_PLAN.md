@@ -405,19 +405,25 @@ modified_payload = provider.prepare_request(payload)
 ```
 
 4. **Add backward-compatible functions**:
+
 ```python
 # Backward compatibility wrappers
+import proxy_helpers
+
+
 def is_claude_model(model: str) -> bool:
     """Deprecated: Use ModelDetector.is_claude_model()"""
-    return model_detector.is_claude_model(model)
+    return proxy_helpers.is_claude_model(model)
+
 
 def is_gemini_model(model: str) -> bool:
     """Deprecated: Use ModelDetector.is_gemini_model()"""
-    return model_detector.is_gemini_model(model)
+    return proxy_helpers.is_gemini_model(model)
+
 
 def is_claude_37_or_4(model: str) -> bool:
     """Deprecated: Use ModelDetector.is_claude_37_or_4()"""
-    return model_detector.is_claude_37_or_4(model)
+    return proxy_helpers.is_claude_37_or_4(model)
 ```
 
 **Lines to Remove**: ~300 lines (detection functions + handler functions)

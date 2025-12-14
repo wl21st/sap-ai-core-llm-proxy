@@ -20,21 +20,25 @@ from dataclasses import dataclass
 from flask import Flask
 from io import BytesIO
 
+import proxy_helpers
 # Import the module under test
 import proxy_server
 from proxy_server import (
     app,
     load_balance_url,
-    is_claude_model,
-    is_claude_37_or_4,
-    is_gemini_model,
-    convert_openai_to_claude,
-    convert_openai_to_claude37,
-    convert_claude_to_openai,
-    convert_claude37_to_openai,
-    convert_openai_to_gemini,
-    convert_gemini_to_openai,
 )
+from proxy_helpers import Detector, Converters
+
+# Create convenience aliases for the test functions
+is_claude_model = Detector.is_claude_model
+is_claude_37_or_4 = Detector.is_claude_37_or_4
+is_gemini_model = Detector.is_gemini_model
+convert_openai_to_claude = Converters.convert_openai_to_claude
+convert_openai_to_claude37 = Converters.convert_openai_to_claude37
+convert_claude_to_openai = Converters.convert_claude_to_openai
+convert_claude37_to_openai = Converters.convert_claude37_to_openai
+convert_openai_to_gemini = Converters.convert_openai_to_gemini
+convert_gemini_to_openai = Converters.convert_gemini_to_openai
 
 # Import from modular structure
 from config import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig, load_config
@@ -1199,7 +1203,7 @@ class TestStreamingHelpersExtended:
         """Test Gemini chunk to Claude delta conversion."""
         gemini_chunk = {"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}
 
-        result = proxy_server.convert_gemini_chunk_to_claude_delta(gemini_chunk)
+        result = Converters.convert_gemini_chunk_to_claude_delta(gemini_chunk)
 
         assert result is not None
         assert result["type"] == "content_block_delta"
@@ -1209,7 +1213,7 @@ class TestStreamingHelpersExtended:
         """Test OpenAI chunk to Claude delta conversion."""
         openai_chunk = {"choices": [{"delta": {"content": "World"}}]}
 
-        result = proxy_server.convert_openai_chunk_to_claude_delta(openai_chunk)
+        result = Converters.convert_openai_chunk_to_claude_delta(openai_chunk)
 
         assert result is not None
         assert result["type"] == "content_block_delta"
@@ -1476,7 +1480,7 @@ class TestClaudeRequestConversions:
             ],
         }
 
-        result = proxy_server.convert_claude_request_to_openai(claude_payload)
+        result = Converters.convert_claude_request_to_openai(claude_payload)
 
         assert result["model"] is None  # Not set in input
         assert result["messages"][0]["role"] == "system"
@@ -1505,7 +1509,7 @@ class TestClaudeRequestConversions:
             ],
         }
 
-        result = proxy_server.convert_claude_request_to_gemini(claude_payload)
+        result = Converters.convert_claude_request_to_gemini(claude_payload)
 
         # The function returns contents as a list for multiple messages
         assert isinstance(result["contents"], list)
@@ -1536,7 +1540,7 @@ class TestClaudeRequestConversions:
             ],
         }
 
-        result = proxy_server.convert_claude_request_for_bedrock(claude_payload)
+        result = Converters.convert_claude_request_for_bedrock(claude_payload)
 
         assert result["model"] == "claude-3.5-sonnet"
         assert result["max_tokens"] == 1000
@@ -1564,7 +1568,7 @@ class TestResponseConversions:
             "usage": {"input_tokens": 10, "output_tokens": 20},
         }
 
-        result = proxy_server.convert_claude_to_openai(
+        result = Converters.convert_claude_to_openai(
             claude_response, "claude-3.5-sonnet"
         )
 
@@ -1588,7 +1592,7 @@ class TestResponseConversions:
             "usage": {"inputTokens": 15, "outputTokens": 25, "totalTokens": 40},
         }
 
-        result = proxy_server.convert_claude37_to_openai(
+        result = Converters.convert_claude37_to_openai(
             claude37_response, "claude-3.7-sonnet"
         )
 
@@ -1618,7 +1622,7 @@ class TestResponseConversions:
             },
         }
 
-        result = proxy_server.convert_gemini_to_openai(gemini_response, "gemini-pro")
+        result = Converters.convert_gemini_to_openai(gemini_response, "gemini-pro")
 
         assert result["object"] == "chat.completion"
         assert result["choices"][0]["message"]["content"] == "Hello from Gemini"
@@ -1642,7 +1646,7 @@ class TestResponseConversions:
             "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 10},
         }
 
-        result = proxy_server.convert_gemini_response_to_claude(
+        result = Converters.convert_gemini_response_to_claude(
             gemini_response, "gemini-pro"
         )
 
@@ -1677,7 +1681,7 @@ class TestResponseConversions:
             "usage": {"prompt_tokens": 10, "completion_tokens": 20},
         }
 
-        result = proxy_server.convert_openai_response_to_claude(openai_response)
+        result = Converters.convert_openai_response_to_claude(openai_response)
 
         assert result["id"].startswith("msg_openai_")
         assert result["type"] == "message"
@@ -1701,7 +1705,7 @@ class TestStreamingHelpers:
         """Test convert_gemini_chunk_to_claude_delta function."""
         gemini_chunk = {"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}
 
-        result = proxy_server.convert_gemini_chunk_to_claude_delta(gemini_chunk)
+        result = Converters.convert_gemini_chunk_to_claude_delta(gemini_chunk)
 
         assert result is not None
         assert result["type"] == "content_block_delta"
@@ -1711,7 +1715,7 @@ class TestStreamingHelpers:
         """Test convert_openai_chunk_to_claude_delta function."""
         openai_chunk = {"choices": [{"delta": {"content": "World"}}]}
 
-        result = proxy_server.convert_openai_chunk_to_claude_delta(openai_chunk)
+        result = Converters.convert_openai_chunk_to_claude_delta(openai_chunk)
 
         assert result is not None
         assert result["type"] == "content_block_delta"
