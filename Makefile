@@ -98,7 +98,7 @@ test:
 # Run tests with coverage
 test-cov:
 	@echo "Running tests with coverage..."
-	$(UV) sync --extra dev && $(UV) run pytest --cov=proxy_server --cov-report=html --cov-report=term-missing
+	$(UV) sync --extra dev && $(UV) run pytest --cov=proxy_server --cov=proxy_helpers --cov-report=html --cov-report=term-missing
 
 # Run tests in verbose mode
 test-verbose:

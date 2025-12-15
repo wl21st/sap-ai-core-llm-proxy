@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.13.*"
 
 [[package]]
@@ -1830,7 +1830,7 @@ wheels = [
 
 [[package]]
 name = "sap-ai-core-llm-proxy"
-version = "0.1.17"
+version = "0.1.18"
 source = { virtual = "." }
 dependencies = [
     { name = "ai-core-sdk" },
@@ -1851,6 +1851,13 @@ dev = [
     { name = "pytest-mock" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "ai-core-sdk", specifier = ">=2.6.2" },
@@ -1867,6 +1874,13 @@ requires-dist = [
     { name = "sap-ai-sdk-gen", extras = ["all"], specifier = ">=5.8.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-mock", specifier = ">=3.15.1" },
+]
 
 [[package]]
 name = "sap-ai-sdk-base"
