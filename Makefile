@@ -41,7 +41,7 @@ endif
 .PHONY: all build build-debug build-universal clean install test package sync \
         version-show version-bump-patch version-bump-minor version-bump-major \
         tag tag-push release-prepare release-github release-docker release-all \
-        build-all-platforms
+        workflow-commit-and-tag build-all-platforms
 
 all: build
 
@@ -146,21 +146,21 @@ version-bump-patch:
 	@echo "Bumping patch version..."
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{print $$1"."$$2"."$$3+1}'); \
 	sed -i.bak "s/version = \"$(VERSION)\"/version = \"$$NEW_VERSION\"/" pyproject.toml && rm pyproject.toml.bak; \
-	echo "Version bumped: $(VERSION) -> $$NEW_VERSION"
+	$(UV) sync && echo "Version bumped: $(VERSION) -> $$NEW_VERSION"
 
 # Bump minor version (0.1.0 -> 0.2.0)
 version-bump-minor:
 	@echo "Bumping minor version..."
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{print $$1"."$$2+1".0"}'); \
 	sed -i.bak "s/version = \"$(VERSION)\"/version = \"$$NEW_VERSION\"/" pyproject.toml && rm pyproject.toml.bak; \
-	echo "Version bumped: $(VERSION) -> $$NEW_VERSION"
+	$(UV) sync && echo "Version bumped: $(VERSION) -> $$NEW_VERSION"
 
 # Bump major version (0.1.0 -> 1.0.0)
 version-bump-major:
 	@echo "Bumping major version..."
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{print $$1+1".0.0"}'); \
 	sed -i.bak "s/version = \"$(VERSION)\"/version = \"$$NEW_VERSION\"/" pyproject.toml && rm pyproject.toml.bak; \
-	echo "Version bumped: $(VERSION) -> $$NEW_VERSION"
+	$(UV) sync && echo "Version bumped: $(VERSION) -> $$NEW_VERSION"
 
 # ============================================================================
 # GIT TAGGING (Separate from build and version bump)
@@ -184,12 +184,23 @@ tag-push:
 	git push origin "v$(VERSION)"
 	@echo "Tag v$(VERSION) pushed successfully"
 
-# Create and push tag in one step
-tag-and-push: tag tag-push
-	@echo "Pushing local changes before tagging..."
-	git add -A
-	git commit -m "Prepare release v$(VERSION)"
-	git push origin main
+# Complete workflow: commit version changes, push, then tag
+workflow-commit-and-tag:
+	@echo "Committing version changes and pushing..."
+	@CURRENT_VERSION=$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
+	git add pyproject.toml uv.lock && \
+	git commit -m "chore: bump version to $$CURRENT_VERSION" && \
+	git push origin main && \
+	echo "Creating git tag v$$CURRENT_VERSION..." && \
+	if git rev-parse "v$$CURRENT_VERSION" >/dev/null 2>&1; then \
+		echo "Tag v$$CURRENT_VERSION already exists!"; \
+		exit 1; \
+	fi; \
+	git tag -a "v$$CURRENT_VERSION" -m "Release version $$CURRENT_VERSION" && \
+	echo "Tag v$$CURRENT_VERSION created successfully" && \
+	echo "Pushing tag to remote..." && \
+	git push origin "v$$CURRENT_VERSION" && \
+	echo "Tag v$$CURRENT_VERSION pushed successfully"
 
 # ============================================================================
 # RELEASE PREPARATION (After build, before upload)
@@ -253,30 +264,27 @@ release-all: release-prepare release-github release-docker
 # COMPLETE WORKFLOWS
 # ============================================================================
 
-# Complete workflow: bump version, build, tag, and prepare release
-workflow-patch: version-bump-patch build-tested release-prepare tag
+# Complete workflow: bump version, build, commit, push, tag, and prepare release
+workflow-patch: version-bump-patch build-tested workflow-commit-and-tag release-prepare
 	@CURRENT_VERSION=$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
 	echo "Patch release workflow complete!"; \
 	echo "Next steps:"; \
 	echo "  1. Review artifacts in $(RELEASE_DIR)/v$$CURRENT_VERSION/"; \
-	echo "  2. Push tag: make tag-push"; \
-	echo "  3. Upload to platforms: make release-github"
+	echo "  2. Upload to platforms: make release-github"
 
-workflow-minor: version-bump-minor build-tested release-prepare tag
+workflow-minor: version-bump-minor build-tested workflow-commit-and-tag release-prepare
 	@CURRENT_VERSION=$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
 	echo "Minor release workflow complete!"; \
 	echo "Next steps:"; \
 	echo "  1. Review artifacts in $(RELEASE_DIR)/v$$CURRENT_VERSION/"; \
-	echo "  2. Push tag: make tag-push"; \
-	echo "  3. Upload to platforms: make release-github"
+	echo "  2. Upload to platforms: make release-github"
 
-workflow-major: version-bump-major build-tested release-prepare tag
+workflow-major: version-bump-major build-tested workflow-commit-and-tag release-prepare
 	@CURRENT_VERSION=$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
 	echo "Major release workflow complete!"; \
 	echo "Next steps:"; \
 	echo "  1. Review artifacts in $(RELEASE_DIR)/v$$CURRENT_VERSION/"; \
-	echo "  2. Push tag: make tag-push"; \
-	echo "  3. Upload to platforms: make release-github"
+	echo "  2. Upload to platforms: make release-github"
 
 # ============================================================================
 # CLEANUP

@@ -21,8 +21,7 @@ make release-github
 ### 2. Quick Patch Release
 
 ```bash
-make workflow-patch    # Bumps version, builds, tags locally
-make tag-push          # Push tag to remote
+make workflow-patch    # Bumps version, builds, commits, tags, pushes
 make release-github    # Upload to GitHub
 ```
 
@@ -37,11 +36,8 @@ make build
 make build
 
 # Finally release
-make version-bump-minor
-git push origin main    # Push version changes
-make release-prepare
-make tag-and-push
-make release-github
+make workflow-minor     # Bumps version, builds, commits, tags, pushes, prepares
+make release-github     # Upload to GitHub
 ```
 
 ## Key Commands
@@ -54,6 +50,7 @@ make release-github
 | `make version-bump-major` | 0.1.0 → 1.0.0 |
 | `make tag` | Create git tag locally |
 | `make tag-push` | Push tag to remote |
+| `make workflow-commit-and-tag` | Commit version changes and create/push tag |
 | `make release-prepare` | Package artifacts |
 | `make release-github` | Upload to GitHub |
 | `make help` | Show all commands |
@@ -92,7 +89,7 @@ make release-github
 
 ✅ **Build anytime** without version changes  
 ✅ **Test thoroughly** before committing to a version  
-✅ **Tag when ready**, not forced by build  
+✅ **Proper version sync** between files and tags  
 ✅ **Upload to platforms separately** at your own pace  
 ✅ **Rebuild without re-tagging** during development  
 
@@ -112,14 +109,10 @@ make build
 # ... looks good! ...
 
 # Thursday: Ready to release
-make version-bump-minor      # Now commit to version
-git push origin main        # Push version changes
-make release-prepare         # Package it
-make tag                     # Tag locally
+make workflow-minor         # Bumps version, builds, commits, tags, pushes, prepares
 # ... final review of artifacts ...
 
 # Friday: Ship it!
-make tag-push               # Push tag
 make release-github         # Upload to GitHub
 make release-docker         # Build Docker image
 ```
@@ -161,8 +154,8 @@ make build                     # Just rebuild, tag stays
 **Q: Want to change version after tagging?**
 ```bash
 git tag -d v0.1.0              # Delete tag first
-make version-bump-patch        # Change version
-make tag                       # Create new tag
+make version-bump-patch        # Change version (updates uv.lock too)
+make workflow-commit-and-tag   # Commit and create new tag
 ```
 
 ## Full Documentation
