@@ -20,6 +20,8 @@ from config import ServiceKey, SubAccountConfig, ProxyConfig, load_config
 from proxy_helpers import Detector, Converters
 from utils import setup_logging, get_token_logger, handle_http_429_error
 
+DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.5-sonnet"
+
 # Global configuration
 proxy_config = ProxyConfig()
 
@@ -672,11 +674,15 @@ def proxy_claude_request():
 
     # Get request body and extract model
     request_json = request.get_json(cache=False)
+
+    # Handle missing model by hardcoding to anthropic--claude-4.5-sonnet
     request_model = request_json.get("model")
-    logging.info(f"request_model is: {request_model}")
-    # Hardcode to claude-3-5-haiku-20241022 if no model specified
-    request_model = "anthropic--claude-4.5-sonnet"
-    logging.info(f"hardcode request_model to: {request_model}")
+    if (request_model is None) or (request_model == ""):
+        # Hardcode to anthropic--claude-4.5-sonnet if no model specified
+        request_model = DEFAULT_CLAUDE_MODEL
+        logging.info(f"hardcode request_model to: {request_model}")
+    else:
+        logging.info(f"request_model is: {request_model}")
 
     if not request_model:
         return jsonify(

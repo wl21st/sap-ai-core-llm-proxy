@@ -9,8 +9,8 @@ dependencies = [
     "aioboto3>=15.1.0",
     "flask>=3.1.2",
     "litellm>=1.79.3",
-    "openai==2.8.0",
-    "protobuf==6.33.1",
+    "openai>=2.8.0",
+    "protobuf>=6.33.1",
     "pyinstaller>=6.16.0",
     "sap-ai-sdk-gen[all]>=5.8.0",
 ]
