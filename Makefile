@@ -55,34 +55,34 @@ sync:
 
 # Add PyInstaller to project dependencies
 install:
-	$(UV) add pyinstaller
+	$(UV) add --optional build pyinstaller
 
-# Add PyInstaller as dev dependency
-install-dev:
-	$(UV) add --dev pyinstaller
+# Sync with build dependencies
+install-build:
+	$(UV) sync --extra build
 
 # ============================================================================
 # BUILD TARGETS (Independent of versioning)
 # ============================================================================
 
 # Standard build
-build: sync
+build: install-build
 	@echo "Building $(APP_NAME) for $(PLATFORM)..."
 	$(UV) run pyinstaller $(PYINSTALLER_OPTS) $(MAIN_SCRIPT)
 	@echo "Build complete: $(DIST_DIR)/$(APP_NAME)$(BINARY_EXT)"
 
 # Debug build (console visible)
-build-debug: sync
+build-debug: install-build
 	@echo "Building $(APP_NAME) (debug mode) for $(PLATFORM)..."
 	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --console $(MAIN_SCRIPT)
 
 # GUI build (no console)
-build-gui: sync
+build-gui: install-build
 	@echo "Building $(APP_NAME) (GUI mode) for $(PLATFORM)..."
 	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --windowed $(MAIN_SCRIPT)
 
 # Build with dependencies bundled
-build-bundle: sync
+build-bundle: install-build
 	@echo "Building $(APP_NAME) with bundled dependencies..."
 	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --collect-all your_package $(MAIN_SCRIPT)
 
@@ -237,9 +237,9 @@ release-github:
 	gh release upload "v$(VERSION)" $(RELEASE_DIR)/v$(VERSION)/*.tar.gz $(RELEASE_DIR)/v$(VERSION)/*.zip --clobber
 	@echo "Upload to GitHub complete!"
 
-# Build and push Docker image
+# Build and push Docker image (single platform)
 release-docker:
-	@echo "Building and pushing Docker image for v$(VERSION)..."
+	@echo "Building Docker image for v$(VERSION)..."
 	@if [ ! -f Dockerfile ]; then \
 		echo "Error: Dockerfile not found"; \
 		exit 1; \
@@ -248,6 +248,52 @@ release-docker:
 	@echo "Docker image built. To push to registry:"
 	@echo "  docker tag $(APP_NAME):$(VERSION) your-registry/$(APP_NAME):$(VERSION)"
 	@echo "  docker push your-registry/$(APP_NAME):$(VERSION)"
+
+# Build multi-platform Docker image (amd64 and arm64)
+release-docker-multiplatform:
+	@echo "Building multi-platform Docker image for v$(VERSION)..."
+	@if [ ! -f Dockerfile ]; then \
+		echo "Error: Dockerfile not found"; \
+		exit 1; \
+	fi
+	@echo "Setting up buildx builder..."
+	@docker buildx create --name multiplatform-builder --use 2>/dev/null || docker buildx use multiplatform-builder
+	@echo "Building for linux/amd64 and linux/arm64..."
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-t $(APP_NAME):$(VERSION) \
+		-t $(APP_NAME):latest \
+		--load \
+		.
+	@echo "Multi-platform Docker image built successfully!"
+	@echo "To push to registry:"
+	@echo "  docker buildx build --platform linux/amd64,linux/arm64 \\"
+	@echo "    -t your-registry/$(APP_NAME):$(VERSION) \\"
+	@echo "    -t your-registry/$(APP_NAME):latest \\"
+	@echo "    --push ."
+
+# Build and push multi-platform Docker image to registry
+release-docker-multiplatform-push:
+	@echo "Building and pushing multi-platform Docker image for v$(VERSION)..."
+	@if [ ! -f Dockerfile ]; then \
+		echo "Error: Dockerfile not found"; \
+		exit 1; \
+	fi
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "Error: REGISTRY variable not set"; \
+		echo "Usage: make release-docker-multiplatform-push REGISTRY=your-registry"; \
+		exit 1; \
+	fi
+	@echo "Setting up buildx builder..."
+	@docker buildx create --name multiplatform-builder --use 2>/dev/null || docker buildx use multiplatform-builder
+	@echo "Building and pushing for linux/amd64 and linux/arm64..."
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-t $(REGISTRY)/$(APP_NAME):$(VERSION) \
+		-t $(REGISTRY)/$(APP_NAME):latest \
+		--push \
+		.
+	@echo "Multi-platform Docker image pushed to $(REGISTRY)/$(APP_NAME):$(VERSION)"
 
 # Upload to PyPI (if applicable)
 release-pypi:
@@ -355,7 +401,9 @@ help:
 	@echo "RELEASE PREPARATION:"
 	@echo "  make release-prepare    - Prepare release artifacts"
 	@echo "  make release-github     - Upload to GitHub Releases"
-	@echo "  make release-docker     - Build and tag Docker image"
+	@echo "  make release-docker     - Build Docker image (single platform)"
+	@echo "  make release-docker-multiplatform - Build multi-platform image (amd64+arm64)"
+	@echo "  make release-docker-multiplatform-push REGISTRY=... - Build and push multi-platform"
 	@echo "  make release-all        - Release to all platforms"
 	@echo ""
 	@echo "COMPLETE WORKFLOWS:"

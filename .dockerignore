@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+ENV/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+*.log
+
+# Development
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Build artifacts
+releases/
+archive/
+logs/
+
+# Java
+java/
+
+# Tools
+tools/
+
+# Config examples
+*.example
+config.json.example
+
+# Makefile and CI
+Makefile
+.run/
+
+# Large test files
+load_testing.py

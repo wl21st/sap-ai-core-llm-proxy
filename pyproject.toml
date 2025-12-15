@@ -8,11 +8,12 @@ dependencies = [
     "ai-core-sdk>=2.6.2",
     "aioboto3>=15.1.0",
     "flask>=3.1.2",
+    "langchain-core>=0.3.80",
     "litellm>=1.79.3",
     "openai>=2.8.0",
     "protobuf>=6.33.1",
-    "pyinstaller>=6.16.0",
     "sap-ai-sdk-gen[all]>=5.8.0",
+    "urllib3>=2.6.0"
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,9 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
     "pytest-asyncio>=0.23.0",
+]
+build = [
+    "pyinstaller>=6.16.0",
 ]
 
 [dependency-groups]
