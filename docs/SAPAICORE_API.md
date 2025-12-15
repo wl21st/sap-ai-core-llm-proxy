@@ -1,30 +1,38 @@
-Consume Generative AI Models
+# Consume Generative AI Models
+
 The generative AI hub helps you to complete tasks like summarizing text, inferencing, and transforming content. To do so, you consume a generative AI model by sending a request to the model's endpoint.
 
-Prerequisites
+## Prerequisites
+
 You have the deployment URL for your generative AI model. For more information, see Create a Deployment for a Generative AI Model.
 
-Context
+## Context
+
 Ensure that you have the following headers set:
-Header	Value
-Authorization	Bearer $TOKEN
-AI-Resource-Group	The resource group used in the activation steps
-Caution
-SAP does not take any responsibility for quality of the content in the input to or output of the underlying generative AI models, including but not limited to, bias, hallucinations, or inaccuracies. The user is responsible for verifying the content.
 
-Caution
-Do not store sensitive data in prompts when using the generative AI hub. Sensitive data is any data that is not intended for public disclosure, including but not limited to confidential or personal information.
+| Header | Value |
+|--------|-------|
+| Authorization | Bearer $TOKEN |
+| AI-Resource-Group | The resource group used in the activation steps |
 
-Example Payloads for Inferencing
-The following examples show how you can consume various generative AI models using curl. For more information about prompts, see the tutorial Prompt LLMs in the Generative AI Hub in SAP AI Core & LaunchpadInformation published on SAP site.
+> **Caution**: SAP does not take any responsibility for quality of the content in the input to or output of the underlying generative AI models, including but not limited to, bias, hallucinations, or inaccuracies. The user is responsible for verifying the content.
 
-Open AI
-For information about the supported API versions, see Chat completionsInformation published on non-SAP site and EmbeddingsInformation published on non-SAP site in the Microsoft documentation.
+> **Caution**: Do not store sensitive data in prompts when using the generative AI hub. Sensitive data is any data that is not intended for public disclosure, including but not limited to confidential or personal information.
 
-GPT-4-32k | GPT-4 | GPT-3.5-Turbo-16k | GPT-3.5-Turbo
-Text Input
+## Example Payloads for Inferencing
 
-curl --location '$DEPLOYMENT_URL/chat/completions?api-version=2023-05-15' \
+The following examples show how you can consume various generative AI models using curl. For more information about prompts, see the tutorial Prompt LLMs in the Generative AI Hub in SAP AI Core & Launchpad.
+
+### Open AI
+
+For information about the supported API versions, see Chat completions and Embeddings in the Microsoft documentation.
+
+#### GPT-4-32k | GPT-4 | GPT-3.5-Turbo-16k | GPT-3.5-Turbo
+
+**Text Input**
+
+```bash
+curl --location '$DEPLOYMENT_URL/chat/completions?api-version=2023-05-15' \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -41,10 +49,14 @@ Text Input
 	"presence_penalty": 0,
 	"stop": "null"
 }'
-GPT-4o | GPT-4-Turbo
-Image input
+```
 
-# Request
+#### GPT-4o | GPT-4-Turbo
+
+**Image input**
+
+```bash
+# Request
 # ---
 curl --location '$DEPLOYMENT_URL/chat/completions?api-version=2023-05-15' \
 --header 'AI-Resource-Group: <Resource Group Id>' \
@@ -70,16 +82,24 @@ curl --location '$DEPLOYMENT_URL/chat/completions?api-version=2023-05-15' \
     ],
     "max_tokens": 10
 }'
-text-embedding-ada-002 | text-embedding-3-small | text-embedding-3-large
-curl --location '$DEPLOYMENT_URL/embeddings?api-version=2023-05-15' \
+```
+
+#### text-embedding-ada-002 | text-embedding-3-small | text-embedding-3-large
+
+```bash
+curl --location '$DEPLOYMENT_URL/embeddings?api-version=2023-05-15' \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
 --data '{
 	"input": "sample input prompt"
 }'
-Falcon
-curl --location '$DEPLOYMENT_URL/chat/completions' \
+```
+
+### Falcon
+
+```bash
+curl --location '$DEPLOYMENT_URL/chat/completions' \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -93,9 +113,14 @@ Falcon
 	],
 	"max_tokens": 100
 }'
-Vertex AI
-Gemini 1.0 Pro
-curl --location '$DEPLOYMENT_URL/models/gemini-1.0-pro:generateContent' \
+```
+
+### Vertex AI
+
+#### Gemini 1.0 Pro
+
+```bash
+curl --location '$DEPLOYMENT_URL/models/gemini-1.0-pro:generateContent' \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -124,10 +149,14 @@ Gemini 1.0 Pro
 		"maxOutputTokens": 2048
 		}
 }'
-Gemini 1.5 Pro
-Text Input
+```
 
-curl --location '$DEPLOYMENT_URL/models/gemini-1.0-pro:generateContent' \
+#### Gemini 1.5 Pro
+
+**Text Input**
+
+```bash
+curl --location '$DEPLOYMENT_URL/models/gemini-1.0-pro:generateContent' \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -146,9 +175,12 @@ Text Input
       "threshold": "BLOCK_LOW_AND_ABOVE"
     }
 }'
-Image input
+```
 
-curl --request POST --location "$DEPLOYMENT_URL/models/gemini-1.5-pro:generateContent" \
+**Image input**
+
+```bash
+curl --request POST --location "$DEPLOYMENT_URL/models/gemini-1.5-pro:generateContent" \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
@@ -168,10 +200,14 @@ Image input
       ]
     }
 }'
-Gemini 1.5 Flash
-Text Input
+```
 
-curl --request POST --location "$DEPLOYMENT_URL/models/gemini-1.5-flash:generateContent" \
+#### Gemini 1.5 Flash
+
+**Text Input**
+
+```bash
+curl --request POST --location "$DEPLOYMENT_URL/models/gemini-1.5-flash:generateContent" \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
@@ -190,9 +226,12 @@ Text Input
       "threshold": "BLOCK_LOW_AND_ABOVE"
     }
 }'
-Image input
+```
 
-curl --request POST --location "$DEPLOYMENT_URL/models/gemini-1.5-flash:generateContent" \
+**Image input**
+
+```bash
+curl --request POST --location "$DEPLOYMENT_URL/models/gemini-1.5-flash:generateContent" \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
@@ -212,8 +251,12 @@ Image input
       ]
     }
 }'
-Text Bison
-curl --location '$DEPLOYMENT_URL/models/text-bison:predict'  \
+```
+
+#### Text Bison
+
+```bash
+curl --location '$DEPLOYMENT_URL/models/text-bison:predict'  \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -228,8 +271,12 @@ Text Bison
 	"maxOutputTokens": 50
 	}
 }'
-Chat Bison
-curl --location '$DEPLOYMENT_URL/models/chat-bison:predict'  \
+```
+
+#### Chat Bison
+
+```bash
+curl --location '$DEPLOYMENT_URL/models/chat-bison:predict'  \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -258,8 +305,12 @@ Chat Bison
 	"temperature": 0.8
 	}
 }'
-Textembedding Gecko
-curl --location '$DEPLOYMENT_URL/models/textembedding-gecko:predict'  \
+```
+
+#### Textembedding Gecko
+
+```bash
+curl --location '$DEPLOYMENT_URL/models/textembedding-gecko:predict'  \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -272,8 +323,12 @@ Textembedding Gecko
     }
   ]
 }'
-Textembedding Gecko Multilingual
-curl --location '$DEPLOYMENT_URL/models/textembedding-gecko-multilingual:predict'  \
+```
+
+#### Textembedding Gecko Multilingual
+
+```bash
+curl --location '$DEPLOYMENT_URL/models/textembedding-gecko-multilingual:predict'  \
 --header 'AI-Resource-Group: <Resource Group Id>' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $TOKEN" \
@@ -286,9 +341,14 @@ Textembedding Gecko Multilingual
 		}
 	]
 }'
-Mistral AI
-mistralai--mixtral-8x7b-instruct-v01
-curl --location '$DEPLOYMENT_URL/chat/completions' \
+```
+
+### Mistral AI
+
+#### mistralai--mixtral-8x7b-instruct-v01
+
+```bash
+curl --location '$DEPLOYMENT_URL/chat/completions' \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
@@ -302,9 +362,14 @@ mistralai--mixtral-8x7b-instruct-v01
     ],
     "max_tokens": 100
   }'
-AWS Bedrock
-Claude Sonet | Claude Opus | Claude Haiku
-curl --location '$DEPLOYMENT_URL/invoke' \
+```
+
+### AWS Bedrock
+
+#### Claude Sonet | Claude Opus | Claude Haiku
+
+```bash
+curl --location '$DEPLOYMENT_URL/invoke' \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
@@ -318,8 +383,12 @@ Claude Sonet | Claude Opus | Claude Haiku
         }
     ]
   }'
-Titan Text Express | Titan Text Lite
-curl --location '$DEPLOYMENT_URL/invoke' \
+```
+
+#### Titan Text Express | Titan Text Lite
+
+```bash
+curl --location '$DEPLOYMENT_URL/invoke' \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
@@ -332,17 +401,26 @@ Titan Text Express | Titan Text Lite
         "topP": 1
      }
    }'
-Titan Embed Text
-curl --location '$DEPLOYMENT_URL/invoke' \
+```
+
+#### Titan Embed Text
+
+```bash
+curl --location '$DEPLOYMENT_URL/invoke' \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
 --data '{
     "inputText": "Who im I?"
   }'
-Meta
-LLama-3-70b
-curl --location '$DEPLOYMENT_URL/chat/completions' \
+```
+
+### Meta
+
+#### LLama-3-70b
+
+```bash
+curl --location '$DEPLOYMENT_URL/chat/completions' \
 --header 'AI-Resource-Group: default' \
 --header 'Content-Type: application/json' \
 --header "Authorization: Bearer $AUTH_TOKEN" \
@@ -356,4 +434,6 @@ LLama-3-70b
     ],
     "max_tokens": 100
   }'
+```
+
 If you want to remove a model, delete its deployment. For more information, see Delete Deployments.

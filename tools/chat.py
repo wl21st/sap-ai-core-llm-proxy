@@ -17,7 +17,7 @@ def load_config(file_path):
         logging.error(f"Failed to load configuration from {file_path}: {e}")
         raise
 
-config = load_config('config.json')
+config = load_config('../config.json')
 
 # Get API key from config or environment variable, or use a default placeholder
 api_key = None

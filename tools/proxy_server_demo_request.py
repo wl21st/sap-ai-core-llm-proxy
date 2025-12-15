@@ -8,7 +8,7 @@ def load_config(file_path):
     return config
 
 # Load configuration
-config = load_config('config.json')
+config = load_config('../config.json')
 
 def demo_request():
     url = "http://127.0.0.1:3001/v1/chat/completions"
