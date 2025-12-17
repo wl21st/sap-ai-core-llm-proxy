@@ -9,6 +9,12 @@ from typing import Dict, Any
 
 import requests
 from flask import Flask, request, jsonify, Response, stream_with_context
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 # SAP AI SDK imports
 from gen_ai_hub.proxy.native.amazon.clients import Session
@@ -21,6 +27,31 @@ from proxy_helpers import Detector, Converters
 from utils import setup_logging, get_token_logger, handle_http_429_error
 
 DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.5-sonnet"
+
+
+# Retry decorator for SAP AI SDK calls that may hit rate limits
+def retry_on_rate_limit(exception):
+    """Check if exception is a rate limit error that should be retried."""
+    error_message = str(exception).lower()
+    return (
+        "too many tokens" in error_message
+        or "rate limit" in error_message
+        or "throttling" in error_message
+        or "too many requests" in error_message
+    )
+
+
+bedrock_retry = retry(
+    stop=stop_after_attempt(5),  # Try up to 5 times (original + 4 retries)
+    wait=wait_exponential(
+        multiplier=2, min=1, max=60
+    ),  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+    retry=retry_on_rate_limit,
+    before_sleep=lambda retry_state: logging.warning(
+        f"Rate limit hit, retrying in {retry_state.next_action.sleep if retry_state.next_action else 'unknown'} seconds "
+        f"(attempt {retry_state.attempt_number}/5): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
+    ),
+)
 
 # Global configuration
 proxy_config = ProxyConfig()
@@ -880,7 +911,12 @@ def proxy_claude_request():
             # Handle streaming response
             # Check for errors before starting the stream (to return proper status code)
             try:
-                response = bedrock.invoke_model_with_response_stream(body=body_json)
+
+                @bedrock_retry
+                def invoke_streaming():
+                    return bedrock.invoke_model_with_response_stream(body=body_json)
+
+                response = invoke_streaming()
                 # Extract status code if available
                 response_status = response.get("ResponseMetadata", {}).get(
                     "HTTPStatusCode", 200
@@ -966,7 +1002,11 @@ def proxy_claude_request():
 
         else:
             # Handle non-streaming response
-            response = bedrock.invoke_model(body=body_json)
+            @bedrock_retry
+            def invoke_non_streaming():
+                return bedrock.invoke_model(body=body_json)
+
+            response = invoke_non_streaming()
             # Extract status code from response metadata
             response_status = response.get("ResponseMetadata", {}).get(
                 "HTTPStatusCode", 200
