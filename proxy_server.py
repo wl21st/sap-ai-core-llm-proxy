@@ -9,11 +9,13 @@ from typing import Dict, Any
 
 import requests
 from flask import Flask, request, jsonify, Response, stream_with_context
+from botocore.config import Config
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
+    RetryError,
 )
 
 # SAP AI SDK imports
@@ -98,12 +100,12 @@ def get_sapaicore_sdk_client(model_name: str):
         if client is None:
             logging.info(f"Creating SAP AI SDK client for model '{model_name}'")
             # Configure client with minimal retries since we handle retries at application level
-            client_config = {
-                "retries": {
+            client_config = Config(
+                retries={
                     "max_attempts": 1,  # Disable botocore retries, let tenacity handle it
                     "mode": "standard",
                 }
-            }
+            )
             client = get_sapaicore_sdk_session().client(
                 model_name=model_name, config=client_config
             )
@@ -1070,6 +1072,23 @@ def proxy_claude_request():
                 ), error_status
 
     except Exception as e:
+        # Check if this is a throttling error from retry exhaustion
+        if isinstance(e, RetryError) and hasattr(e, "__cause__"):
+            cause = e.__cause__
+            if (
+                hasattr(cause, "__class__")
+                and "ThrottlingException" in cause.__class__.__name__
+            ):
+                logging.warning(f"Rate limit exceeded for Anthropic proxy request: {e}")
+                error_dict = {
+                    "type": "error",
+                    "error": {
+                        "type": "rate_limit_error",
+                        "message": "Rate limit exceeded. Please try again later.",
+                    },
+                }
+                return jsonify(error_dict), 429
+
         logging.error(
             f"Error handling Anthropic proxy request using SDK: {e}", exc_info=True
         )
