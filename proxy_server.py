@@ -950,11 +950,35 @@ def proxy_claude_request():
             # Check for errors before starting the stream (to return proper status code)
             try:
                 response = invoke_bedrock_streaming(bedrock, body_json)
-                # Extract status code if available
+                # Extract status code if available - default to None to detect malformed responses
                 response_status = response.get("ResponseMetadata", {}).get(
-                    "HTTPStatusCode", 200
+                    "HTTPStatusCode"
                 )
                 response_body = response.get("body")
+
+                # Check for malformed response first (missing status code)
+                if response_status is None:
+                    logging.error("Missing HTTPStatusCode in response metadata")
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Malformed response from backend API",
+                        },
+                    }
+                    return jsonify(error_response), 500
+
+                # If status is not 200, return error before starting stream
+                if response_status != 200:
+                    logging.error(f"Non-200 status code from SDK: {response_status}")
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": f"Backend API returned status {response_status}",
+                        },
+                    }
+                    return jsonify(error_response), response_status
 
                 # If we detect an error before streaming starts, return error response
                 if response_body is None:
@@ -968,21 +992,9 @@ def proxy_claude_request():
                             "message": "Empty response body from backend API",
                         },
                     }
-                    return jsonify(
-                        error_response
-                    ), response_status if response_status >= 400 else 500
-
-                # If status is not 200, return error before starting stream
-                if response_status != 200:
-                    logging.error(f"Non-200 status code from SDK: {response_status}")
-                    error_response = {
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": f"Backend API returned status {response_status}",
-                        },
-                    }
-                    return jsonify(error_response), response_status
+                    # At this point, response_status is guaranteed to be valid and >= 400
+                    error_status = response_status if response_status >= 400 else 500
+                    return jsonify(error_response), error_status
 
             except Exception as e:
                 # If error occurs before streaming, we can return proper error status
@@ -1036,11 +1048,24 @@ def proxy_claude_request():
         else:
             # Handle non-streaming response
             response = invoke_bedrock_non_streaming(bedrock, body_json)
-            # Extract status code from response metadata
+            # Extract status code from response metadata - default to None to detect malformed responses
             response_status = response.get("ResponseMetadata", {}).get(
-                "HTTPStatusCode", 200
+                "HTTPStatusCode"
             )
             response_body = response.get("body")
+
+            # Check for malformed response (missing status code)
+            if response_status is None:
+                logging.error("Missing HTTPStatusCode in response metadata")
+                return jsonify(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Malformed response from backend API",
+                        },
+                    }
+                ), 500
 
             if response_body is not None:
                 # Read the response body
