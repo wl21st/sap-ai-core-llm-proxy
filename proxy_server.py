@@ -1069,9 +1069,8 @@ def proxy_claude_request():
                             "message": "Empty response body from backend API",
                         },
                     }
-                    # At this point, response_status is guaranteed to be valid and >= 400
-                    error_status = response_status if response_status >= 400 else 500
-                    return jsonify(error_response), error_status
+                    # At this point, response_status is 200, so we return 500 for error
+                    return jsonify(error_response), 500
 
             except Exception as e:
                 # If error occurs before streaming, we can return proper error status
@@ -1144,12 +1143,7 @@ def proxy_claude_request():
 
             if response_body is not None:
                 # Read the response body
-                chunk_data = ""
-                for event in response_body:
-                    if isinstance(event, bytes):
-                        chunk_data += event.decode("utf-8")
-                    else:
-                        chunk_data += str(event)
+                chunk_data = read_response_body_stream(response_body)
 
                 if chunk_data:
                     final_response = json.loads(chunk_data)

@@ -5,17 +5,8 @@ Test script to verify the retry logic with 4 attempts using mixed strategy (2 re
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, wait_chain
 from botocore.exceptions import ClientError
-def retry_on_rate_limit(exception):
-    """Check if exception is a rate limit error that should be retried."""
-    error_message = str(exception).lower()
-    return (
-        "too many tokens" in error_message
-        or "rate limit" in error_message
-        or "throttling" in error_message
-        or "too many requests" in error_message
-        or "exceeding the allowed request" in error_message
-        or "rate limited by ai core" in error_message
-    )
+from proxy_server import retry_on_rate_limit
+
 # Create a mixed retry strategy: 2 fixed wait attempts + 2 exponential wait attempts
 # This gives us: 0.1s (fixed) + 0.2s (fixed) + 0.3s (exp) + 0.6s (exp) = 1.2s total max
 bedrock_retry = retry(
