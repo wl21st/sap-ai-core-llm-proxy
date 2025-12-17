@@ -28,6 +28,12 @@ from utils import setup_logging, get_token_logger, handle_http_429_error
 
 DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.5-sonnet"
 
+# Retry configuration constants (centralized for future configurability)
+RETRY_MAX_ATTEMPTS = 4  # Total attempts (1 original + 7 retries)
+RETRY_MULTIPLIER = 2  # Exponential backoff multiplier
+RETRY_MIN_WAIT = 4  # Minimum wait time in seconds
+RETRY_MAX_WAIT = 16  # Maximum wait time in seconds
+
 
 # Retry decorator for SAP AI SDK calls that may hit rate limits
 def retry_on_rate_limit(exception):
@@ -44,14 +50,14 @@ def retry_on_rate_limit(exception):
 
 
 bedrock_retry = retry(
-    stop=stop_after_attempt(5),  # Try up to 5 times (original + 4 retries)
+    stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(
-        multiplier=2, min=1, max=60
-    ),  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+        multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT
+    ),
     retry=retry_on_rate_limit,
     before_sleep=lambda retry_state: logging.warning(
         f"Rate limit hit, retrying in {retry_state.next_action.sleep if retry_state.next_action else 'unknown'} seconds "
-        f"(attempt {retry_state.attempt_number}/5): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
+        f"(attempt {retry_state.attempt_number}/{RETRY_MAX_ATTEMPTS}): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
     ),
 )
 

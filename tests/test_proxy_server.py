@@ -1415,7 +1415,15 @@ class TestSDKSessionManagement:
         result = proxy_server.get_sapaicore_sdk_client("gpt-4")
 
         assert result == mock_client
-        mock_session.client.assert_called_once_with(model_name="gpt-4")
+        mock_session.client.assert_called_once_with(
+            model_name="gpt-4",
+            config={
+                "retries": {
+                    "max_attempts": 1,
+                    "mode": "standard",
+                }
+            }
+        )
         assert proxy_server._bedrock_clients["gpt-4"] == mock_client
 
     @patch("proxy_server.get_sapaicore_sdk_session")

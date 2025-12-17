@@ -133,9 +133,17 @@ class TestGetSAPAICoreSDKClient:
         
         with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
             result = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-            
-            # Verify client was created
-            mock_session.client.assert_called_once_with(model_name="claude-3-opus")
+
+            # Verify client was created with config parameter
+            mock_session.client.assert_called_once_with(
+                model_name="claude-3-opus",
+                config={
+                    "retries": {
+                        "max_attempts": 1,
+                        "mode": "standard",
+                    }
+                }
+            )
             assert result == mock_client
             assert proxy_server._bedrock_clients["claude-3-opus"] == mock_client
     
@@ -170,7 +178,7 @@ class TestGetSAPAICoreSDKClient:
         mock_client_opus = Mock()
         mock_client_sonnet = Mock()
         
-        def mock_client_factory(model_name):
+        def mock_client_factory(model_name, config):
             if model_name == "claude-3-opus":
                 return mock_client_opus
             elif model_name == "claude-3-sonnet":
@@ -182,7 +190,7 @@ class TestGetSAPAICoreSDKClient:
         with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
             result_opus = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
             result_sonnet = proxy_server.get_sapaicore_sdk_client("claude-3-sonnet")
-            
+             
             # Verify different clients were created
             assert result_opus == mock_client_opus
             assert result_sonnet == mock_client_sonnet
@@ -202,7 +210,7 @@ class TestGetSAPAICoreSDKClient:
         mock_client = Mock()
         client_creation_count = 0
         
-        def mock_client_factory(model_name):
+        def mock_client_factory(model_name, config):
             nonlocal client_creation_count
             client_creation_count += 1
             return mock_client
@@ -272,8 +280,16 @@ class TestGetSAPAICoreSDKClient:
             # Should create new client since cached value is None
             result = proxy_server.get_sapaicore_sdk_client("test-model")
             
-            # Verify new client was created
-            mock_session.client.assert_called_once_with(model_name="test-model")
+            # Verify new client was created with config parameter
+            mock_session.client.assert_called_once_with(
+                model_name="test-model",
+                config={
+                    "retries": {
+                        "max_attempts": 1,
+                        "mode": "standard",
+                    }
+                }
+            )
             assert result == mock_client
 
 
@@ -298,8 +314,16 @@ class TestSDKSessionAndClientIntegration:
             # Verify session was initialized
             assert proxy_server._sdk_session == mock_session
             
-            # Verify client was created using that session
-            mock_session.client.assert_called_once_with(model_name="claude-3-opus")
+            # Verify client was created using that session with config parameter
+            mock_session.client.assert_called_once_with(
+                model_name="claude-3-opus",
+                config={
+                    "retries": {
+                        "max_attempts": 1,
+                        "mode": "standard",
+                    }
+                }
+            )
             assert result == mock_client
     
     def test_multiple_clients_share_same_session(self):
@@ -313,7 +337,7 @@ class TestSDKSessionAndClientIntegration:
         mock_client1 = Mock()
         mock_client2 = Mock()
         
-        def mock_client_factory(model_name):
+        def mock_client_factory(model_name, config):
             if model_name == "model1":
                 return mock_client1
             return mock_client2
@@ -350,7 +374,7 @@ class TestSDKSessionAndClientIntegration:
         
         client_creation_counts = {}
         
-        def mock_client_factory(model_name):
+        def mock_client_factory(model_name, config):
             if model_name not in client_creation_counts:
                 client_creation_counts[model_name] = 0
             client_creation_counts[model_name] += 1
@@ -427,7 +451,7 @@ class TestSDKCachePerformance:
         mock_session = Mock(spec=Session)
         client_creation_count = 0
         
-        def expensive_client_creation(model_name):
+        def expensive_client_creation(model_name, config):
             nonlocal client_creation_count
             client_creation_count += 1
             # Simulate expensive client creation
