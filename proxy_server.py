@@ -143,7 +143,7 @@ def format_embedding_response(response, model):
         "model": model,
         "usage": {
             "prompt_tokens": len(embedding_data),
-            "total_tokens": len(embedding_data)
+            "total_tokens": len(embedding_data),
         },
     }
 
@@ -878,47 +878,99 @@ def proxy_claude_request():
 
         if stream:
             # Handle streaming response
+            # Check for errors before starting the stream (to return proper status code)
+            try:
+                response = bedrock.invoke_model_with_response_stream(body=body_json)
+                # Extract status code if available
+                response_status = response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode", 200
+                )
+                response_body = response.get("body")
+
+                # If we detect an error before streaming starts, return error response
+                if response_body is None:
+                    logging.error(
+                        "Response body is None from SDK invoke_model_with_response_stream"
+                    )
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Empty response body from backend API",
+                        },
+                    }
+                    return jsonify(
+                        error_response
+                    ), response_status if response_status >= 400 else 500
+
+                # If status is not 200, return error before starting stream
+                if response_status != 200:
+                    logging.error(f"Non-200 status code from SDK: {response_status}")
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": f"Backend API returned status {response_status}",
+                        },
+                    }
+                    return jsonify(error_response), response_status
+
+            except Exception as e:
+                # If error occurs before streaming, we can return proper error status
+                logging.error(f"Error before streaming: {e}", exc_info=True)
+                error_response = {
+                    "type": "error",
+                    "error": {"type": "api_error", "message": str(e)},
+                }
+                return jsonify(error_response), 500
+
+            # Stream is healthy, proceed with streaming response
             def stream_generate():
                 try:
-                    response = bedrock.invoke_model_with_response_stream(body=body_json)
-                    response_body = response.get("body")
+                    for event in response_body:
+                        chunk = json.loads(event["chunk"]["bytes"])
+                        logging.debug(f"Streaming chunk: {chunk}")
 
-                    if response_body is not None:
-                        for event in response_body:
-                            chunk = json.loads(event["chunk"]["bytes"])
-                            logging.debug(f"Streaming chunk: {chunk}")
+                        chunk_type = chunk.get("type")
 
-                            chunk_type = chunk.get("type")
-
-                            # Handle different chunk types according to Claude streaming format
-                            if chunk_type == "message_start":
-                                yield f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "content_block_start":
-                                yield f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "content_block_delta":
-                                yield f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "content_block_stop":
-                                yield f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "message_delta":
-                                yield f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "message_stop":
-                                yield f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                                yield "data: [DONE]\n\n"
-                                break
+                        # Handle different chunk types according to Claude streaming format
+                        if chunk_type == "message_start":
+                            yield f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "content_block_start":
+                            yield f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "content_block_delta":
+                            yield f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "content_block_stop":
+                            yield f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "message_delta":
+                            yield f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "message_stop":
+                            yield f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            break
+                        elif chunk_type == "error":
+                            # Handle error chunks in the stream
+                            yield f"event: error\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            break
 
                 except Exception as e:
-                    logging.error(f"Error in streaming response: {e}", exc_info=True)
+                    # Errors during streaming can only be sent as SSE events
+                    logging.error(f"Error during streaming: {e}", exc_info=True)
                     error_chunk = {
                         "type": "error",
                         "error": {"type": "api_error", "message": str(e)},
                     }
-                    yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+                    yield f"event: error\ndata: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
 
             return Response(stream_generate(), mimetype="text/event-stream"), 200
 
         else:
             # Handle non-streaming response
             response = bedrock.invoke_model(body=body_json)
+            # Extract status code from response metadata
+            response_status = response.get("ResponseMetadata", {}).get(
+                "HTTPStatusCode", 200
+            )
             response_body = response.get("body")
 
             if response_body is not None:
@@ -933,11 +985,32 @@ def proxy_claude_request():
                 if chunk_data:
                     final_response = json.loads(chunk_data)
                     logging.debug(f"Non-streaming response: {final_response}")
-                    return jsonify(final_response), 200
+                    # Use actual response status code
+                    return jsonify(final_response), response_status
                 else:
-                    return jsonify({}), 200
+                    logging.warning("Empty chunk_data from non-streaming response body")
+                    error_status = response_status if response_status >= 400 else 500
+                    return jsonify(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "Empty response data from backend API",
+                            },
+                        }
+                    ), error_status
             else:
-                return jsonify({}), 200
+                logging.error("Response body is None from SDK invoke_model")
+                error_status = response_status if response_status >= 400 else 500
+                return jsonify(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Empty response body from backend API",
+                        },
+                    }
+                ), error_status
 
     except Exception as e:
         logging.error(
