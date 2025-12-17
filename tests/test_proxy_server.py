@@ -21,6 +21,7 @@ from flask import Flask
 from io import BytesIO
 
 import proxy_helpers
+
 # Import the module under test
 import proxy_server
 from proxy_server import (
@@ -1402,7 +1403,10 @@ class TestSDKSessionManagement:
         mock_session_class.assert_not_called()
 
     @patch("proxy_server.get_sapaicore_sdk_session")
-    def test_get_sapaicore_sdk_client_creates_new_client(self, mock_get_session):
+    @patch("proxy_server.Config")
+    def test_get_sapaicore_sdk_client_creates_new_client(
+        self, mock_config, mock_get_session
+    ):
         """Test that get_sapaicore_sdk_client creates a new client when none exists."""
         # Reset global state
         proxy_server._bedrock_clients.clear()
@@ -1412,10 +1416,21 @@ class TestSDKSessionManagement:
         mock_session.client.return_value = mock_client
         mock_get_session.return_value = mock_session
 
+        # Mock Config to return the expected dict
+        expected_config = {
+            "retries": {
+                "max_attempts": 1,
+                "mode": "standard",
+            }
+        }
+        mock_config.return_value = expected_config
+
         result = proxy_server.get_sapaicore_sdk_client("gpt-4")
 
         assert result == mock_client
-        mock_session.client.assert_called_once_with(model_name="gpt-4")
+        mock_session.client.assert_called_once_with(
+            model_name="gpt-4", config=expected_config
+        )
         assert proxy_server._bedrock_clients["gpt-4"] == mock_client
 
     @patch("proxy_server.get_sapaicore_sdk_session")

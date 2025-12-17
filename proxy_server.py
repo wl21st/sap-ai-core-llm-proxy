@@ -8,19 +8,104 @@ import time
 from typing import Dict, Any
 
 import requests
+from botocore.config import Config
+from botocore.exceptions import ClientError
 from flask import Flask, request, jsonify, Response, stream_with_context
-
 # SAP AI SDK imports
 from gen_ai_hub.proxy.native.amazon.clients import Session
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    RetryError,
+)
 
 from auth import TokenManager, RequestValidator
-
 # Import from new modular structure
 from config import ServiceKey, SubAccountConfig, ProxyConfig, load_config
 from proxy_helpers import Detector, Converters
 from utils import setup_logging, get_token_logger, handle_http_429_error
 
 DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.5-sonnet"
+
+# Retry configuration constants (centralized for future configurability)
+RETRY_MAX_ATTEMPTS = 4  # Total attempts (1 original + 3 retries)
+RETRY_MULTIPLIER = 2  # Exponential backoff multiplier
+RETRY_MIN_WAIT = 4  # Minimum wait time in seconds
+RETRY_MAX_WAIT = 16  # Maximum wait time in seconds
+
+
+# Retry decorator for SAP AI SDK calls that may hit rate limits
+def retry_on_rate_limit(exception):
+    """Check if exception is a rate limit error that should be retried."""
+    # Check for ClientError with 429 status code first (more reliable)
+    if isinstance(exception, ClientError):
+        error_code = exception.response.get('Error', {}).get('Code', '')
+        http_status = exception.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        if error_code == '429' or http_status == 429:
+            return True
+
+    # Fallback to string matching for other exception types
+    error_message = str(exception).lower()
+    return (
+            "too many tokens" in error_message
+            or "rate limit" in error_message
+            or "throttling" in error_message
+            or "too many requests" in error_message
+            or "exceeding the allowed request" in error_message
+            or "rate limited by ai core" in error_message
+    )
+
+bedrock_retry = retry(
+    stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
+    wait=wait_exponential(
+        multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT
+    ),
+    retry=retry_on_rate_limit,
+    before_sleep=lambda retry_state: logging.warning(
+        f"Rate limit hit, retrying in {retry_state.next_action.sleep if retry_state.next_action else 'unknown'} seconds "
+        f"(attempt {retry_state.attempt_number}/{RETRY_MAX_ATTEMPTS}): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
+    ),
+)
+
+
+# Helper functions for SDK invocation with retry logic
+@bedrock_retry
+def invoke_bedrock_streaming(bedrock_client, body_json: str):
+    """
+    Invoke Bedrock streaming API with retry logic for rate limits.
+
+    Note: This only retries the initial connection/request. Once streaming starts,
+    errors during stream consumption cannot be retried as the stream is already open.
+    """
+    return bedrock_client.invoke_model_with_response_stream(body=body_json)
+
+
+@bedrock_retry
+def invoke_bedrock_non_streaming(bedrock_client, body_json: str):
+    """Invoke Bedrock non-streaming API with retry logic for rate limits."""
+    return bedrock_client.invoke_model(body=body_json)
+
+
+# Helper functions for response validation
+
+def read_response_body_stream(response_body) -> str:
+    """
+    Read response body stream and return as string.
+
+    Args:
+        response_body: The streaming response body from AWS SDK
+
+    Returns:
+        String containing the full response data
+    """
+    chunk_data = ""
+    for event in response_body:
+        if isinstance(event, bytes):
+            chunk_data += event.decode("utf-8")
+        else:
+            chunk_data += str(event)
+    return chunk_data
 
 # Global configuration
 proxy_config = ProxyConfig()
@@ -58,7 +143,16 @@ def get_sapaicore_sdk_client(model_name: str):
         client = _bedrock_clients.get(model_name)
         if client is None:
             logging.info(f"Creating SAP AI SDK client for model '{model_name}'")
-            client = get_sapaicore_sdk_session().client(model_name=model_name)
+            # Configure client with minimal retries since we handle retries at application level
+            client_config = Config(
+                retries={
+                    "max_attempts": 1,  # Disable botocore retries, let tenacity handle it
+                    "mode": "standard",
+                }
+            )
+            client = get_sapaicore_sdk_session().client(
+                model_name=model_name, config=client_config
+            )
             _bedrock_clients[model_name] = client
     return client
 
@@ -143,7 +237,7 @@ def format_embedding_response(response, model):
         "model": model,
         "usage": {
             "prompt_tokens": len(embedding_data),
-            "total_tokens": len(embedding_data)
+            "total_tokens": len(embedding_data),
         },
     }
 
@@ -878,68 +972,173 @@ def proxy_claude_request():
 
         if stream:
             # Handle streaming response
+            # Check for errors before starting the stream (to return proper status code)
+            try:
+                response = invoke_bedrock_streaming(bedrock, body_json)
+                # Extract status code if available - default to None to detect malformed responses
+                response_status = response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
+                response_body = response.get("body")
+
+                # Check for malformed response first (missing status code)
+                if response_status is None:
+                    logging.error("Missing HTTPStatusCode in response metadata")
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Malformed response from backend API",
+                        },
+                    }
+                    return jsonify(error_response), 500
+
+                # If status is not 200, return error before starting stream
+                if response_status != 200:
+                    logging.error(f"Non-200 status code from SDK: {response_status}")
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": f"Backend API returned status {response_status}",
+                        },
+                    }
+                    return jsonify(error_response), response_status
+
+                # If we detect an error before streaming starts, return error response
+                if response_body is None:
+                    logging.error(
+                        "Response body is None from SDK invoke_model_with_response_stream"
+                    )
+                    error_response = {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Empty response body from backend API",
+                        },
+                    }
+                    # At this point, response_status is 200, so we return 500 for error
+                    return jsonify(error_response), 500
+
+            except Exception as e:
+                # If error occurs before streaming, we can return proper error status
+                logging.error(f"Error before streaming: {e}", exc_info=True)
+                error_response = {
+                    "type": "error",
+                    "error": {"type": "api_error", "message": str(e)},
+                }
+                return jsonify(error_response), 500
+
+            # Stream is healthy, proceed with streaming response
             def stream_generate():
                 try:
-                    response = bedrock.invoke_model_with_response_stream(body=body_json)
-                    response_body = response.get("body")
+                    for event in response_body:
+                        chunk = json.loads(event["chunk"]["bytes"])
+                        logging.debug(f"Streaming chunk: {chunk}")
 
-                    if response_body is not None:
-                        for event in response_body:
-                            chunk = json.loads(event["chunk"]["bytes"])
-                            logging.debug(f"Streaming chunk: {chunk}")
+                        chunk_type = chunk.get("type")
 
-                            chunk_type = chunk.get("type")
-
-                            # Handle different chunk types according to Claude streaming format
-                            if chunk_type == "message_start":
-                                yield f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "content_block_start":
-                                yield f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "content_block_delta":
-                                yield f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "content_block_stop":
-                                yield f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "message_delta":
-                                yield f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "message_stop":
-                                yield f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                                yield "data: [DONE]\n\n"
-                                break
+                        # Handle different chunk types according to Claude streaming format
+                        if chunk_type == "message_start":
+                            yield f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "content_block_start":
+                            yield f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "content_block_delta":
+                            yield f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "content_block_stop":
+                            yield f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "message_delta":
+                            yield f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                        elif chunk_type == "message_stop":
+                            yield f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            break
+                        elif chunk_type == "error":
+                            # Handle error chunks in the stream
+                            yield f"event: error\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            break
 
                 except Exception as e:
-                    logging.error(f"Error in streaming response: {e}", exc_info=True)
+                    # Errors during streaming can only be sent as SSE events
+                    logging.error(f"Error during streaming: {e}", exc_info=True)
                     error_chunk = {
                         "type": "error",
                         "error": {"type": "api_error", "message": str(e)},
                     }
-                    yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+                    yield f"event: error\ndata: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
 
             return Response(stream_generate(), mimetype="text/event-stream"), 200
 
         else:
             # Handle non-streaming response
-            response = bedrock.invoke_model(body=body_json)
+            response = invoke_bedrock_non_streaming(bedrock, body_json)
+            # Extract status code from response metadata - default to None to detect malformed responses
+            response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             response_body = response.get("body")
+
+            # Check for malformed response (missing status code)
+            if response_status is None:
+                logging.error("Missing HTTPStatusCode in response metadata")
+                return jsonify(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Malformed response from backend API",
+                        },
+                    }
+                ), 500
 
             if response_body is not None:
                 # Read the response body
-                chunk_data = ""
-                for event in response_body:
-                    if isinstance(event, bytes):
-                        chunk_data += event.decode("utf-8")
-                    else:
-                        chunk_data += str(event)
+                chunk_data = read_response_body_stream(response_body)
 
                 if chunk_data:
                     final_response = json.loads(chunk_data)
                     logging.debug(f"Non-streaming response: {final_response}")
-                    return jsonify(final_response), 200
+                    # Use actual response status code
+                    return jsonify(final_response), response_status
                 else:
-                    return jsonify({}), 200
+                    logging.warning("Empty chunk_data from non-streaming response body")
+                    error_status = response_status if response_status >= 400 else 500
+                    return jsonify(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "Empty response data from backend API",
+                            },
+                        }
+                    ), error_status
             else:
-                return jsonify({}), 200
+                logging.error("Response body is None from SDK invoke_model")
+                error_status = response_status if response_status >= 400 else 500
+                return jsonify(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": "Empty response body from backend API",
+                        },
+                    }
+                ), error_status
 
     except Exception as e:
+        # Check if this is a rate limit error from retry exhaustion
+        if isinstance(e, RetryError) and hasattr(e, "__cause__"):
+            cause = e.__cause__
+            # Use the same retry_on_rate_limit function to classify the error
+            if retry_on_rate_limit(cause):
+                logging.warning(f"Rate limit exceeded for Anthropic proxy request: {e}")
+                error_dict = {
+                    "type": "error",
+                    "error": {
+                        "type": "rate_limit_error",
+                        "message": "Rate limit exceeded. Please try again later.",
+                    },
+                }
+                return jsonify(error_dict), 429
+
         logging.error(
             f"Error handling Anthropic proxy request using SDK: {e}", exc_info=True
         )

@@ -338,7 +338,7 @@ workflow-major: version-bump-major build-tested workflow-commit-and-tag release-
 
 # Clean build artifacts only
 clean:
-	rm -rf $(DIST_DIR) $(BUILD_DIR) __pycache__
+	rm -rf $(DIST_DIR) $(BUILD_DIR) $(RELEASE_DIR) __pycache__
 	rm -f sap_ai_proxy.spec
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} +
