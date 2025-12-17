@@ -38,6 +38,8 @@ def retry_on_rate_limit(exception):
         or "rate limit" in error_message
         or "throttling" in error_message
         or "too many requests" in error_message
+        or "exceeding the allowed request" in error_message
+        or "rate limited by ai core" in error_message
     )
 
 
@@ -89,7 +91,16 @@ def get_sapaicore_sdk_client(model_name: str):
         client = _bedrock_clients.get(model_name)
         if client is None:
             logging.info(f"Creating SAP AI SDK client for model '{model_name}'")
-            client = get_sapaicore_sdk_session().client(model_name=model_name)
+            # Configure client with minimal retries since we handle retries at application level
+            client_config = {
+                "retries": {
+                    "max_attempts": 1,  # Disable botocore retries, let tenacity handle it
+                    "mode": "standard",
+                }
+            }
+            client = get_sapaicore_sdk_session().client(
+                model_name=model_name, config=client_config
+            )
             _bedrock_clients[model_name] = client
     return client
 
