@@ -5,24 +5,22 @@ import logging
 import random
 import threading
 import time
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any
 
 import requests
-from flask import Flask, request, jsonify, Response, stream_with_context
 from botocore.config import Config
+from botocore.exceptions import ClientError
+from flask import Flask, request, jsonify, Response, stream_with_context
+# SAP AI SDK imports
+from gen_ai_hub.proxy.native.amazon.clients import Session
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
     RetryError,
 )
 
-# SAP AI SDK imports
-from gen_ai_hub.proxy.native.amazon.clients import Session
-
 from auth import TokenManager, RequestValidator
-
 # Import from new modular structure
 from config import ServiceKey, SubAccountConfig, ProxyConfig, load_config
 from proxy_helpers import Detector, Converters
@@ -40,16 +38,23 @@ RETRY_MAX_WAIT = 16  # Maximum wait time in seconds
 # Retry decorator for SAP AI SDK calls that may hit rate limits
 def retry_on_rate_limit(exception):
     """Check if exception is a rate limit error that should be retried."""
+    # Check for ClientError with 429 status code first (more reliable)
+    if isinstance(exception, ClientError):
+        error_code = exception.response.get('Error', {}).get('Code', '')
+        http_status = exception.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        if error_code == '429' or http_status == 429:
+            return True
+
+    # Fallback to string matching for other exception types
     error_message = str(exception).lower()
     return (
-        "too many tokens" in error_message
-        or "rate limit" in error_message
-        or "throttling" in error_message
-        or "too many requests" in error_message
-        or "exceeding the allowed request" in error_message
-        or "rate limited by ai core" in error_message
+            "too many tokens" in error_message
+            or "rate limit" in error_message
+            or "throttling" in error_message
+            or "too many requests" in error_message
+            or "exceeding the allowed request" in error_message
+            or "rate limited by ai core" in error_message
     )
-
 
 bedrock_retry = retry(
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
@@ -83,34 +88,6 @@ def invoke_bedrock_non_streaming(bedrock_client, body_json: str):
 
 
 # Helper functions for response validation
-def validate_response_body(
-    response_body, response_status: Optional[int]
-) -> Optional[Tuple[Any, int]]:
-    """
-    Validate that response body is not None.
-
-    Args:
-        response_body: The response body from AWS SDK (can be None)
-        response_status: The HTTP status code from response metadata
-
-    Returns:
-        None if validation passes, or (error_response, status_code) tuple if validation fails
-    """
-    if response_body is None:
-        logging.error("Response body is None from SDK")
-        error_response = {
-            "type": "error",
-            "error": {
-                "type": "api_error",
-                "message": "Empty response body from backend API",
-            },
-        }
-        error_status = (
-            response_status if response_status and response_status >= 400 else 500
-        )
-        return jsonify(error_response), error_status
-    return None
-
 
 def read_response_body_stream(response_body) -> str:
     """
@@ -129,35 +106,6 @@ def read_response_body_stream(response_body) -> str:
         else:
             chunk_data += str(event)
     return chunk_data
-
-
-def validate_response_data(
-    chunk_data: str, response_status: int
-) -> Optional[Tuple[Any, int]]:
-    """
-    Validate that response data is not empty.
-
-    Args:
-        chunk_data: The parsed response data string
-        response_status: The HTTP status code from response metadata
-
-    Returns:
-        None if validation passes, or (error_response, status_code) tuple if validation fails
-    """
-    if not chunk_data:
-        logging.warning("Empty chunk_data from non-streaming response body")
-        error_status = response_status if response_status >= 400 else 500
-        return jsonify(
-            {
-                "type": "error",
-                "error": {
-                    "type": "api_error",
-                    "message": "Empty response data from backend API",
-                },
-            }
-        ), error_status
-    return None
-
 
 # Global configuration
 proxy_config = ProxyConfig()
