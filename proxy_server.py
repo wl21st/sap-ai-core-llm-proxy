@@ -31,7 +31,7 @@ from utils import setup_logging, get_token_logger, handle_http_429_error
 DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.5-sonnet"
 
 # Retry configuration constants (centralized for future configurability)
-RETRY_MAX_ATTEMPTS = 4  # Total attempts (1 original + 7 retries)
+RETRY_MAX_ATTEMPTS = 4  # Total attempts (1 original + 3 retries)
 RETRY_MULTIPLIER = 2  # Exponential backoff multiplier
 RETRY_MIN_WAIT = 4  # Minimum wait time in seconds
 RETRY_MAX_WAIT = 16  # Maximum wait time in seconds
@@ -62,6 +62,25 @@ bedrock_retry = retry(
         f"(attempt {retry_state.attempt_number}/{RETRY_MAX_ATTEMPTS}): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
     ),
 )
+
+
+# Helper functions for SDK invocation with retry logic
+@bedrock_retry
+def invoke_bedrock_streaming(bedrock_client, body_json: str):
+    """
+    Invoke Bedrock streaming API with retry logic for rate limits.
+
+    Note: This only retries the initial connection/request. Once streaming starts,
+    errors during stream consumption cannot be retried as the stream is already open.
+    """
+    return bedrock_client.invoke_model_with_response_stream(body=body_json)
+
+
+@bedrock_retry
+def invoke_bedrock_non_streaming(bedrock_client, body_json: str):
+    """Invoke Bedrock non-streaming API with retry logic for rate limits."""
+    return bedrock_client.invoke_model(body=body_json)
+
 
 # Global configuration
 proxy_config = ProxyConfig()
@@ -930,12 +949,7 @@ def proxy_claude_request():
             # Handle streaming response
             # Check for errors before starting the stream (to return proper status code)
             try:
-
-                @bedrock_retry
-                def invoke_streaming():
-                    return bedrock.invoke_model_with_response_stream(body=body_json)
-
-                response = invoke_streaming()
+                response = invoke_bedrock_streaming(bedrock, body_json)
                 # Extract status code if available
                 response_status = response.get("ResponseMetadata", {}).get(
                     "HTTPStatusCode", 200
@@ -1021,11 +1035,7 @@ def proxy_claude_request():
 
         else:
             # Handle non-streaming response
-            @bedrock_retry
-            def invoke_non_streaming():
-                return bedrock.invoke_model(body=body_json)
-
-            response = invoke_non_streaming()
+            response = invoke_bedrock_non_streaming(bedrock, body_json)
             # Extract status code from response metadata
             response_status = response.get("ResponseMetadata", {}).get(
                 "HTTPStatusCode", 200
@@ -1072,13 +1082,11 @@ def proxy_claude_request():
                 ), error_status
 
     except Exception as e:
-        # Check if this is a throttling error from retry exhaustion
+        # Check if this is a rate limit error from retry exhaustion
         if isinstance(e, RetryError) and hasattr(e, "__cause__"):
             cause = e.__cause__
-            if (
-                hasattr(cause, "__class__")
-                and "ThrottlingException" in cause.__class__.__name__
-            ):
+            # Use the same retry_on_rate_limit function to classify the error
+            if retry_on_rate_limit(cause):
                 logging.warning(f"Rate limit exceeded for Anthropic proxy request: {e}")
                 error_dict = {
                     "type": "error",
