@@ -5,7 +5,7 @@ import logging
 import random
 import threading
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 
 import requests
 from flask import Flask, request, jsonify, Response, stream_with_context
@@ -80,6 +80,83 @@ def invoke_bedrock_streaming(bedrock_client, body_json: str):
 def invoke_bedrock_non_streaming(bedrock_client, body_json: str):
     """Invoke Bedrock non-streaming API with retry logic for rate limits."""
     return bedrock_client.invoke_model(body=body_json)
+
+
+# Helper functions for response validation
+def validate_response_body(
+    response_body, response_status: Optional[int]
+) -> Optional[Tuple[Any, int]]:
+    """
+    Validate that response body is not None.
+
+    Args:
+        response_body: The response body from AWS SDK (can be None)
+        response_status: The HTTP status code from response metadata
+
+    Returns:
+        None if validation passes, or (error_response, status_code) tuple if validation fails
+    """
+    if response_body is None:
+        logging.error("Response body is None from SDK")
+        error_response = {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": "Empty response body from backend API",
+            },
+        }
+        error_status = (
+            response_status if response_status and response_status >= 400 else 500
+        )
+        return jsonify(error_response), error_status
+    return None
+
+
+def read_response_body_stream(response_body) -> str:
+    """
+    Read response body stream and return as string.
+
+    Args:
+        response_body: The streaming response body from AWS SDK
+
+    Returns:
+        String containing the full response data
+    """
+    chunk_data = ""
+    for event in response_body:
+        if isinstance(event, bytes):
+            chunk_data += event.decode("utf-8")
+        else:
+            chunk_data += str(event)
+    return chunk_data
+
+
+def validate_response_data(
+    chunk_data: str, response_status: int
+) -> Optional[Tuple[Any, int]]:
+    """
+    Validate that response data is not empty.
+
+    Args:
+        chunk_data: The parsed response data string
+        response_status: The HTTP status code from response metadata
+
+    Returns:
+        None if validation passes, or (error_response, status_code) tuple if validation fails
+    """
+    if not chunk_data:
+        logging.warning("Empty chunk_data from non-streaming response body")
+        error_status = response_status if response_status >= 400 else 500
+        return jsonify(
+            {
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": "Empty response data from backend API",
+                },
+            }
+        ), error_status
+    return None
 
 
 # Global configuration
@@ -1049,9 +1126,7 @@ def proxy_claude_request():
             # Handle non-streaming response
             response = invoke_bedrock_non_streaming(bedrock, body_json)
             # Extract status code from response metadata - default to None to detect malformed responses
-            response_status = response.get("ResponseMetadata", {}).get(
-                "HTTPStatusCode"
-            )
+            response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             response_body = response.get("body")
 
             # Check for malformed response (missing status code)
