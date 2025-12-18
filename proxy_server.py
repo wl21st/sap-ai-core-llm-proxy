@@ -152,7 +152,7 @@ def get_sapaicore_sdk_client(model_name: str):
                     "mode": "standard",
                 },
                 max_pool_connections=50,
-                tcp_keepalive=10,
+                tcp_keepalive=True,
             )
             client = get_sapaicore_sdk_session().client(
                 model_name=model_name, config=client_config
