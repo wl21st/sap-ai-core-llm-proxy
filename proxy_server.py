@@ -1443,6 +1443,10 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
     claude_metadata = {}  # For Claude 3.7 metadata
     chunk = None  # Initialize chunk variable to avoid reference errors
 
+    # Track stream completion state for proper error handling
+    finish_reason_sent = False
+    usage_sent = False
+
     # Make streaming request to backend
     with requests.post(
         url, headers=headers, json=payload, stream=True, timeout=600
@@ -1498,6 +1502,13 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                     )
                                 )
                                 if openai_sse_chunk_str:
+                                    # Check if finish_reason is in this chunk
+                                    try:
+                                        chunk_data = json.loads(openai_sse_chunk_str.replace("data: ", "").strip())
+                                        if chunk_data.get("choices", [{}])[0].get("finish_reason"):
+                                            finish_reason_sent = True
+                                    except (json.JSONDecodeError, IndexError, KeyError):
+                                        pass
                                     yield openai_sse_chunk_str
                             except Exception as e:
                                 logging.error(
@@ -1539,6 +1550,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                     logging.info(
                         f"Sending final usage chunk with SSE format: {final_usage_chunk_str[:200]}..."
                     )
+                    usage_sent = True
                     yield final_usage_chunk_str
                     logging.info(
                         f"Sent final usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
@@ -1595,6 +1607,13 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                     logging.info(
                                         f"Gemini converted to OpenAI chunk: {openai_sse_chunk_str}"
                                     )
+                                    # Check if finish_reason is in this chunk
+                                    try:
+                                        chunk_data = json.loads(openai_sse_chunk_str.replace("data: ", "").strip())
+                                        if chunk_data.get("choices", [{}])[0].get("finish_reason"):
+                                            finish_reason_sent = True
+                                    except (json.JSONDecodeError, IndexError, KeyError):
+                                        pass
                                     yield openai_sse_chunk_str
                                 else:
                                     logging.info(
@@ -1668,6 +1687,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                     logging.info(
                         f"Sending final Gemini usage chunk with SSE format: {final_usage_chunk_str[:200]}..."
                     )
+                    usage_sent = True
                     yield final_usage_chunk_str
                     logging.info(
                         f"Sent final Gemini usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
@@ -1704,6 +1724,15 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                             json_chunk_str, model
                                         )
                                     )
+
+                                    # Check if finish_reason is in this chunk
+                                    try:
+                                        chunk_data = json.loads(openai_sse_chunk_str.replace("data: ", "").strip())
+                                        if chunk_data.get("choices", [{}])[0].get("finish_reason"):
+                                            finish_reason_sent = True
+                                    except (json.JSONDecodeError, IndexError, KeyError):
+                                        pass
+
                                     yield openai_sse_chunk_str.encode("utf-8")
 
                                     # Parse token usage if available
@@ -1719,6 +1748,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                             total_tokens = (
                                                 prompt_tokens + completion_tokens
                                             )
+                                            usage_sent = True
                                     except json.JSONDecodeError:
                                         pass
                                 except ValueError:
@@ -1732,10 +1762,11 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                         else:  # OpenAI-like models
                             yield chunk
                             try:
-                                # Try to extract token counts from final chunk
+                                # Try to extract token counts and finish_reason from chunk
                                 if chunk:
                                     chunk_text = chunk.decode("utf-8")
                                     if '"finish_reason":' in chunk_text:
+                                        finish_reason_sent = True
                                         for line in chunk_text.strip().split("\n"):
                                             if (
                                                 line.startswith("data: ")
@@ -1753,6 +1784,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                                         completion_tokens = data[
                                                             "usage"
                                                         ].get("completion_tokens", 0)
+                                                        usage_sent = True
                                                 except json.JSONDecodeError:
                                                     pass
                             except Exception:
@@ -1819,12 +1851,36 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
         except requests.exceptions.ChunkedEncodingError as err:
-            logging.warning(
-                f"ChunkedEncodingError in streaming response from '{subaccount_name}': {err}. "
-                f"Stream may have completed successfully but connection ended prematurely."
-            )
-            # For ChunkedEncodingError, don't send error - the stream likely completed successfully
-            yield "data: [DONE]\n\n"
+            # Check if stream completed successfully before the error
+            if finish_reason_sent or usage_sent:
+                logging.info(
+                    f"ChunkedEncodingError in streaming response from '{subaccount_name}': {err}. "
+                    f"Stream completed successfully (finish_reason_sent={finish_reason_sent}, usage_sent={usage_sent}) "
+                    f"before connection ended."
+                )
+                # Stream completed - just send [DONE]
+                yield "data: [DONE]\n\n"
+            else:
+                logging.warning(
+                    f"ChunkedEncodingError in streaming response from '{subaccount_name}': {err}. "
+                    f"Stream may be incomplete (finish_reason_sent={finish_reason_sent}, usage_sent={usage_sent}). "
+                    f"Sending error to client."
+                )
+                # Stream may be incomplete - send error
+                error_payload = {
+                    "id": f"error-{random.randint(10000, 99999)}",
+                    "object": "error",
+                    "created": int(time.time()),
+                    "model": model,
+                    "error": {
+                        "message": "Stream ended prematurely due to connection error. Response may be incomplete.",
+                        "type": "stream_error",
+                        "code": "incomplete_stream",
+                        "subaccount": subaccount_name,
+                    },
+                }
+                yield f"data: {json.dumps(error_payload)}\n\n"
+                yield "data: [DONE]\n\n"
         except requests.exceptions.ConnectionError as err:
             logging.error(
                 f"ConnectionError in streaming response from '{subaccount_name}': {err}",
