@@ -1,6 +1,0 @@
-flask
-ai_core_sdk
-openai
-litellm
-sap-ai-sdk-gen[all]
-aioboto3

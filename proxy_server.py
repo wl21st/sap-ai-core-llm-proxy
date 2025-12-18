@@ -259,11 +259,6 @@ def parse_arguments():
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     return parser.parse_args()
 
-
-# Configure logging if not already configured elsewhere
-# logging.basicConfig(level=logging.DEBUG)
-
-
 def get_claude_stop_reason_from_gemini_chunk(gemini_chunk):
     """Extracts and maps the stop reason from a final Gemini chunk."""
     finish_reason = gemini_chunk.get("candidates", [{}])[0].get("finishReason")
