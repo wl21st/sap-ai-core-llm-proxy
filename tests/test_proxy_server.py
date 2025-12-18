@@ -52,7 +52,7 @@ convert_gemini_to_openai = Converters.convert_gemini_to_openai
 
 # Import from modular structure
 from config import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig, load_config
-from auth import TokenManager, fetch_token, verify_request_token
+from auth import fetch_token, verify_request_token
 from utils import handle_http_429_error
 
 

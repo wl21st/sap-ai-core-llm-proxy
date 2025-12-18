@@ -21,7 +21,7 @@ def setup_logging(debug: bool = False) -> None:
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    
+
     if debug:
         logging.debug("Debug mode enabled")
 
