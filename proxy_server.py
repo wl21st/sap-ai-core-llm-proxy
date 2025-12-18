@@ -11,6 +11,7 @@ import requests
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from flask import Flask, request, jsonify, Response, stream_with_context
+
 # SAP AI SDK imports
 from gen_ai_hub.proxy.native.amazon.clients import Session
 from tenacity import (
@@ -21,6 +22,7 @@ from tenacity import (
 )
 
 from auth import TokenManager, RequestValidator
+
 # Import from new modular structure
 from config import ServiceKey, SubAccountConfig, ProxyConfig, load_config
 from proxy_helpers import Detector, Converters
@@ -40,21 +42,24 @@ def retry_on_rate_limit(exception):
     """Check if exception is a rate limit error that should be retried."""
     # Check for ClientError with 429 status code first (more reliable)
     if isinstance(exception, ClientError):
-        error_code = exception.response.get('Error', {}).get('Code', '')
-        http_status = exception.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
-        if error_code == '429' or http_status == 429:
+        error_code = exception.response.get("Error", {}).get("Code", "")
+        http_status = exception.response.get("ResponseMetadata", {}).get(
+            "HTTPStatusCode"
+        )
+        if error_code == "429" or http_status == 429:
             return True
 
     # Fallback to string matching for other exception types
     error_message = str(exception).lower()
     return (
-            "too many tokens" in error_message
-            or "rate limit" in error_message
-            or "throttling" in error_message
-            or "too many requests" in error_message
-            or "exceeding the allowed request" in error_message
-            or "rate limited by ai core" in error_message
+        "too many tokens" in error_message
+        or "rate limit" in error_message
+        or "throttling" in error_message
+        or "too many requests" in error_message
+        or "exceeding the allowed request" in error_message
+        or "rate limited by ai core" in error_message
     )
+
 
 bedrock_retry = retry(
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
@@ -89,6 +94,7 @@ def invoke_bedrock_non_streaming(bedrock_client, body_json: str):
 
 # Helper functions for response validation
 
+
 def read_response_body_stream(response_body) -> str:
     """
     Read response body stream and return as string.
@@ -106,6 +112,7 @@ def read_response_body_stream(response_body) -> str:
         else:
             chunk_data += str(event)
     return chunk_data
+
 
 # Global configuration
 proxy_config = ProxyConfig()
@@ -1806,6 +1813,32 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                     "code": err.response.status_code
                     if hasattr(err, "response") and err.response
                     else 500,
+                    "subaccount": subaccount_name,
+                },
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
+        except requests.exceptions.ChunkedEncodingError as err:
+            logging.warning(
+                f"ChunkedEncodingError in streaming response from '{subaccount_name}': {err}. "
+                f"Stream may have completed successfully but connection ended prematurely."
+            )
+            # For ChunkedEncodingError, don't send error - the stream likely completed successfully
+            yield "data: [DONE]\n\n"
+        except requests.exceptions.ConnectionError as err:
+            logging.error(
+                f"ConnectionError in streaming response from '{subaccount_name}': {err}",
+                exc_info=True,
+            )
+            error_payload = {
+                "id": f"error-{random.randint(10000, 99999)}",
+                "object": "error",
+                "created": int(time.time()),
+                "model": model,
+                "error": {
+                    "message": "Connection error during streaming. Please try again.",
+                    "type": "connection_error",
+                    "code": "connection_failed",
                     "subaccount": subaccount_name,
                 },
             }
