@@ -65,26 +65,35 @@ install-build:
 # BUILD TARGETS (Independent of versioning)
 # ============================================================================
 
+# Generate version file for PyInstaller
+generate-version:
+	@echo "Generating version file..."
+	@CURRENT_VERSION=$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
+	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \
+	echo "$$CURRENT_VERSION" > _version.txt; \
+	echo "$$GIT_HASH" >> _version.txt; \
+	echo "Version file generated: $$CURRENT_VERSION (git: $$GIT_HASH)"
+
 # Standard build
-build: install-build
+build: install-build generate-version
 	@echo "Building $(APP_NAME) for $(PLATFORM)..."
-	$(UV) run pyinstaller $(PYINSTALLER_OPTS) $(MAIN_SCRIPT)
+	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --add-data "_version.txt:." $(MAIN_SCRIPT)
 	@echo "Build complete: $(DIST_DIR)/$(APP_NAME)$(BINARY_EXT)"
 
 # Debug build (console visible)
-build-debug: install-build
+build-debug: install-build generate-version
 	@echo "Building $(APP_NAME) (debug mode) for $(PLATFORM)..."
-	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --console $(MAIN_SCRIPT)
+	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --add-data "_version.txt:." --console $(MAIN_SCRIPT)
 
 # GUI build (no console)
-build-gui: install-build
+build-gui: install-build generate-version
 	@echo "Building $(APP_NAME) (GUI mode) for $(PLATFORM)..."
-	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --windowed $(MAIN_SCRIPT)
+	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --add-data "_version.txt:." --windowed $(MAIN_SCRIPT)
 
 # Build with dependencies bundled
-build-bundle: install-build
+build-bundle: install-build generate-version
 	@echo "Building $(APP_NAME) with bundled dependencies..."
-	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --collect-all your_package $(MAIN_SCRIPT)
+	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --add-data "_version.txt:." --collect-all your_package $(MAIN_SCRIPT)
 
 # Run tests before building
 test:
@@ -167,7 +176,7 @@ version-bump-major:
 # ============================================================================
 
 # Create a git tag for current version
-tag:
+tag: generate-version
 	@CURRENT_VERSION=$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
 	echo "Creating git tag v$$CURRENT_VERSION..."; \
 	if git rev-parse "v$$CURRENT_VERSION" >/dev/null 2>&1; then \
@@ -185,7 +194,7 @@ tag-push:
 	@echo "Tag v$(VERSION) pushed successfully"
 
 # Complete workflow: commit version changes, push, then tag
-workflow-commit-and-tag:
+workflow-commit-and-tag: generate-version
 	@echo "Committing version changes and pushing..."
 	@CURRENT_VERSION=$$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
 	git add pyproject.toml uv.lock && \
@@ -339,7 +348,7 @@ workflow-major: version-bump-major build-tested workflow-commit-and-tag release-
 # Clean build artifacts only
 clean:
 	rm -rf $(DIST_DIR) $(BUILD_DIR) $(RELEASE_DIR) __pycache__
-	rm -f sap_ai_proxy.spec
+	rm -f sap_ai_proxy.spec _version.txt
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 
@@ -369,6 +378,7 @@ help:
 	@echo "SAP AI Core LLM Proxy - Makefile Commands"
 	@echo ""
 	@echo "BUILD COMMANDS:"
+	@echo "  make generate-version   - Generate _version.txt file for builds"
 	@echo "  make build              - Build native binary (current architecture)"
 	@echo "  make build-debug        - Build with console output"
 	@echo "  make build-gui          - Build GUI version (no console)"

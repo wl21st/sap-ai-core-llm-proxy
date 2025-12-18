@@ -236,3 +236,6 @@ key.pem
 cert.pem
 *.json
 releases/
+
+# Build-time generated files
+_version.txt
