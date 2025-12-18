@@ -56,6 +56,7 @@ def retry_on_rate_limit(exception):
             or "rate limited by ai core" in error_message
     )
 
+
 bedrock_retry = retry(
     stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
     wait=wait_exponential(
@@ -107,6 +108,7 @@ def read_response_body_stream(response_body) -> str:
             chunk_data += str(event)
     return chunk_data
 
+
 # Global configuration
 proxy_config = ProxyConfig()
 
@@ -148,7 +150,9 @@ def get_sapaicore_sdk_client(model_name: str):
                 retries={
                     "max_attempts": 1,  # Disable botocore retries, let tenacity handle it
                     "mode": "standard",
-                }
+                },
+                max_pool_connections=50,
+                tcp_keepalive=True,
             )
             client = get_sapaicore_sdk_session().client(
                 model_name=model_name, config=client_config
@@ -245,6 +249,7 @@ def format_embedding_response(response, model):
 # Initialize token logger (will be configured on first use)
 token_logger = get_token_logger()
 
+
 # load_config is now imported from config.loader
 
 
@@ -258,6 +263,7 @@ def parse_arguments():
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     return parser.parse_args()
+
 
 def get_claude_stop_reason_from_gemini_chunk(gemini_chunk):
     """Extracts and maps the stop reason from a final Gemini chunk."""
@@ -307,8 +313,8 @@ def load_balance_url(model_name: str) -> tuple:
 
     # Get list of subAccounts that have this model
     if (
-        model_name not in proxy_config.model_to_subaccounts
-        or not proxy_config.model_to_subaccounts[model_name]
+            model_name not in proxy_config.model_to_subaccounts
+            or not proxy_config.model_to_subaccounts[model_name]
     ):
         # Check if it's a Claude or Gemini model and try fallback
         if Detector.is_claude_model(model_name):
@@ -320,8 +326,8 @@ def load_balance_url(model_name: str) -> tuple:
             fallback_models = ["anthropic--claude-4.5-sonnet"]
             for fallback in fallback_models:
                 if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
+                        fallback in proxy_config.model_to_subaccounts
+                        and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logging.info(
                         f"Using fallback Claude model '{fallback}' for '{model_name}'"
@@ -341,8 +347,8 @@ def load_balance_url(model_name: str) -> tuple:
             fallback_models = ["gemini-2.5-pro"]
             for fallback in fallback_models:
                 if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
+                        fallback in proxy_config.model_to_subaccounts
+                        and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logging.info(
                         f"Using fallback Gemini model '{fallback}' for '{model_name}'"
@@ -360,8 +366,8 @@ def load_balance_url(model_name: str) -> tuple:
             fallback_models = ["gpt-5"]
             for fallback in fallback_models:
                 if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
+                        fallback in proxy_config.model_to_subaccounts
+                        and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logging.info(
                         f"Using fallback model '{fallback}' for '{model_name}'"
@@ -835,13 +841,13 @@ def proxy_claude_request():
                 items_to_remove = []
                 for i, item in enumerate(content):
                     if item.get("type") == "text" and (
-                        not item.get("text") or item.get("text") == ""
+                            not item.get("text") or item.get("text") == ""
                     ):
                         # Mark empty text items for removal
                         items_to_remove.append(i)
                     elif (
-                        item.get("type") == "image"
-                        and item.get("source", {}).get("type") == "base64"
+                            item.get("type") == "image"
+                            and item.get("source", {}).get("type") == "base64"
                     ):
                         # Compress image data if available (would need ImageCompressor utility)
                         image_data = item.get("source", {}).get("data")
@@ -1433,7 +1439,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
 
     # Make streaming request to backend
     with requests.post(
-        url, headers=headers, json=payload, stream=True, timeout=600
+            url, headers=headers, json=payload, stream=True, timeout=600
     ) as response:
         try:
             response.raise_for_status()
@@ -1684,7 +1690,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                     start = buffer.index("data: ") + len("data: ")
                                     end = buffer.index("\n\n", start)
                                     json_chunk_str = buffer[start:end].strip()
-                                    buffer = buffer[end + 2 :]
+                                    buffer = buffer[end + 2:]
 
                                     # Convert Claude chunk to OpenAI format
                                     openai_sse_chunk_str = (
@@ -1705,7 +1711,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                                 "usage"
                                             ].get("output_tokens", 0)
                                             total_tokens = (
-                                                prompt_tokens + completion_tokens
+                                                    prompt_tokens + completion_tokens
                                             )
                                     except json.JSONDecodeError:
                                         pass
@@ -1726,8 +1732,8 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                     if '"finish_reason":' in chunk_text:
                                         for line in chunk_text.strip().split("\n"):
                                             if (
-                                                line.startswith("data: ")
-                                                and line[6:].strip() != "[DONE]"
+                                                    line.startswith("data: ")
+                                                    and line[6:].strip() != "[DONE]"
                                             ):
                                                 try:
                                                     data = json.loads(line[6:])
@@ -1749,7 +1755,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
             # Log token usage at the end of the stream (only for non-Claude 3.7/4 models)
             # Claude 3.7/4 models already log their token usage after sending the final usage chunk
             if not (
-                Detector.is_claude_model(model) and Detector.is_claude_37_or_4(model)
+                    Detector.is_claude_model(model) and Detector.is_claude_37_or_4(model)
             ):
                 user_id = request.headers.get("Authorization", "unknown")
                 if user_id and len(user_id) > 20:
@@ -1850,7 +1856,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
         )
         try:
             with requests.post(
-                url, headers=headers, json=payload, stream=True, timeout=600
+                    url, headers=headers, json=payload, stream=True, timeout=600
             ) as response:
                 response.raise_for_status()
                 logging.debug(f"Claude backend response status: {response.status_code}")
@@ -2023,7 +2029,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
 
     try:
         with requests.post(
-            url, headers=headers, json=payload, stream=True, timeout=600
+                url, headers=headers, json=payload, stream=True, timeout=600
         ) as response:
             response.raise_for_status()
             logging.debug(f"Backend response status: {response.status_code}")
