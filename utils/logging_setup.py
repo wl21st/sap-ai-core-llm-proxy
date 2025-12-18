@@ -17,7 +17,7 @@ def setup_logging(debug: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
         level=level,
-        format='%(asctime)s.%(msecs)03d - [%(threadName)s] - %(levelname)s - %(message)s',
+        format='%(asctime)s.%(msecs)03d - [%(threadName)s] - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
