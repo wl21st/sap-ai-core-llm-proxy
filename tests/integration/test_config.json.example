@@ -1,4 +1,3 @@
-s
 {
   "proxy_url": "http://127.0.0.1:3001",
   "auth_token": "${PROXY_AUTH_TOKEN}",

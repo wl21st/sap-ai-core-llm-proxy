@@ -91,6 +91,71 @@ export SKIP_INTEGRATION_TESTS="false"
    curl http://127.0.0.1:3001/v1/models
    ```
 
+## Debug Logging
+
+### Enable Debug Logging for Tests
+
+To enable debug logging during test execution, use one of these methods:
+
+**Method 1: Command-line flag** (recommended for one-time debugging):
+```bash
+# Enable console debug output
+pytest tests/integration/ --log-cli-level=DEBUG -v
+
+# Or using uv
+uv run pytest tests/integration/ --log-cli-level=DEBUG -v
+```
+
+**Method 2: Enable console logging in pytest.ini**:
+Edit [`pytest.ini`](../../pytest.ini) and change:
+```ini
+log_cli = true  # Change from false to true
+log_cli_level = DEBUG  # Change from INFO to DEBUG
+```
+
+**Method 3: View debug logs in file**:
+Debug logs are always written to `logs/pytest.log` regardless of console settings:
+```bash
+# Run tests
+pytest tests/integration/ -v
+
+# View debug logs
+tail -f logs/pytest.log
+```
+
+**Method 4: Enable debug logging in proxy server**:
+When starting the proxy server for integration tests:
+```bash
+# Start with debug flag
+python proxy_server.py --config config.json --debug
+
+# Or using uv
+uv run python proxy_server.py --config config.json --debug
+```
+
+### Debug Logging Configuration
+
+The logging configuration in [`pytest.ini`](../../pytest.ini) includes:
+
+- **Console logging**: Controlled by `log_cli` and `log_cli_level`
+- **File logging**: Always enabled at DEBUG level in `logs/pytest.log`
+- **Format**: Timestamp, log level, logger name, and message
+- **Proxy server**: Use `--debug` flag for detailed server logs
+
+### Example: Full Debug Session
+
+```bash
+# Terminal 1: Start proxy server with debug logging
+python proxy_server.py --config config.json --debug
+
+# Terminal 2: Run tests with debug console output
+pytest tests/integration/ --log-cli-level=DEBUG -v
+
+# Or view file logs after running tests
+pytest tests/integration/ -v
+tail -f logs/pytest.log
+```
+
 ## Running Tests
 
 ### Using Make (Recommended)
