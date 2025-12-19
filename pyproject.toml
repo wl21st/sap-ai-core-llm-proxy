@@ -10,12 +10,12 @@ dependencies = [
     "botocore>=1.35.0",
     "flask>=3.1.2",
     "langchain-core>=0.3.80",
-    "litellm>=1.79.3",
+    "litellm==1.80.10",
     "openai>=2.8.0",
     "protobuf>=6.33.1",
     "sap-ai-sdk-gen[all]>=5.10.0",
     "tenacity>=9.0.0",
-    "urllib3>=2.6.0"
+    "urllib3>=2.6.0",
 ]
 
 [project.optional-dependencies]
