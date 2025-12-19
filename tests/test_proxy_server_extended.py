@@ -671,6 +671,7 @@ class TestHandleNonStreamingRequest:
             "model": "claude-3.5-sonnet",
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
+        mock_response.text = '{"id": "msg_123", "type": "message", "content": [{"type": "text", "text": "Hello"}]}'
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
@@ -1203,6 +1204,7 @@ class TestProxyOpenAIStreamEndpoint:
             "stopReason": "end_turn",
             "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
         }
+        mock_response.text = '{"output": {"message": {"role": "assistant", "content": [{"text": "Hello"}]}}}'
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
