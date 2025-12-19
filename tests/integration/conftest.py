@@ -9,11 +9,15 @@ Provides:
 """
 
 import json
+import logging
 import os
 import pytest
 import requests
 from pathlib import Path
 from typing import Dict, Any
+
+# Get logger for integration tests
+logger = logging.getLogger(__name__)
 
 
 def load_test_config() -> Dict[str, Any]:
@@ -120,15 +124,52 @@ def check_server_running(test_config, proxy_url):
             pytest.fail(f"Proxy server not running at {proxy_url}: {e}")
 
 
+class LoggingSession(requests.Session):
+    """Session that logs requests and responses."""
+    
+    def request(self, method, url, **kwargs):
+        """Override request to add logging."""
+        # Log request
+        logger.info(f"\n{'='*80}")
+        logger.info(f"REQUEST: {method} {url}")
+        logger.info(f"Headers: {dict(self.headers)}")
+        
+        if 'json' in kwargs:
+            logger.info(f"Request Body:\n{json.dumps(kwargs['json'], indent=2)}")
+        elif 'data' in kwargs:
+            logger.info(f"Request Data: {kwargs['data']}")
+        
+        # Make request
+        response = super().request(method, url, **kwargs)
+        
+        # Log response
+        logger.info(f"\nRESPONSE: {response.status_code}")
+        logger.info(f"Response Headers: {dict(response.headers)}")
+        
+        # Log response body (handle streaming vs non-streaming)
+        if kwargs.get('stream'):
+            logger.info("Response: [Streaming response - see chunks below]")
+        else:
+            try:
+                response_json = response.json()
+                logger.info(f"Response Body:\n{json.dumps(response_json, indent=2)}")
+            except Exception:
+                logger.info(f"Response Body: {response.text[:500]}")
+        
+        logger.info(f"{'='*80}\n")
+        
+        return response
+
+
 @pytest.fixture(scope="session")
 def proxy_client(test_config, proxy_url, auth_token, check_server_running):
     """
-    Create HTTP client configured for proxy server.
+    Create HTTP client configured for proxy server with request/response logging.
 
     Returns:
-        Configured requests.Session
+        Configured LoggingSession
     """
-    session = requests.Session()
+    session = LoggingSession()
     session.headers.update({"Content-Type": "application/json"})
 
     if auth_token:

@@ -158,6 +158,41 @@ tail -f logs/pytest.log
 
 ## Running Tests
 
+### Run Specific Test
+
+**Run a specific test method for a specific model**:
+```bash
+# Using pytest directly
+pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v
+
+# Using uv
+uv run pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v
+
+# With debug logging to see request/response
+pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v --log-cli-level=INFO
+
+# With full debug output
+pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v --log-cli-level=DEBUG
+```
+
+**Run all tests for a specific model**:
+```bash
+# All tests for gpt-5
+pytest tests/integration/ -k "gpt-5" -v
+
+# All non-streaming tests for gpt-5
+pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming -k "gpt-5" -v
+```
+
+**Run specific test class**:
+```bash
+# All non-streaming tests
+pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming -v
+
+# All streaming tests
+pytest tests/integration/test_chat_completions.py::TestChatCompletionsStreaming -v
+```
+
 ### Using Make (Recommended)
 
 **Run all integration tests**:
@@ -385,6 +420,61 @@ validator.validate_common_attributes(response_data)
 ```
 - Validates `id` and `model` fields are present and non-empty
 
+## Request/Response Logging
+
+All integration tests now automatically log HTTP requests and responses. The [`LoggingSession`](conftest.py:126) class in [`conftest.py`](conftest.py) intercepts all HTTP calls and logs:
+
+- Request method, URL, headers, and body
+- Response status code, headers, and body
+- Formatted JSON for easy reading
+
+**To see request/response logs**:
+
+```bash
+# Console output (INFO level shows requests/responses)
+pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5] -v --log-cli-level=INFO
+
+# File output (always logged to logs/pytest.log)
+pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5] -v
+tail -f logs/pytest.log
+```
+
+**Example output**:
+```
+================================================================================
+REQUEST: POST http://127.0.0.1:3001/v1/chat/completions
+Headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ***'}
+Request Body:
+{
+  "model": "gpt-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ],
+  "max_tokens": 100,
+  "stream": false
+}
+
+RESPONSE: 200
+Response Headers: {'Content-Type': 'application/json', ...}
+Response Body:
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "gpt-5",
+  "choices": [...],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 20,
+    "total_tokens": 30
+  }
+}
+================================================================================
+```
+
 ## Example Test Run
 
 ```bash
@@ -392,6 +482,9 @@ $ make test-integration
 
 # Or using uv directly:
 $ uv run pytest tests/integration/ -m real -v
+
+# Run specific test with request/response logging:
+$ pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5] -v --log-cli-level=INFO
 
 tests/integration/test_models_endpoint.py::TestModelsEndpoint::test_list_models_returns_200 PASSED
 tests/integration/test_models_endpoint.py::TestModelsEndpoint::test_list_models_response_format PASSED
