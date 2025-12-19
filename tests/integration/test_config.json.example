@@ -1,0 +1,21 @@
+s
+{
+  "proxy_url": "http://127.0.0.1:3001",
+  "auth_token": "${PROXY_AUTH_TOKEN}",
+  "models_to_test": [
+    "anthropic--claude-4.5-sonnet",
+    "sonnet-4.5",
+    "gpt-4.1",
+    "gpt-5",
+    "gemini-2.5-pro"
+  ],
+  "test_prompts": {
+    "simple": "Hello, how are you?",
+    "math": "What is 2+2?",
+    "creative": "Tell me a joke.",
+    "technical": "Explain Python in one sentence."
+  },
+  "timeout": 30,
+  "max_tokens": 100,
+  "skip_if_server_not_running": true
+}

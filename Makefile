@@ -132,6 +132,31 @@ test-pattern:
 	fi
 	$(UV) sync --extra dev && $(UV) run pytest -k $(PATTERN) -v
 
+# Run integration tests
+test-integration:
+	@echo "Running integration tests against localhost..."
+	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -v
+
+# Run integration smoke tests
+test-integration-smoke:
+	@echo "Running integration smoke tests..."
+	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m "real and smoke" -v
+
+# Run integration streaming tests
+test-integration-streaming:
+	@echo "Running integration streaming tests..."
+	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m "real and streaming" -v
+
+# Run integration tests for specific model
+test-integration-model:
+	@echo "Running integration tests for specific model..."
+	@if [ -z "$(MODEL)" ]; then \
+		echo "Error: Please specify MODEL=model-name"; \
+		echo "Available models: anthropic--claude-4.5-sonnet, sonnet-4.5, gpt-4.1, gpt-5, gemini-2.5-pro"; \
+		exit 1; \
+	fi
+	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
+
 # Install test dependencies
 install-test-deps:
 	@echo "Installing test dependencies..."
@@ -389,13 +414,17 @@ help:
 	@echo "  Recommended: Build on Intel Mac for x86_64, ARM Mac for arm64"
 	@echo ""
 	@echo "TESTING:"
-	@echo "  make test               - Run all tests"
-	@echo "  make test-cov           - Run tests with coverage report"
-	@echo "  make test-verbose       - Run tests with verbose output"
-	@echo "  make test-file FILE=... - Run specific test file"
-	@echo "  make test-pattern PATTERN=... - Run tests matching pattern"
-	@echo "  make build-tested       - Run tests then build"
-	@echo "  make install-test-deps  - Install test dependencies"
+	@echo "  make test                      - Run all tests"
+	@echo "  make test-cov                  - Run tests with coverage report"
+	@echo "  make test-verbose              - Run tests with verbose output"
+	@echo "  make test-file FILE=...        - Run specific test file"
+	@echo "  make test-pattern PATTERN=...  - Run tests matching pattern"
+	@echo "  make test-integration          - Run integration tests against localhost"
+	@echo "  make test-integration-smoke    - Run integration smoke tests"
+	@echo "  make test-integration-streaming - Run integration streaming tests"
+	@echo "  make test-integration-model MODEL=... - Run tests for specific model"
+	@echo "  make build-tested              - Run tests then build"
+	@echo "  make install-test-deps         - Install test dependencies"
 	@echo ""
 	@echo "VERSION MANAGEMENT:"
 	@echo "  make version-show       - Show current version"

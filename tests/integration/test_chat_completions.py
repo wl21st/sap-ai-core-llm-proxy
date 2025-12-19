@@ -1,0 +1,348 @@
+"""
+Integration tests for /v1/chat/completions endpoint.
+
+Tests chat completions (streaming and non-streaming) for all models
+against a running proxy server.
+"""
+
+import json
+import pytest
+from .validators import ResponseValidator
+
+
+@pytest.mark.integration
+@pytest.mark.real
+@pytest.mark.parametrize(
+    "model",
+    [
+        "anthropic--claude-4.5-sonnet",
+        "sonnet-4.5",
+        "gpt-4.1",
+        "gpt-5",
+        "gemini-2.5-pro",
+    ],
+)
+class TestChatCompletionsNonStreaming:
+    """Tests for non-streaming chat completions."""
+
+    def test_simple_completion(self, proxy_client, proxy_url, model, max_tokens):
+        """Test basic non-streaming completion."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Hello, how are you?"}],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        data = response.json()
+
+        # Validate response format
+        validator = ResponseValidator()
+        validator.validate_openai_format(data)
+        validator.validate_common_attributes(data)
+
+        # Check content is not empty
+        content = data["choices"][0]["message"]["content"]
+        assert content, f"Response content is empty for model {model}"
+        assert len(content) > 0, f"Response content has zero length for model {model}"
+
+    def test_token_usage_present(self, proxy_client, proxy_url, model, max_tokens):
+        """Validate token usage in response."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Count to 5"}],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Validate token usage
+        validator = ResponseValidator()
+        validator.validate_token_usage(data)
+
+        # Check token counts are positive
+        assert data["usage"]["prompt_tokens"] > 0, f"prompt_tokens should be > 0 for model {model}"
+        assert data["usage"]["completion_tokens"] > 0, f"completion_tokens should be > 0 for model {model}"
+        assert data["usage"]["total_tokens"] > 0, f"total_tokens should be > 0 for model {model}"
+
+    def test_response_format(self, proxy_client, proxy_url, model, max_tokens):
+        """Validate OpenAI response format."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        validator = ResponseValidator()
+        validator.validate_openai_format(data)
+
+    def test_common_attributes(self, proxy_client, proxy_url, model, max_tokens):
+        """Check id, object, created, model, choices."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Test"}],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        validator = ResponseValidator()
+        validator.validate_common_attributes(data)
+
+        # Verify model name matches
+        assert data["model"] == model, f"Expected model='{model}', got '{data['model']}'"
+
+    def test_multiple_messages(self, proxy_client, proxy_url, model, max_tokens):
+        """Test with multiple messages in conversation."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": "What is 2+2?"},
+                    {"role": "assistant", "content": "4"},
+                    {"role": "user", "content": "What is 3+3?"},
+                ],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        validator = ResponseValidator()
+        validator.validate_openai_format(data)
+        validator.validate_token_usage(data)
+
+
+@pytest.mark.integration
+@pytest.mark.real
+@pytest.mark.streaming
+@pytest.mark.parametrize(
+    "model",
+    [
+        "anthropic--claude-4.5-sonnet",
+        "sonnet-4.5",
+        "gpt-4.1",
+        "gpt-5",
+        "gemini-2.5-pro",
+    ],
+)
+class TestChatCompletionsStreaming:
+    """Tests for streaming chat completions."""
+
+    def test_streaming_completion(self, proxy_client, proxy_url, model, max_tokens):
+        """Test basic streaming response."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            stream=True,
+        )
+
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+        chunks = []
+        for line in response.iter_lines():
+            if line:
+                chunks.append(line)
+
+        assert len(chunks) > 0, f"No streaming chunks received for model {model}"
+
+    def test_sse_format(self, proxy_client, proxy_url, model, max_tokens):
+        """Validate SSE message format."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            stream=True,
+        )
+
+        assert response.status_code == 200
+
+        validator = ResponseValidator()
+        chunk_count = 0
+
+        for line in response.iter_lines():
+            if line:
+                # Validate SSE format
+                validator.validate_sse_chunk(line)
+                chunk_count += 1
+
+        assert chunk_count > 0, f"No chunks received for model {model}"
+
+    def test_streaming_chunks_format(self, proxy_client, proxy_url, model, max_tokens):
+        """Validate chunk structure."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Say hello"}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            stream=True,
+        )
+
+        assert response.status_code == 200
+
+        validator = ResponseValidator()
+        parsed_chunks = []
+
+        for line in response.iter_lines():
+            if line:
+                data_str = line[6:].decode("utf-8").strip()
+                if data_str != "[DONE]":
+                    chunk_data = json.loads(data_str)
+                    validator.validate_streaming_chunk(chunk_data)
+                    parsed_chunks.append(chunk_data)
+
+        assert len(parsed_chunks) > 0, f"No valid chunks parsed for model {model}"
+
+        # Extract content
+        content = validator.extract_streaming_content(parsed_chunks)
+        assert len(content) > 0, f"No content extracted from streaming chunks for model {model}"
+
+    def test_streaming_token_usage(self, proxy_client, proxy_url, model, max_tokens):
+        """Check token usage in final chunk."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Count to 3"}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            stream=True,
+        )
+
+        assert response.status_code == 200
+
+        validator = ResponseValidator()
+        parsed_chunks = []
+
+        for line in response.iter_lines():
+            if line:
+                data_str = line[6:].decode("utf-8").strip()
+                if data_str != "[DONE]":
+                    chunk_data = json.loads(data_str)
+                    parsed_chunks.append(chunk_data)
+
+        # Get final chunk with usage
+        final_chunk = validator.get_final_chunk_with_usage(parsed_chunks)
+        assert final_chunk is not None, f"No chunk with usage information found for model {model}"
+
+        # Validate token usage
+        validator.validate_token_usage(final_chunk)
+
+    def test_done_signal(self, proxy_client, proxy_url, model, max_tokens):
+        """Verify [DONE] signal at end of stream."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            stream=True,
+        )
+
+        assert response.status_code == 200
+
+        found_done = False
+        for line in response.iter_lines():
+            if line:
+                data_str = line[6:].decode("utf-8").strip()
+                if data_str == "[DONE]":
+                    found_done = True
+                    break
+
+        assert found_done, f"[DONE] signal not found in stream for model {model}"
+
+
+@pytest.mark.integration
+@pytest.mark.real
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    "model,prompt",
+    [
+        ("anthropic--claude-4.5-sonnet", "Hello"),
+        ("sonnet-4.5", "What is 2+2?"),
+        ("gpt-4.1", "Tell me a joke"),
+        ("gpt-5", "Explain Python"),
+        ("gemini-2.5-pro", "How are you?"),
+    ],
+)
+class TestChatCompletionsSmoke:
+    """Quick smoke tests for each model."""
+
+    def test_simple_prompt_smoke(self, proxy_client, proxy_url, model, prompt, max_tokens):
+        """Quick smoke test with simple prompt."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+
+        assert response.status_code == 200, f"Smoke test failed for {model}: {response.text}"
+        data = response.json()
+        assert "choices" in data
+        assert len(data["choices"]) > 0
+        assert data["choices"][0]["message"]["content"]
+
+    def test_streaming_smoke(self, proxy_client, proxy_url, model, prompt, max_tokens):
+        """Quick smoke test for streaming."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            stream=True,
+        )
+
+        assert response.status_code == 200, f"Streaming smoke test failed for {model}"
+
+        chunk_count = 0
+        for line in response.iter_lines():
+            if line:
+                chunk_count += 1
+
+        assert chunk_count > 0, f"No streaming chunks for {model}"
