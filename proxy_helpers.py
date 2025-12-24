@@ -202,6 +202,8 @@ class Converters:
             openai_payload["temperature"] = payload["temperature"]
         if "stream" in payload:
             openai_payload["stream"] = payload["stream"]
+        if "reasoning_effort" in payload:
+            openai_payload["reasoning_effort"] = payload["reasoning_effort"]
         if "tools" in payload and payload["tools"]:
             # Convert Claude tools format to OpenAI tools format
             openai_tools = []

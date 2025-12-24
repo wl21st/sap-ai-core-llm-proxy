@@ -76,10 +76,9 @@ def load_test_config() -> Dict[str, Any]:
         env_var = config["auth_token"][2:-1]
         config["auth_token"] = os.getenv(env_var, "")
 
-    if os.getenv("SKIP_INTEGRATION_TESTS"):
-        config["skip_if_server_not_running"] = (
-            os.getenv("SKIP_INTEGRATION_TESTS").lower() == "true"
-        )
+    skip_env = os.getenv("SKIP_INTEGRATION_TESTS")
+    if skip_env:
+        config["skip_if_server_not_running"] = skip_env.lower() == "true"
 
     return config
 
@@ -125,38 +124,65 @@ def check_server_running(test_config, proxy_url):
 
 
 class LoggingSession(requests.Session):
-    """Session that logs requests and responses."""
+    """Session that logs requests and responses with enhanced visibility."""
     
-    def request(self, method, url, **kwargs):
-        """Override request to add logging."""
-        # Log request
-        logger.info(f"\n{'='*80}")
-        logger.info(f"REQUEST: {method} {url}")
-        logger.info(f"Headers: {dict(self.headers)}")
+    def request(self, method, url, *args, **kwargs):
+        """Override request to add enhanced logging."""
+        # Prepare headers with masking
+        headers_dict = dict(self.headers)
+        masked_headers = {}
+        for key, value in headers_dict.items():
+            if isinstance(key, str) and isinstance(value, str) and key.lower() in ['authorization', 'x-api-key']:
+                masked_headers[key] = f"{value[:10]}...[REDACTED]" if len(value) > 10 else "***"
+            else:
+                masked_headers[key] = value
+        
+        # Enhanced request logging with prominent formatting
+        logger.info(f"\n🔵🔵🔵 HTTP REQUEST START 🔵🔵🔵")
+        logger.info(f"📡 METHOD: {method}")
+        logger.info(f"🌐 URL: {url}")
+        logger.info(f"📋 HEADERS:")
+        for key, value in masked_headers.items():
+            logger.info(f"   {key}: {value}")
         
         if 'json' in kwargs:
-            logger.info(f"Request Body:\n{json.dumps(kwargs['json'], indent=2)}")
+            logger.info(f"📦 JSON BODY:\n{json.dumps(kwargs['json'], indent=2)}")
         elif 'data' in kwargs:
-            logger.info(f"Request Data: {kwargs['data']}")
+            logger.info(f"📦 DATA BODY: {kwargs['data']}")
+        if 'params' in kwargs:
+            logger.info(f"🔤 PARAMS: {kwargs['params']}")
+        
+        logger.info(f"🔵🔵🔵 HTTP REQUEST END 🔵🔵🔵\n")
         
         # Make request
-        response = super().request(method, url, **kwargs)
+        response = super().request(method, url, *args, **kwargs)
         
-        # Log response
-        logger.info(f"\nRESPONSE: {response.status_code}")
-        logger.info(f"Response Headers: {dict(response.headers)}")
+        # Enhanced response logging
+        response_headers = dict(response.headers)
+        
+        logger.info(f"\n🟢🟢🟢 HTTP RESPONSE START 🟢🟢🟢")
+        logger.info(f"📊 STATUS: {response.status_code} {response.reason}")
+        logger.info(f"⏱️  RESPONSE TIME: {response.elapsed.total_seconds():.3f}s")
+        logger.info(f"📋 RESPONSE HEADERS:")
+        for key, value in response_headers.items():
+            logger.info(f"   {key}: {value}")
         
         # Log response body (handle streaming vs non-streaming)
         if kwargs.get('stream'):
-            logger.info("Response: [Streaming response - see chunks below]")
+            logger.info(f"📡 STREAMING: [Streaming response - chunks will be logged below]")
         else:
+            logger.info(f"📦 RESPONSE BODY:")
             try:
                 response_json = response.json()
-                logger.info(f"Response Body:\n{json.dumps(response_json, indent=2)}")
+                logger.info(f"{json.dumps(response_json, indent=2)}")
             except Exception:
-                logger.info(f"Response Body: {response.text[:500]}")
+                response_text = response.text
+                if len(response_text) > 1000:
+                    logger.info(f"{response_text[:1000]}...[TRUNCATED]")
+                else:
+                    logger.info(response_text)
         
-        logger.info(f"{'='*80}\n")
+        logger.info(f"🟢🟢🟢 HTTP RESPONSE END 🟢🟢🟢\n")
         
         return response
 
@@ -174,12 +200,6 @@ def proxy_client(test_config, proxy_url, auth_token, check_server_running):
 
     if auth_token:
         session.headers.update({"Authorization": f"Bearer {auth_token}"})
-
-    # Set base URL
-    session.base_url = proxy_url
-
-    # Set timeout
-    session.timeout = test_config.get("timeout", 30)
 
     return session
 

@@ -2,6 +2,19 @@
 
 This directory contains real integration tests that run against an actual proxy server instance (typically localhost). These tests validate end-to-end functionality including model listing, chat completions, streaming, and the Claude Messages API.
 
+## 🚀 Quick Start
+
+```bash
+# Run all integration tests (recommended)
+make test-integration
+
+# With enhanced request/response logging
+uv run pytest tests/integration/ -m real -v --log-cli-level=INFO
+
+# Quick smoke test
+make test-integration-smoke
+```
+
 ## Overview
 
 The integration tests are designed to:
@@ -10,6 +23,7 @@ The integration tests are designed to:
 - Test both streaming and non-streaming modes
 - Validate token usage, SSE format, and response formats
 - Provide smoke tests for quick validation
+- **Enhanced logging** shows detailed request/response with timing information
 
 ## Test Structure
 
@@ -158,92 +172,161 @@ tail -f logs/pytest.log
 
 ## Running Tests
 
-### Run Specific Test
+### 🚀 Quick Start: Run All Integration Tests
 
-**Run a specific test method for a specific model**:
-```bash
-# Using pytest directly
-pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v
-
-# Using uv
-uv run pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v
-
-# With debug logging to see request/response
-pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v --log-cli-level=INFO
-
-# With full debug output
-pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v --log-cli-level=DEBUG
-```
-
-**Run all tests for a specific model**:
-```bash
-# All tests for gpt-5
-pytest tests/integration/ -k "gpt-5" -v
-
-# All non-streaming tests for gpt-5
-pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming -k "gpt-5" -v
-```
-
-**Run specific test class**:
-```bash
-# All non-streaming tests
-pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming -v
-
-# All streaming tests
-pytest tests/integration/test_chat_completions.py::TestChatCompletionsStreaming -v
-```
-
-### Using Make (Recommended)
-
-**Run all integration tests**:
+**Recommended Method (Make)**:
 ```bash
 make test-integration
 ```
 
-**Run smoke tests only** (quick validation):
-```bash
-make test-integration-smoke
-```
-
-**Run streaming tests**:
-```bash
-make test-integration-streaming
-```
-
-**Run tests for specific model**:
-```bash
-make test-integration-model MODEL=anthropic--claude-4.5-sonnet
-make test-integration-model MODEL=gpt-4.1
-make test-integration-model MODEL=gemini-2.5-pro
-```
-
-### Using UV Directly
-
-**Run all integration tests**:
+**UV Method**:
 ```bash
 uv run pytest tests/integration/ -m real -v
 ```
 
-**Run smoke tests**:
+**With Enhanced Logging**:
 ```bash
+uv run pytest tests/integration/ -m real -v --log-cli-level=INFO
+```
+
+### 📋 What Gets Tested
+
+The integration tests validate all **5 required models**:
+- `anthropic--claude-4.5-sonnet`
+- `sonnet-4.5`
+- `gpt-4.1`
+- `gpt-5`
+- `gemini-2.5-pro`
+
+**And all major endpoints**:
+- `/v1/models` (model listing)
+- `/v1/chat/completions` (streaming & non-streaming)
+- `/v1/messages` (Claude-specific API)
+
+### 🔍 Enhanced Request/Response Logging
+
+All integration tests feature **enhanced logging** that shows:
+- 🔵 **HTTP REQUEST**: Method, URL, headers, JSON body
+- 🟢 **HTTP RESPONSE**: Status, timing, headers, response body
+- ⏱️ **Response time tracking** for performance analysis
+- 🔒 **Security**: Authorization headers automatically masked
+
+**Example output**:
+```
+🔵🔵🔵 HTTP REQUEST START 🔵🔵🔵
+📡 METHOD: POST
+🌐 URL: http://127.0.0.1:3001/v1/chat/completions
+📋 HEADERS:
+   Authorization: ***
+📦 JSON BODY:
+{
+  "model": "gpt-4.1",
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+🔵🔵🔵 HTTP REQUEST END 🔵🔵🔵
+
+🟢🟢🟢 HTTP RESPONSE START 🟢🟢🟢
+📊 STATUS: 200 OK
+⏱️  RESPONSE TIME: 1.212s
+📦 RESPONSE BODY:
+{
+  "choices": [{"message": {"content": "Hello! I'm here to help..."}}]
+}
+🟢🟢🟢 HTTP RESPONSE END 🟢🟢🟢
+```
+
+### 🎯 Running Specific Tests
+
+#### Run All Tests for a Specific Model
+```bash
+# All tests for gpt-5
+uv run pytest tests/integration/ -k "gpt-5" -v
+
+# Using make
+make test-integration-model MODEL=gpt-5
+```
+
+#### Run Specific Test Categories
+```bash
+# Smoke tests only (quick validation)
+make test-integration-smoke
 uv run pytest tests/integration/ -m "real and smoke" -v
-```
 
-**Run streaming tests**:
-```bash
+# Streaming tests only
+make test-integration-streaming
 uv run pytest tests/integration/ -m "real and streaming" -v
+
+# Non-streaming tests only
+uv run pytest tests/integration/ -m "real and not streaming" -v
 ```
 
-**Run specific model tests**:
+#### Run Specific Test Method
 ```bash
-uv run pytest tests/integration/ -m real -k "claude-4.5-sonnet" -v
+# Single test for specific model
+uv run pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v
+
+# With request/response logging
+uv run pytest "tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming::test_simple_completion[gpt-5]" -v --log-cli-level=INFO
 ```
 
-### Using Pytest Directly
-
-**Run all integration tests**:
+#### Run Specific Test Classes
 ```bash
-pytest tests/integration/ -m real -v
+# All non-streaming tests
+uv run pytest tests/integration/test_chat_completions.py::TestChatCompletionsNonStreaming -v
+
+# All streaming tests
+uv run pytest tests/integration/test_chat_completions.py::TestChatCompletionsStreaming -v
+
+# Models endpoint only
+uv run pytest tests/integration/test_models_endpoint.py -v
+
+# Claude Messages API only
+uv run pytest tests/integration/test_messages_endpoint.py -v
+```
+
+### 🛠️ Running by Model Type
+
+```bash
+# Claude models only
+uv run pytest tests/integration/ -m "real and claude" -v
+
+# GPT models only
+uv run pytest tests/integration/ -m "real and openai" -v
+
+# Gemini models only
+uv run pytest tests/integration/ -m "real and gemini" -v
+```
+
+### 📊 Test Execution Examples
+
+**Full Test Suite with Debug Logging**:
+```bash
+# Make method
+make test-integration
+
+# UV method with INFO level (shows request/response)
+uv run pytest tests/integration/ -m real -v --log-cli-level=INFO
+
+# UV method with DEBUG level (maximum detail)
+uv run pytest tests/integration/ -m real -v --log-cli-level=DEBUG
+```
+
+**Quick Validation**:
+```bash
+# Smoke tests (fastest)
+make test-integration-smoke
+
+# Or with UV
+uv run pytest tests/integration/ -m "real and smoke" -v --log-cli-level=INFO
+```
+
+**Performance Testing**:
+```bash
+# All streaming tests to check real-time performance
+make test-integration-streaming
+
+# Check response times for specific model
+uv run pytest tests/integration/ -k "gpt-5 and streaming" -v --log-cli-level=INFO
 ```
 
 ### Run Specific Test Categories
