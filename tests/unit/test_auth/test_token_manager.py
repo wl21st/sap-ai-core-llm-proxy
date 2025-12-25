@@ -16,10 +16,10 @@ class TestTokenManager:
     def mock_service_key(self):
         """Create a mock service key."""
         return ServiceKey(
-            clientid="test_client_id",
-            clientsecret="test_client_secret",
-            url="https://test.auth.com",
-            identityzoneid="test_zone"
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            auth_url="https://test.auth.com",
+            identity_zone_id="test_zone"
         )
 
     @pytest.fixture
@@ -29,7 +29,7 @@ class TestTokenManager:
             name="test_subaccount",
             resource_group="test_resource_group",
             service_key_json="/path/to/service_key.json",
-            deployment_models={"model1": ["url1"], "model2": ["url2"]}
+            model_to_deployment_urls={"model1": ["url1"], "model2": ["url2"]}
         )
         subaccount.service_key = mock_service_key
         return subaccount
@@ -169,10 +169,10 @@ class TestBackwardCompatibility:
     def mock_service_key(self):
         """Create a mock service key."""
         return ServiceKey(
-            clientid="test_client_id",
-            clientsecret="test_client_secret",
-            url="https://test.auth.com",
-            identityzoneid="test_zone"
+            client_id="test_client_id",
+            client_secret="test_client_secret",
+            auth_url="https://test.auth.com",
+            identity_zone_id="test_zone"
         )
 
     @pytest.fixture
@@ -182,7 +182,7 @@ class TestBackwardCompatibility:
             name="test_subaccount",
             resource_group="test_resource_group",
             service_key_json="/path/to/service_key.json",
-            deployment_models={"model1": ["url1"], "model2": ["url2"]}
+            model_to_deployment_urls={"model1": ["url1"], "model2": ["url2"]}
         )
         subaccount.service_key = mock_service_key
         return subaccount

@@ -49,19 +49,19 @@ def setup_test_config():
         name="test-sub",
         resource_group="test-rg",
         service_key_json="test-key.json",
-        deployment_models={
+        model_to_deployment_urls={
             "gpt-4o": ["https://test.api.com/gpt4"],
             "anthropic--claude-4.5-sonnet": ["https://test.api.com/claude"],
             "gemini-2.5-pro": ["https://test.api.com/gemini"],
         },
     )
     test_subaccount.service_key = ServiceKey(
-        clientid="test-client",
-        clientsecret="test-secret",
-        url="https://test.auth.com",
-        identityzoneid="test-zone",
+        client_id="test-client",
+        client_secret="test-secret",
+        auth_url="https://test.auth.com",
+        identity_zone_id="test-zone",
     )
-    test_subaccount.normalized_models = {
+    test_subaccount.parsed_models_url_list = {
         "gpt-4o": ["https://test.api.com/gpt4"],
         "anthropic--claude-4.5-sonnet": ["https://test.api.com/claude"],
         "gemini-2.5-pro": ["https://test.api.com/gemini"],
@@ -242,7 +242,7 @@ class TestLoadBalanceUrlExtended:
         """Test error when model has no URLs."""
         # Add model with no URLs
         proxy_config.model_to_subaccounts["empty-model"] = ["test-sub"]
-        proxy_config.subaccounts["test-sub"].normalized_models["empty-model"] = []
+        proxy_config.subaccounts["test-sub"].parsed_models_url_list["empty-model"] = []
 
         with pytest.raises(ValueError, match="No URLs"):
             load_balance_url("empty-model")
@@ -250,7 +250,7 @@ class TestLoadBalanceUrlExtended:
     def test_load_balance_url_round_robin(self, setup_test_config):
         """Test round-robin load balancing."""
         # Add multiple URLs for a model
-        proxy_config.subaccounts["test-sub"].normalized_models["test-model"] = [
+        proxy_config.subaccounts["test-sub"].parsed_models_url_list["test-model"] = [
             "https://url1.com",
             "https://url2.com",
         ]
@@ -335,7 +335,7 @@ class TestHandleGeminiRequestExtended:
         payload = {"messages": [{"role": "user", "content": "test"}], "stream": False}
 
         # Add model with colon
-        proxy_config.subaccounts["test-sub"].normalized_models["gemini-pro:latest"] = [
+        proxy_config.subaccounts["test-sub"].parsed_models_url_list["gemini-pro:latest"] = [
             "https://test.com"
         ]
         proxy_config.model_to_subaccounts["gemini-pro:latest"] = ["test-sub"]
@@ -360,7 +360,7 @@ class TestHandleDefaultRequestExtended:
         }
 
         # Add o3 model
-        proxy_config.subaccounts["test-sub"].normalized_models["o3-mini"] = [
+        proxy_config.subaccounts["test-sub"].parsed_models_url_list["o3-mini"] = [
             "https://test.com"
         ]
         proxy_config.model_to_subaccounts["o3-mini"] = ["test-sub"]
@@ -447,8 +447,8 @@ class TestSDKSessionManagement:
             mock_session.return_value = Mock()
 
             # Call twice
-            session1 = proxy_server.get_sapaicore_sdk_session()
-            session2 = proxy_server.get_sapaicore_sdk_session()
+            session1 = proxy_server.get_sdk_session()
+            session2 = proxy_server.get_sdk_session()
 
             # Should be same instance
             assert session1 is session2
@@ -465,8 +465,8 @@ class TestSDKSessionManagement:
         proxy_server._sdk_session.client = Mock(return_value=mock_client)
 
         # Get client twice for same model
-        client1 = proxy_server.get_sapaicore_sdk_client("test-model")
-        client2 = proxy_server.get_sapaicore_sdk_client("test-model")
+        client1 = proxy_server.get_bedrock_client("test-model")
+        client2 = proxy_server.get_bedrock_client("test-model")
 
         # Should be same instance
         assert client1 is client2
@@ -1292,16 +1292,16 @@ class TestProxyOpenAIStreamEndpoint:
             name="test-sub",
             resource_group="test-rg",
             service_key_json="test-key.json",
-            deployment_models={
+            model_to_deployment_urls={
                 "anthropic--claude-4.5-sonnet": ["https://test.api.com/claude"],
                 "gemini-2.5-pro": ["https://test.api.com/gemini"],
             },
         )
         test_subaccount.service_key = ServiceKey(
-            clientid="test-client",
-            clientsecret="test-secret",
-            url="https://test.auth.com",
-            identityzoneid="test-zone",
+            client_id="test-client",
+            client_secret="test-secret",
+            auth_url="https://test.auth.com",
+            identity_zone_id="test-zone",
         )
         proxy_config.subaccounts = {"test-sub": test_subaccount}
         proxy_config.model_to_subaccounts = {
@@ -1505,19 +1505,19 @@ class TestMainExecution:
         import proxy_server
 
         proxy_server.parse_arguments = mock_parse_args
-        proxy_server.load_config = mock_load_config
+        proxy_server.load_proxy_config = mock_load_config
         proxy_server.setup_logging = mock_setup_logging
         proxy_server.app.run = mock_app_run
 
         # Simulate the main block logic
         args = proxy_server.parse_arguments()
-        config = proxy_server.load_config(args.config)
+        config = proxy_server.load_proxy_config(args.config)
         proxy_server.setup_logging(debug=args.debug)
 
         # Check if new format config
         if hasattr(config, "subaccounts"):
             proxy_config = config
-            proxy_config.initialize()
+            proxy_config.init_logging()
             host = proxy_config.host
             port = proxy_config.port
         else:
@@ -1559,19 +1559,19 @@ class TestMainExecution:
         import proxy_server
 
         proxy_server.parse_arguments = mock_parse_args
-        proxy_server.load_config = mock_load_config
+        proxy_server.load_proxy_config = mock_load_config
         proxy_server.setup_logging = mock_setup_logging
         proxy_server.app.run = mock_app_run
 
         # Simulate the main block logic
         args = proxy_server.parse_arguments()
-        config = proxy_server.load_config(args.config)
+        config = proxy_server.load_proxy_config(args.config)
         proxy_server.setup_logging(debug=args.debug)
 
         # Check if new format config
         if hasattr(config, "subaccounts"):
             proxy_config = config
-            proxy_config.initialize()
+            proxy_config.init_logging()
             host = proxy_config.host
             port = proxy_config.port
         else:

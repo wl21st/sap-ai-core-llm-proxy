@@ -1,3 +1,5 @@
+from utils import sdk_connection_poolfrom utils import sdk_connection_poolfrom utils import sdk_connection_poolfrom utils import sdk_connection_pool
+
 # SDK Session Management Tests Specification
 
 ## Overview
@@ -20,12 +22,13 @@ These functions implement caching and thread-safe lazy initialization patterns t
 **Implementation Details:**
 
 ```python
-_sdk_session = None
+__sdk_session = None
 _sdk_session_lock = threading.Lock()
+
 
 def get_sapaicore_sdk_session() -> Session:
     """Lazily initialize and return a global SAP AI Core SDK Session."""
-    global _sdk_session
+    global __sdk_session
     if _sdk_session is None:
         with _sdk_session_lock:
             if _sdk_session is None:
@@ -119,15 +122,15 @@ Tests for the [`get_sapaicore_sdk_session()`](../proxy_server.py:41) function.
 def test_session_initialization_on_first_call(self):
     """Test that session is initialized on first call."""
     import proxy_server
-    
+
     proxy_server._sdk_session = None
-    
+
     with patch('proxy_server.Session') as mock_session_class:
         mock_session_instance = Mock(spec=Session)
         mock_session_class.return_value = mock_session_instance
-        
-        result = proxy_server.get_sapaicore_sdk_session()
-        
+
+        result = sdk_connection_pool.__get_sdk_session()
+
         mock_session_class.assert_called_once()
         assert result == mock_session_instance
         assert proxy_server._sdk_session == mock_session_instance
@@ -157,15 +160,15 @@ def test_session_initialization_on_first_call(self):
 def test_session_reuse_on_subsequent_calls(self):
     """Test that session is reused on subsequent calls."""
     import proxy_server
-    
+
     mock_session = Mock(spec=Session)
     proxy_server._sdk_session = mock_session
-    
+
     with patch('proxy_server.Session') as mock_session_class:
-        result1 = proxy_server.get_sapaicore_sdk_session()
-        result2 = proxy_server.get_sapaicore_sdk_session()
-        result3 = proxy_server.get_sapaicore_sdk_session()
-        
+        result1 = proxy_server.get_sdk_session()
+        result2 = proxy_server.get_sdk_session()
+        result3 = proxy_server.get_sdk_session()
+
         mock_session_class.assert_not_called()
         assert result1 == mock_session
         assert result2 == mock_session
@@ -198,35 +201,35 @@ def test_session_reuse_on_subsequent_calls(self):
 def test_session_thread_safety_double_checked_locking(self):
     """Test thread-safe initialization using double-checked locking pattern."""
     import proxy_server
-    
+
     proxy_server._sdk_session = None
-    
+
     mock_session = Mock(spec=Session)
     call_count = 0
-    
+
     def mock_session_constructor():
         nonlocal call_count
         call_count += 1
         return mock_session
-    
+
     with patch('proxy_server.Session', side_effect=mock_session_constructor):
         results = []
         threads = []
-        
+
         def get_session():
-            result = proxy_server.get_sapaicore_sdk_session()
+            result = proxy_server.get_sdk_session()
             results.append(result)
-        
+
         for _ in range(10):
             thread = threading.Thread(target=get_session)
             threads.append(thread)
-        
+
         for thread in threads:
             thread.start()
-        
+
         for thread in threads:
             thread.join()
-        
+
         assert call_count == 1
         assert len(results) == 10
         assert all(r == mock_session for r in results)
@@ -255,16 +258,15 @@ def test_session_thread_safety_double_checked_locking(self):
 def test_session_initialization_logs_message(self):
     """Test that session initialization logs an info message."""
     import proxy_server
-    
+
     proxy_server._sdk_session = None
-    
-    with patch('proxy_server.Session') as mock_session_class, \
-         patch('proxy_server.logging.info') as mock_log_info:
-        
+
+    with patch('proxy_server.Session') as mock_session_class,
+            patch('proxy_server.logging.info') as mock_log_info:
         mock_session_class.return_value = Mock(spec=Session)
-        
-        proxy_server.get_sapaicore_sdk_session()
-        
+
+        proxy_server.get_sdk_session()
+
         mock_log_info.assert_called_with("Initializing global SAP AI SDK Session")
 ```
 
@@ -297,16 +299,16 @@ Tests for the [`get_sapaicore_sdk_client()`](../proxy_server.py:52) function.
 def test_client_creation_on_first_call_for_model(self):
     """Test that client is created on first call for a specific model."""
     import proxy_server
-    
+
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     mock_client = Mock()
     mock_session.client.return_value = mock_client
-    
+
     with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
-        result = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-        
+        result = proxy_server.get_bedrock_client("claude-3-opus")
+
         mock_session.client.assert_called_once_with(model_name="claude-3-opus")
         assert result == mock_client
         assert proxy_server._bedrock_clients["claude-3-opus"] == mock_client
@@ -336,16 +338,16 @@ def test_client_creation_on_first_call_for_model(self):
 def test_client_reuse_for_same_model(self):
     """Test that client is reused for subsequent calls with same model."""
     import proxy_server
-    
+
     mock_client = Mock()
     proxy_server._bedrock_clients = {"claude-3-opus": mock_client}
-    
+
     mock_session = Mock(spec=Session)
-    
+
     with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
-        result1 = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-        result2 = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-        
+        result1 = proxy_server.get_bedrock_client("claude-3-opus")
+        result2 = proxy_server.get_bedrock_client("claude-3-opus")
+
         mock_session.client.assert_not_called()
         assert result1 == mock_client
         assert result2 == mock_client
@@ -376,26 +378,26 @@ def test_client_reuse_for_same_model(self):
 def test_different_clients_for_different_models(self):
     """Test that different clients are created for different models."""
     import proxy_server
-    
+
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     mock_client_opus = Mock()
     mock_client_sonnet = Mock()
-    
+
     def mock_client_factory(model_name):
         if model_name == "claude-3-opus":
             return mock_client_opus
         elif model_name == "claude-3-sonnet":
             return mock_client_sonnet
         return Mock()
-    
+
     mock_session.client.side_effect = mock_client_factory
-    
+
     with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
-        result_opus = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-        result_sonnet = proxy_server.get_sapaicore_sdk_client("claude-3-sonnet")
-        
+        result_opus = sdk_connection_pool.get_bedrock_client("claude-3-opus")
+        result_sonnet = proxy_server.get_bedrock_client("claude-3-sonnet")
+
         assert result_opus == mock_client_opus
         assert result_sonnet == mock_client_sonnet
         assert result_opus != result_sonnet
@@ -429,38 +431,38 @@ def test_different_clients_for_different_models(self):
 def test_client_thread_safety_double_checked_locking(self):
     """Test thread-safe client creation using double-checked locking."""
     import proxy_server
-    
+
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     mock_client = Mock()
     client_creation_count = 0
-    
+
     def mock_client_factory(model_name):
         nonlocal client_creation_count
         client_creation_count += 1
         return mock_client
-    
+
     mock_session.client.side_effect = mock_client_factory
-    
+
     with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
         results = []
         threads = []
-        
+
         def get_client():
-            result = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
+            result = proxy_server.get_bedrock_client("claude-3-opus")
             results.append(result)
-        
+
         for _ in range(10):
             thread = threading.Thread(target=get_client)
             threads.append(thread)
-        
+
         for thread in threads:
             thread.start()
-        
+
         for thread in threads:
             thread.join()
-        
+
         assert client_creation_count == 1
         assert len(results) == 10
         assert all(r == mock_client for r in results)
@@ -489,21 +491,20 @@ def test_client_thread_safety_double_checked_locking(self):
 def test_client_creation_logs_message(self):
     """Test that client creation logs an info message."""
     import proxy_server
-    
+
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     mock_client = Mock()
     mock_session.client.return_value = mock_client
-    
-    with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session), \
-         patch('proxy_server.logging.info') as mock_log_info:
-        
-        proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-        
-        mock_log_info.assert_called_with(
-            "Creating SAP AI SDK client for model 'claude-3-opus'"
-        )
+
+    with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session),
+        patch('proxy_server.logging.info') as mock_log_info:
+    proxy_server.get_bedrock_client("claude-3-opus")
+
+    mock_log_info.assert_called_with(
+        "Creating SAP AI SDK client for model 'claude-3-opus'"
+    )
 ```
 
 #### Test 10: test_client_cache_returns_none_check
@@ -530,16 +531,16 @@ def test_client_creation_logs_message(self):
 def test_client_cache_returns_none_check(self):
     """Test that None check works correctly for cache lookup."""
     import proxy_server
-    
+
     proxy_server._bedrock_clients = {"test-model": None}
-    
+
     mock_session = Mock(spec=Session)
     mock_client = Mock()
     mock_session.client.return_value = mock_client
-    
+
     with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
-        result = proxy_server.get_sapaicore_sdk_client("test-model")
-        
+        result = proxy_server.get_bedrock_client("test-model")
+
         mock_session.client.assert_called_once_with(model_name="test-model")
         assert result == mock_client
 ```
@@ -573,17 +574,17 @@ Integration tests for session and client working together.
 def test_client_uses_session_correctly(self):
     """Test that client creation uses the global session."""
     import proxy_server
-    
+
     proxy_server._sdk_session = None
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     mock_client = Mock()
     mock_session.client.return_value = mock_client
-    
+
     with patch('proxy_server.Session', return_value=mock_session):
-        result = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-        
+        result = proxy_server.get_bedrock_client("claude-3-opus")
+
         assert proxy_server._sdk_session == mock_session
         mock_session.client.assert_called_once_with(model_name="claude-3-opus")
         assert result == mock_client
@@ -614,25 +615,25 @@ def test_client_uses_session_correctly(self):
 def test_multiple_clients_share_same_session(self):
     """Test that multiple clients share the same session instance."""
     import proxy_server
-    
+
     proxy_server._sdk_session = None
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     mock_client1 = Mock()
     mock_client2 = Mock()
-    
+
     def mock_client_factory(model_name):
         if model_name == "model1":
             return mock_client1
         return mock_client2
-    
+
     mock_session.client.side_effect = mock_client_factory
 
     with patch('proxy_server.Session', return_value=mock_session) as mock_session_class:
-        client1 = proxy_server.get_sapaicore_sdk_client("model1")
-        client2 = proxy_server.get_sapaicore_sdk_client("model2")
-        
+        client1 = proxy_server.get_bedrock_client("model1")
+        client2 = proxy_server.get_bedrock_client("model2")
+
         mock_session_class.assert_called_once()
         assert mock_session.client.call_count == 2
         assert client1 == mock_client1
@@ -666,48 +667,48 @@ def test_multiple_clients_share_same_session(self):
 def test_concurrent_session_and_client_initialization(self):
     """Test concurrent initialization of session and multiple clients."""
     import proxy_server
-    
+
     proxy_server._sdk_session = None
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     session_init_count = 0
-    
+
     def mock_session_constructor():
         nonlocal session_init_count
         session_init_count += 1
         return mock_session
-    
+
     client_creation_counts = {}
-    
+
     def mock_client_factory(model_name):
         if model_name not in client_creation_counts:
             client_creation_counts[model_name] = 0
         client_creation_counts[model_name] += 1
         return Mock()
-    
+
     mock_session.client.side_effect = mock_client_factory
-    
+
     with patch('proxy_server.Session', side_effect=mock_session_constructor):
         results = []
         threads = []
-        
+
         models = ["model1", "model2", "model3"] * 5  # 15 threads total
-        
+
         def get_client(model_name):
-            result = proxy_server.get_sapaicore_sdk_client(model_name)
+            result = proxy_server.get_bedrock_client(model_name)
             results.append((model_name, result))
-        
+
         for model in models:
             thread = threading.Thread(target=get_client, args=(model,))
             threads.append(thread)
-        
+
         for thread in threads:
             thread.start()
-        
+
         for thread in threads:
             thread.join()
-        
+
         assert session_init_count == 1
         assert client_creation_counts["model1"] == 1
         assert client_creation_counts["model2"] == 1
@@ -742,20 +743,20 @@ Performance-focused tests for caching behavior.
 def test_session_cache_avoids_expensive_initialization(self):
     """Test that caching avoids expensive session initialization."""
     import proxy_server
-    
+
     proxy_server._sdk_session = None
-    
+
     expensive_init_count = 0
-    
+
     def expensive_session_init():
         nonlocal expensive_init_count
         expensive_init_count += 1
         return Mock(spec=Session)
-    
+
     with patch('proxy_server.Session', side_effect=expensive_session_init):
         for _ in range(100):
-            proxy_server.get_sapaicore_sdk_session()
-        
+            proxy_server.get_sdk_session()
+
         assert expensive_init_count == 1
 ```
 
@@ -782,23 +783,23 @@ def test_session_cache_avoids_expensive_initialization(self):
 def test_client_cache_avoids_expensive_client_creation(self):
     """Test that caching avoids expensive client creation."""
     import proxy_server
-    
+
     proxy_server._bedrock_clients = {}
-    
+
     mock_session = Mock(spec=Session)
     client_creation_count = 0
-    
+
     def expensive_client_creation(model_name):
         nonlocal client_creation_count
         client_creation_count += 1
         return Mock()
-    
+
     mock_session.client.side_effect = expensive_client_creation
-    
+
     with patch('proxy_server.get_sapaicore_sdk_session', return_value=mock_session):
         for _ in range(100):
-            proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-        
+            proxy_server.get_bedrock_client("claude-3-opus")
+
         assert client_creation_count == 1
 ```
 

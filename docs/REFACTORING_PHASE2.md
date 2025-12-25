@@ -25,7 +25,7 @@ sap-ai-core-llm-proxy/
 
 ### 2. Extracted Modules
 
-#### [`config/models.py`](../config/models.py)
+#### [`config/models.py`](../config/config_models.py)
 Contains all configuration dataclasses:
 - [`ServiceKey`](../config/models.py:5) - SAP AI Core service credentials
 - [`TokenInfo`](../config/models.py:11) - Token caching with thread-safe lock
@@ -35,13 +35,13 @@ Contains all configuration dataclasses:
 **Key Changes:**
 - [`SubAccountConfig.load_service_key()`](../config/models.py:26) now imports [`load_config`](../config/loader.py:5) locally to avoid circular dependencies
 
-#### [`config/loader.py`](../config/loader.py)
+#### [`config/loader.py`](../config/config_parser.py)
 Contains configuration loading logic:
 - [`load_config(file_path)`](../config/loader.py:5) - Loads JSON configuration files
 - Supports both new (subAccounts) and legacy configuration formats
 - Returns [`ProxyConfig`](../config/models.py:49) instance for new format, raw dict for legacy
 
-#### [`utils/logging_setup.py`](../utils/logging_setup.py)
+#### [`utils/logging_setup.py`](../utils/logging_utils.py)
 Contains logging configuration:
 - [`setup_logging(debug=False)`](../utils/logging_setup.py:5) - Configures main application logger
 - [`get_token_logger()`](../utils/logging_setup.py:15) - Returns token usage logger with file handler
@@ -60,14 +60,15 @@ Contains HTTP error handling:
 ### 3. Updated [`proxy_server.py`](../proxy_server.py)
 
 **Removed Code (163 lines):**
-- Dataclass definitions (lines 23-95) → moved to [`config/models.py`](../config/models.py)
-- [`load_config()`](../config/loader.py:5) function (lines 288-314) → moved to [`config/loader.py`](../config/loader.py)
+- Dataclass definitions (lines 23-95) → moved to [`config/models.py`](../config/config_models.py)
+- [`load_config()`](../config/loader.py:5) function (lines 288-314) → moved to [`config/loader.py`](../config/config_parser.py)
 - [`handle_http_429_error()`](../utils/error_handlers.py:6) function (lines 135-180) → moved to [`utils/error_handlers.py`](../utils/error_handlers.py)
 - Manual logging setup (lines 261-281) → replaced with [`setup_logging()`](../utils/logging_setup.py:5) call
 
 **Added Imports:**
+
 ```python
-from config import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig, load_config
+from config import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig, load_proxy_config
 from utils import setup_logging, get_token_logger, handle_http_429_error
 ```
 
@@ -105,7 +106,7 @@ All changes maintain 100% backward compatibility:
 ### Syntax Validation
 All modules pass Python compilation:
 ```bash
-python3 -m py_compile proxy_server.py config/models.py config/loader.py utils/logging_setup.py utils/error_handlers.py
+python3 -m py_compile proxy_server.py config/config_models.py config/config_parser.py utils/logging_utils.py utils/error_handlers.py
 ```
 
 ### Runtime Testing
@@ -159,13 +160,15 @@ These are false positives that occur because:
 ### If You're Importing from proxy_server.py
 
 **Before:**
+
 ```python
-from proxy_server import ServiceKey, ProxyConfig, load_config
+from proxy_server import ServiceKey, ProxyConfig, load_proxy_config
 ```
 
 **After:**
+
 ```python
-from config import ServiceKey, ProxyConfig, load_config
+from config import ServiceKey, ProxyConfig, load_proxy_config
 ```
 
 ### If You're Using Logging
@@ -177,8 +180,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 ```
 
 **After:**
+
 ```python
 from utils import setup_logging
+
 setup_logging(debug=False)
 ```
 

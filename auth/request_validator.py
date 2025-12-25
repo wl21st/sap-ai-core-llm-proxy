@@ -69,22 +69,3 @@ class RequestValidator:
             logging.debug(f"Token extracted: {token[:15]}...")
 
         return token
-
-
-# Backward compatible function
-def verify_request_token(request: Request, proxy_config) -> bool:
-    """Backward compatible request validation function.
-
-    Args:
-        request: Flask request object
-        proxy_config: Global ProxyConfig instance
-
-    Returns:
-        True if authenticated, False otherwise
-    """
-    import warnings
-    warnings.warn("verify_request_token() is deprecated, use RequestValidator",
-                  DeprecationWarning, stacklevel=2)
-
-    validator = RequestValidator(proxy_config.secret_authentication_tokens)
-    return validator.validate(request)

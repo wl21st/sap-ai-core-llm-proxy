@@ -113,9 +113,9 @@ proxy_server.py                 500    50    90%     45-50, 120-125
 proxy_helpers.py                400    20    95%     
 auth/request_validator.py        50     5    90%     
 auth/token_manager.py            60     8    87%     
-config/loader.py                 30    30     0%     ← CRITICAL
-config/models.py                 60    25    58%     ← NEEDS WORK
-utils/logging_setup.py           25    25     0%     ← CRITICAL
+config/config_parser.py                 30    30     0%     ← CRITICAL
+config/config_models.py                 60    25    58%     ← NEEDS WORK
+utils/logging_utils.py           25    25     0%     ← CRITICAL
 utils/error_handlers.py          35    10    71%     
 ----------------------------------------------------------
 TOTAL                          1160   173    85%
@@ -430,15 +430,17 @@ Create common fixtures to reduce duplication:
 import pytest
 from config import ProxyConfig, SubAccountConfig, ServiceKey
 
+
 @pytest.fixture
 def sample_service_key():
     """Provide sample service key for testing."""
     return ServiceKey(
-        clientid="test-client-id",
-        clientsecret="test-secret",
-        url="https://test.auth.url",
-        identityzoneid="test-zone"
+        client_id="test-client-id",
+        client_secret="test-secret",
+        auth_url="https://test.auth.url",
+        identity_zone_id="test-zone"
     )
+
 
 @pytest.fixture
 def sample_subaccount_config(tmp_path):
@@ -446,13 +448,14 @@ def sample_subaccount_config(tmp_path):
     # Create temporary service key file
     key_file = tmp_path / "service_key.json"
     key_file.write_text('{"clientid":"test","clientsecret":"secret",...}')
-    
+
     return SubAccountConfig(
         name="test-subaccount",
         resource_group="default",
         service_key_json=str(key_file),
-        deployment_models={"gpt-4": ["deployment-1"]}
+        model_to_deployment_urls={"gpt-4": ["deployment-1"]}
     )
+
 
 @pytest.fixture
 def sample_proxy_config():

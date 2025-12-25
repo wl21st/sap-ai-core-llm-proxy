@@ -27,7 +27,7 @@ class TestGetSAPAICoreSDKSession:
             mock_session_class.return_value = mock_session_instance
 
             # First call should initialize the session
-            result = proxy_server.get_sapaicore_sdk_session()
+            result = proxy_server.get_sdk_session()
 
             # Verify Session() was called once
             mock_session_class.assert_called_once()
@@ -44,9 +44,9 @@ class TestGetSAPAICoreSDKSession:
 
         with patch("proxy_server.Session") as mock_session_class:
             # Call multiple times
-            result1 = proxy_server.get_sapaicore_sdk_session()
-            result2 = proxy_server.get_sapaicore_sdk_session()
-            result3 = proxy_server.get_sapaicore_sdk_session()
+            result1 = proxy_server.get_sdk_session()
+            result2 = proxy_server.get_sdk_session()
+            result3 = proxy_server.get_sdk_session()
 
             # Session() should not be called since session already exists
             mock_session_class.assert_not_called()
@@ -77,7 +77,7 @@ class TestGetSAPAICoreSDKSession:
             threads = []
 
             def get_session():
-                result = proxy_server.get_sapaicore_sdk_session()
+                result = proxy_server.get_sdk_session()
                 results.append(result)
 
             # Create 10 threads that all try to get the session simultaneously
@@ -112,7 +112,7 @@ class TestGetSAPAICoreSDKSession:
         ):
             mock_session_class.return_value = Mock(spec=Session)
 
-            proxy_server.get_sapaicore_sdk_session()
+            proxy_server.get_sdk_session()
 
             # Verify logging was called with expected message
             mock_log_info.assert_called_with("Initializing global SAP AI SDK Session")
@@ -143,7 +143,7 @@ class TestGetSAPAICoreSDKClient:
         mock_config.return_value = expected_config
 
         with patch("proxy_server.get_sapaicore_sdk_session", return_value=mock_session):
-            result = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
+            result = proxy_server.get_bedrock_client("claude-3-opus")
 
             # Verify client was created with config parameter
             mock_session.client.assert_called_once_with(
@@ -163,8 +163,8 @@ class TestGetSAPAICoreSDKClient:
         mock_session = Mock(spec=Session)
 
         with patch("proxy_server.get_sapaicore_sdk_session", return_value=mock_session):
-            result1 = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-            result2 = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
+            result1 = proxy_server.get_bedrock_client("claude-3-opus")
+            result2 = proxy_server.get_bedrock_client("claude-3-opus")
 
             # Session.client() should not be called since client is cached
             mock_session.client.assert_not_called()
@@ -193,8 +193,8 @@ class TestGetSAPAICoreSDKClient:
         mock_session.client.side_effect = mock_client_factory
 
         with patch("proxy_server.get_sapaicore_sdk_session", return_value=mock_session):
-            result_opus = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
-            result_sonnet = proxy_server.get_sapaicore_sdk_client("claude-3-sonnet")
+            result_opus = proxy_server.get_bedrock_client("claude-3-opus")
+            result_sonnet = proxy_server.get_bedrock_client("claude-3-sonnet")
 
             # Verify different clients were created
             assert result_opus == mock_client_opus
@@ -229,7 +229,7 @@ class TestGetSAPAICoreSDKClient:
             threads = []
 
             def get_client():
-                result = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
+                result = proxy_server.get_bedrock_client("claude-3-opus")
                 results.append(result)
 
             # Create 10 threads that all try to get the same client simultaneously
@@ -266,7 +266,7 @@ class TestGetSAPAICoreSDKClient:
             patch("proxy_server.get_sapaicore_sdk_session", return_value=mock_session),
             patch("proxy_server.logging.info") as mock_log_info,
         ):
-            proxy_server.get_sapaicore_sdk_client("claude-3-opus")
+            proxy_server.get_bedrock_client("claude-3-opus")
 
             # Verify logging was called with expected message
             mock_log_info.assert_called_with(
@@ -296,7 +296,7 @@ class TestGetSAPAICoreSDKClient:
 
         with patch("proxy_server.get_sapaicore_sdk_session", return_value=mock_session):
             # Should create new client since cached value is None
-            result = proxy_server.get_sapaicore_sdk_client("test-model")
+            result = proxy_server.get_bedrock_client("test-model")
 
             # Verify new client was created with config parameter
             mock_session.client.assert_called_once_with(
@@ -332,7 +332,7 @@ class TestSDKSessionAndClientIntegration:
 
         with patch("proxy_server.Session", return_value=mock_session):
             # Get client should initialize session and create client
-            result = proxy_server.get_sapaicore_sdk_client("claude-3-opus")
+            result = proxy_server.get_bedrock_client("claude-3-opus")
 
             # Verify session was initialized
             assert proxy_server._sdk_session == mock_session
@@ -366,8 +366,8 @@ class TestSDKSessionAndClientIntegration:
             "proxy_server.Session", return_value=mock_session
         ) as mock_session_class:
             # Create clients for different models
-            client1 = proxy_server.get_sapaicore_sdk_client("model1")
-            client2 = proxy_server.get_sapaicore_sdk_client("model2")
+            client1 = proxy_server.get_bedrock_client("model1")
+            client2 = proxy_server.get_bedrock_client("model2")
 
             # Session should only be initialized once
             mock_session_class.assert_called_once()
@@ -410,7 +410,7 @@ class TestSDKSessionAndClientIntegration:
             models = ["model1", "model2", "model3"] * 5  # 15 threads total
 
             def get_client(model_name):
-                result = proxy_server.get_sapaicore_sdk_client(model_name)
+                result = proxy_server.get_bedrock_client(model_name)
                 results.append((model_name, result))
 
             for model in models:
@@ -457,7 +457,7 @@ class TestSDKCachePerformance:
         with patch("proxy_server.Session", side_effect=expensive_session_init):
             # Call 100 times
             for _ in range(100):
-                proxy_server.get_sapaicore_sdk_session()
+                proxy_server.get_sdk_session()
 
             # Expensive initialization should only happen once
             assert expensive_init_count == 1
@@ -482,7 +482,7 @@ class TestSDKCachePerformance:
         with patch("proxy_server.get_sapaicore_sdk_session", return_value=mock_session):
             # Call 100 times for the same model
             for _ in range(100):
-                proxy_server.get_sapaicore_sdk_client("claude-3-opus")
+                proxy_server.get_bedrock_client("claude-3-opus")
 
             # Expensive client creation should only happen once per model
             assert client_creation_count == 1

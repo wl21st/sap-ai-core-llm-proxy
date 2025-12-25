@@ -398,12 +398,12 @@ graph LR
 
 ```python
 def normalize_model_names(self):
-    """Normalize model names by removing prefixes like 'anthropic--'"""
-    if False:  # ❌ Hardcoded - should be configurable
-        self.normalized_models = {
-            key.replace("anthropic--", ""): value
-            for key, value in self.deployment_models.items()
-        }
+   """Normalize model names by removing prefixes like 'anthropic--'"""
+   if False:  # ❌ Hardcoded - should be configurable
+      self.parsed_models_url_list = {
+         key.replace("anthropic--", ""): value
+         for key, value in self.model_to_deployment_urls.items()
+      }
 ```
 
 **Impact**:
@@ -542,12 +542,13 @@ src/
 **Effort to Fix**: 1 week
 
 **Issues**:
+
 ```python
 # Global variables
 proxy_config = ProxyConfig()  # Line 98
-_sdk_session = None           # Line 107
-_bedrock_clients = {}         # Line 109
-token = None                  # Line 284
+__sdk_session = None  # Line 107
+_bedrock_clients = {}  # Line 109
+token = None  # Line 284
 ```
 
 **Impact**:
