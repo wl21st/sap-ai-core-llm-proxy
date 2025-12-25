@@ -1,7 +1,6 @@
 import argparse
 import ast
 import json
-import logging
 import random
 import subprocess
 import sys
@@ -9,6 +8,7 @@ import time
 from logging import Logger
 
 import requests
+import uuid
 from botocore.exceptions import ClientError
 from flask import Flask, request, jsonify, Response, stream_with_context
 from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
@@ -25,11 +25,12 @@ from auth import TokenManager, RequestValidator
 from config import ProxyConfig, load_proxy_config
 from proxy_helpers import Detector, Converters
 from utils.error_handlers import handle_http_429_error
-from utils.logging_utils import get_server_logger, init_logging
+from utils.logging_utils import get_server_logger, init_logging, get_transport_logger
 from utils.sdk_utils import extract_deployment_id
 
 # Initialize token logger (will be configured on first use)
 logger: Logger = get_server_logger(__name__)
+transport_logger: Logger = get_transport_logger(__name__)
 token_usage_logger: Logger = get_server_logger("token_usage")
 
 from utils.sdk_pool import get_bedrock_client
@@ -169,7 +170,14 @@ def handle_embedding_request():
             "AI-Resource-Group": resource_group,
             "AI-Tenant-Id": service_key.identity_zone_id,
         }
+
+        trace_uuid: str = str(uuid.uuid4())
+        transport_logger.info(f"EMBED_REQ[{trace_uuid}]={request}")
+
         response = requests.post(endpoint_url, headers=headers, json=modified_payload)
+
+        transport_logger.info(f"EMBED_RSP[{trace_uuid}]={response}")
+
         response.raise_for_status()
         return response.json(), 200
         # return jsonify(format_embedding_response(response.json(), model)), 200

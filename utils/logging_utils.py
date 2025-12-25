@@ -88,7 +88,7 @@ def _setup_child_logger(logger_name: str, log_file: str, level: int) -> None:
 
     # Set formatter for file handler
     formatter = logging.Formatter(
-        '%(asctime)s.%(msecs)03d - [%(threadName)s] - %(name)s - %(levelname)s - %(message)s',
+        fmt='%(asctime)s.%(msecs)03d [%(levelname)s] [%(threadName)s] [%(filename)s:%(lineno)d]:  %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     file_handler.setFormatter(formatter)
