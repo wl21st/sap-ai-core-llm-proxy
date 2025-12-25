@@ -32,7 +32,6 @@ from utils.sdk_utils import extract_deployment_id
 logger: Logger = get_server_logger(__name__)
 token_usage_logger: Logger = get_server_logger("token_usage")
 
-
 from utils.sdk_pool import get_bedrock_client
 
 API_VERSION_2023_05_15 = "2023-05-15"
@@ -175,18 +174,27 @@ def handle_embedding_request():
         return response.json(), 200
         # return jsonify(format_embedding_response(response.json(), model)), 200
     except requests.exceptions.HTTPError as http_err:
-        # Handle HTTP 429 (Too Many Requests) specifically
-        if http_err.response is not None and http_err.response.status_code == 429:
-            return handle_http_429_error(http_err, f"embedding request for {model}")
+        logger.error(f"HTTP error in embedding request({model}): {http_err}")
+
+        if http_err.response is not None:
+            response = http_err.response
+            status_code = response.status_code
+
+            # Handle HTTP 429 (Too Many Requests) specifically
+            if status_code == 429:
+                return handle_http_429_error(http_err, f"embedding request for {model}")
+
+            logger.error(f"Error response status: {response.status_code}")
+            logger.error(f"Error response headers: {dict(response.headers)}")
+            logger.error(f"Error response body: {response.text}")
+            try:
+                error_json = http_err.response.json()
+                logger.error(f"Error response JSON: {json.dumps(error_json, indent=2)}")
+                return jsonify(error_json), status_code
+            except json.JSONDecodeError:
+                return jsonify({"error": response.text}), status_code
         else:
-            # Handle other HTTP errors
-            logger.error(f"HTTP Error handling embedding request({model}): {http_err}")
-            if http_err.response is not None:
-                logger.error(f"HTTP Status Code: {http_err.response.status_code}")
-                logger.error(f"Response Body: {http_err.response.text}")
-            return jsonify(
-                {"error": str(http_err)}
-            ), http_err.response.status_code if http_err.response else 500
+            return jsonify({"error": str(http_err)}), 500
     except Exception as e:
         logger.error(f"Error handling embedding request: {e}")
         return jsonify({"error": str(e)}), 500
@@ -194,6 +202,7 @@ def handle_embedding_request():
 
 def handle_embedding_service_call(input_text, model, encoding_format):
     # Logic to prepare the request to SAP AI Core
+    # TODO: Add default model for embedding
     selected_url, subaccount_name, _, model = load_balance_url(model)
 
     # Construct the URL based on the official SAP AI Core documentation
@@ -440,7 +449,7 @@ def load_balance_url(selected_model_name: str) -> tuple:
         else:
             # For other models, try common fallbacks
             logger.warning(f"Model '{selected_model_name}' not found, trying fallback models")
-            fallback_models = ["gpt-4.1"]
+            fallback_models = [DEFAULT_GPT_MODEL]
             for fallback in fallback_models:
                 if (
                         fallback in proxy_config.model_to_subaccounts
@@ -595,7 +604,7 @@ def handle_gemini_request(payload, model="gemini-2.5-pro"):
     return endpoint_url, modified_payload, subaccount_name
 
 
-def handle_default_request(payload, model="gpt-4.1"):
+def handle_default_request(payload, model=DEFAULT_GPT_MODEL):
     """Handle default (non-Claude, non-Gemini) model request with multi-subAccount support.
 
     Args:
