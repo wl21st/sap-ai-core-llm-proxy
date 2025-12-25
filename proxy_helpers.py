@@ -16,12 +16,12 @@ class Detector:
         Returns:
             bool: True if the model is Claude 3.7 or Claude 4, False otherwise
         """
-        return any(version in model for version in ["3.7", "4", "4.5"]) or "3.5" not in model
+        return Detector.is_claude_model(model) and any(version in model for version in ["3.7", "4", "4.5"])
 
     @staticmethod
     def is_claude_model(model):
         return any(
-            keyword in model for keyword in [ "haiku", "claude", "clau", "claud", "sonnet", "sonne", "sonn", "CLAUDE", "SONNET"])
+            keyword in model.lower() for keyword in [ "haiku", "claude", "sonnet", "opus"])
 
     @staticmethod
     def is_gemini_model(model):

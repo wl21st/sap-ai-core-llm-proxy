@@ -439,8 +439,7 @@ def load_balance_url(model_name: str) -> tuple:
                 f"Claude model '{model_name}' not found, trying fallback models"
             )
             # Try common Claude model fallbacks
-            # fallback_models = ["anthropic--claude-4-sonnet"]
-            fallback_models = ["anthropic--claude-4.5-sonnet"]
+            fallback_models = [DEFAULT_CLAUDE_MODEL]
             for fallback in fallback_models:
                 if (
                     fallback in proxy_config.model_to_subaccounts
@@ -568,13 +567,13 @@ def handle_claude_request(payload, model="3.5-sonnet"):
     if stream:
         # Check if the model is Claude 3.7 or 4 for streaming endpoint
         if Detector.is_claude_37_or_4(model):
-            endpoint_path = "/converse-stream"
+            endpoint_path = "/invoke-with-response-stream" # endpoint_path = "/converse-stream"
         else:
             endpoint_path = "/invoke-with-response-stream"
     else:
         # Check if the model is Claude 3.7 or 4
         if Detector.is_claude_37_or_4(model):
-            endpoint_path = "/converse"
+            endpoint_path = "/invoke" # endpoint_path = "/converse"
         else:
             endpoint_path = "/invoke"
 
@@ -914,13 +913,12 @@ def proxy_claude_request():
         )
     except ValueError as e:
         logging.error(f"Model validation failed: {e}")
-        model = request_model
-        # return jsonify({
-        #     "type": "error",
-        #     "error": {"type": "invalid_request_error", "message": f"Model '{request_model}' not available"}
-        # }), 400
+        return jsonify({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": f"Model '{request_model}' not available"}
+        }), 400
 
-    # Check if this is an Anthropic model that should use the SDK
+    # Check if this is an Anthropic model that should use the config-based approach
     if not Detector.is_claude_model(model):
         logging.warning(
             f"Model '{model}' is not a Claude model, falling back to original implementation"
@@ -934,10 +932,26 @@ def proxy_claude_request():
     stream = request_json.get("stream", False)
 
     try:
-        # Use cached SAP AI SDK client for the model
-        logging.info(f"Obtaining SAP AI SDK client for model: {model}")
-        bedrock = get_sapaicore_sdk_client(model)
-        logging.info("SAP AI SDK client ready (cached)")
+        # Get token and service key for the selected subAccount
+        token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
+        subaccount_token = token_manager.get_token()
+        service_key = proxy_config.subaccounts[subaccount_name].service_key
+        
+        # Determine the endpoint path based on model and streaming
+        if stream:
+            if Detector.is_claude_37_or_4(model):
+                endpoint_path = "/converse-stream"
+            else:
+                endpoint_path = "/invoke-with-response-stream"
+        else:
+            if Detector.is_claude_37_or_4(model):
+                endpoint_path = "/converse"
+            else:
+                endpoint_path = "/invoke"
+        
+        # Construct the full endpoint URL
+        endpoint_url = f"{selected_url.rstrip('/')}{endpoint_path}"
+        logging.info(f"Endpoint URL: {endpoint_url}")
 
         # Get the conversation messages
         conversation = request_json.get("messages", [])
@@ -1076,68 +1090,58 @@ def proxy_claude_request():
                 else type(body["thinking"]),
             )
 
-        # Convert body to JSON string for Bedrock API
-        body_json = json.dumps(body)
-
+        # Prepare headers for the backend request
+        headers = {
+            "AI-Resource-Group": resource_group,
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {subaccount_token}",
+            "AI-Tenant-Id": service_key.identityzoneid,
+        }
+        
+        # Handle anthropic-specific headers
+        for h in ["anthropic-version", "anthropic-beta"]:
+            if h in request.headers:
+                headers[h] = request.headers[h]
+        
+        # Add default anthropic-beta header for Claude streaming if not already present
+        if stream:
+            existing_beta = request.headers.get("anthropic-beta", "")
+            if "fine-grained-tool-streaming-2025-05-14" not in existing_beta:
+                if existing_beta:
+                    headers["anthropic-beta"] = f"{existing_beta},fine-grained-tool-streaming-2025-05-14"
+                else:
+                    headers["anthropic-beta"] = "fine-grained-tool-streaming-2025-05-14"
+        
+        logging.info(f"Forwarding request to {endpoint_url} for subAccount '{subaccount_name}'")
+        
         # Pretty-print the body JSON for easier debugging
         try:
-            pretty_body_json = json.dumps(
-                json.loads(body_json), indent=2, ensure_ascii=False
-            )
+            pretty_body_json = json.dumps(body, indent=2, ensure_ascii=False)
         except Exception:
-            pretty_body_json = body_json
-        logging.info("Request body for Bedrock (pretty):\n%s", pretty_body_json)
+            pretty_body_json = str(body)
+        logging.info("Request body for Claude (pretty):\n%s", pretty_body_json)
 
         if stream:
-            # Handle streaming response
-            # Check for errors before starting the stream (to return proper status code)
+            # Handle streaming response using direct HTTP request
             try:
-                response = invoke_bedrock_streaming(bedrock, body_json)
-                # Extract status code if available - default to None to detect malformed responses
-                response_status = response.get("ResponseMetadata", {}).get(
-                    "HTTPStatusCode"
+                backend_response = requests.post(
+                    endpoint_url, headers=headers, json=body, stream=True, timeout=600
                 )
-                response_body = response.get("body")
+                backend_response.raise_for_status()
+                
+                # Stream the response back to client
+                return Response(
+                    stream_with_context(backend_response.iter_content(chunk_size=None, decode_unicode=False)),
+                    content_type="text/event-stream"
+                ), 200
 
-                # Check for malformed response first (missing status code)
-                if response_status is None:
-                    logging.error("Missing HTTPStatusCode in response metadata")
-                    error_response = {
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": "Malformed response from backend API",
-                        },
-                    }
-                    return jsonify(error_response), 500
-
-                # If status is not 200, return error before starting stream
-                if response_status != 200:
-                    logging.error(f"Non-200 status code from SDK: {response_status}")
-                    error_response = {
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": f"Backend API returned status {response_status}",
-                        },
-                    }
-                    return jsonify(error_response), response_status
-
-                # If we detect an error before streaming starts, return error response
-                if response_body is None:
-                    logging.error(
-                        "Response body is None from SDK invoke_model_with_response_stream"
-                    )
-                    error_response = {
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": "Empty response body from backend API",
-                        },
-                    }
-                    # At this point, response_status is 200, so we return 500 for error
-                    return jsonify(error_response), 500
-
+            except requests.exceptions.HTTPError as e:
+                logging.error(f"HTTP error during streaming: {e}")
+                try:
+                    error_body = e.response.json()
+                    return jsonify(error_body), e.response.status_code
+                except:
+                    return jsonify({"type": "error", "error": {"type": "api_error", "message": str(e)}}), e.response.status_code if e.response else 500
             except Exception as e:
                 # If error occurs before streaming, we can return proper error status
                 logging.error(f"Error before streaming: {e}", exc_info=True)
@@ -1147,99 +1151,16 @@ def proxy_claude_request():
                 }
                 return jsonify(error_response), 500
 
-            # Stream is healthy, proceed with streaming response
-            def stream_generate():
-                try:
-                    for event in response_body:
-                        chunk = json.loads(event["chunk"]["bytes"])
-                        logging.debug(f"Streaming chunk: {chunk}")
-
-                        chunk_type = chunk.get("type")
-
-                        # Handle different chunk types according to Claude streaming format
-                        if chunk_type == "message_start":
-                            yield f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                        elif chunk_type == "content_block_start":
-                            yield f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                        elif chunk_type == "content_block_delta":
-                            yield f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                        elif chunk_type == "content_block_stop":
-                            yield f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                        elif chunk_type == "message_delta":
-                            yield f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                        elif chunk_type == "message_stop":
-                            yield f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            yield "data: [DONE]\n\n"
-                            break
-                        elif chunk_type == "error":
-                            # Handle error chunks in the stream
-                            yield f"event: error\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                            break
-
-                except Exception as e:
-                    # Errors during streaming can only be sent as SSE events
-                    logging.error(f"Error during streaming: {e}", exc_info=True)
-                    error_chunk = {
-                        "type": "error",
-                        "error": {"type": "api_error", "message": str(e)},
-                    }
-                    yield f"event: error\ndata: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
-
-            return Response(stream_generate(), mimetype="text/event-stream"), 200
-
         else:
-            # Handle non-streaming response
-            response = invoke_bedrock_non_streaming(bedrock, body_json)
-            # Extract status code from response metadata - default to None to detect malformed responses
-            response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-            response_body = response.get("body")
-
-            # Check for malformed response (missing status code)
-            if response_status is None:
-                logging.error("Missing HTTPStatusCode in response metadata")
-                return jsonify(
-                    {
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": "Malformed response from backend API",
-                        },
-                    }
-                ), 500
-
-            if response_body is not None:
-                # Read the response body
-                chunk_data = read_response_body_stream(response_body)
-
-                if chunk_data:
-                    final_response = json.loads(chunk_data)
-                    logging.debug(f"Non-streaming response: {final_response}")
-                    # Use actual response status code
-                    return jsonify(final_response), response_status
-                else:
-                    logging.warning("Empty chunk_data from non-streaming response body")
-                    error_status = response_status if response_status >= 400 else 500
-                    return jsonify(
-                        {
-                            "type": "error",
-                            "error": {
-                                "type": "api_error",
-                                "message": "Empty response data from backend API",
-                            },
-                        }
-                    ), error_status
-            else:
-                logging.error("Response body is None from SDK invoke_model")
-                error_status = response_status if response_status >= 400 else 500
-                return jsonify(
-                    {
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": "Empty response body from backend API",
-                        },
-                    }
-                ), error_status
+            # Handle non-streaming response using direct HTTP request
+            backend_response = requests.post(
+                endpoint_url, headers=headers, json=body, timeout=600
+            )
+            backend_response.raise_for_status()
+            backend_json = backend_response.json()
+            
+            logging.debug(f"Non-streaming response: {backend_json}")
+            return jsonify(backend_json), backend_response.status_code
 
     except Exception as e:
         # Check if this is a rate limit error from retry exhaustion
