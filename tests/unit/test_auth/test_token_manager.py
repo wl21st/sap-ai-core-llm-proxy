@@ -195,10 +195,3 @@ class TestBackwardCompatibility:
         )
         subaccount.service_key = mock_service_key
         return subaccount
-
-    @pytest.mark.skip(
-        reason="fetch_token function has been removed, no longer deprecated"
-    )
-    def test_fetch_token_deprecated(self, mock_subaccount):
-        """Test deprecated fetch_token function."""
-        pass

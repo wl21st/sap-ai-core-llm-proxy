@@ -905,30 +905,6 @@ class TestConfigLoading:
         assert result.port == 3001
         assert result.host == "127.0.0.1"
 
-    @pytest.mark.skip(
-        reason="Legacy config format no longer supported - config now returns ProxyConfig dataclass"
-    )
-    def test_load_config_legacy_format(self, tmp_path, sample_service_key):
-        """Test loading legacy single-account config format."""
-        legacy_config = {
-            "service_key_json": "key.json",
-            "deployment_models": {"gpt-4": ["https://url1.com"]},
-            "secret_authentication_tokens": ["token1"],
-            "resource_group": "default",
-            "port": 3001,
-            "host": "127.0.0.1",
-        }
-
-        config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps(legacy_config))
-
-        result = load_proxy_config(str(config_file))
-
-        # Config now returns ProxyConfig dataclass, not raw dict
-        assert isinstance(result, ProxyConfig)
-        # Legacy single-account format is converted to subaccounts structure
-
-
 # ============================================================================
 # INTEGRATION TESTS
 # ============================================================================
@@ -1467,91 +1443,6 @@ class TestResponseConversionEdgeCases:
 
         result = convert_gemini_to_openai(gemini_response)
         assert result["choices"][0]["finish_reason"] == "content_filter"
-
-
-# ============================================================================
-# SDK SESSION AND CLIENT TESTS
-# ============================================================================
-
-
-class TestSDKSessionManagement:
-    """Tests for SAP AI Core SDK session and client management.
-
-    NOTE: These tests are deprecated. SDK session management has been moved to
-    utils/sdk_pool.py and is tested in tests/unit/test_sdk_session_management.py
-    """
-
-    @pytest.mark.skip(reason="SDK session management moved to utils/sdk_pool.py")
-    @patch("proxy_server.Session")
-    def test_get_sapaicore_sdk_session_creates_new_session(self, mock_session_class):
-        """Test that get_sapaicore_sdk_session creates a new session when none exists."""
-        # Reset global state
-        proxy_server._sdk_session = None
-
-        mock_session = Mock()
-        mock_session_class.return_value = mock_session
-
-        result = proxy_server.get_sdk_session()
-
-        assert result == mock_session
-        mock_session_class.assert_called_once()
-        assert proxy_server._sdk_session == mock_session
-
-    @pytest.mark.skip(reason="SDK session management moved to utils/sdk_pool.py")
-    @patch("proxy_server.Session")
-    def test_get_sapaicore_sdk_session_returns_cached_session(self, mock_session_class):
-        """Test that get_sapaicore_sdk_session returns cached session."""
-        mock_session = Mock()
-        proxy_server._sdk_session = mock_session
-
-        result = proxy_server.get_sdk_session()
-
-        assert result == mock_session
-        mock_session_class.assert_not_called()
-
-    @pytest.mark.skip(reason="SDK session management moved to utils/sdk_pool.py")
-    @patch("proxy_server.get_sapaicore_sdk_session")
-    @patch("proxy_server.Config")
-    def test_get_sapaicore_sdk_client_creates_new_client(
-        self, mock_config, mock_get_session
-    ):
-        """Test that get_sapaicore_sdk_client creates a new client when none exists."""
-        # Reset global state
-        proxy_server._bedrock_clients.clear()
-
-        mock_session = Mock()
-        mock_client = Mock()
-        mock_session.client.return_value = mock_client
-        mock_get_session.return_value = mock_session
-
-        # Mock Config to return the expected dict
-        expected_config = {
-            "retries": {
-                "max_attempts": 1,
-                "mode": "standard",
-            }
-        }
-        mock_config.return_value = expected_config
-
-        result = proxy_server.get_bedrock_client("gpt-4")
-
-        assert result == mock_client
-        mock_session.client.assert_called_once_with(
-            model_name="gpt-4", config=expected_config
-        )
-        assert proxy_server._bedrock_clients["gpt-4"] == mock_client
-
-    @pytest.mark.skip(reason="SDK session management moved to utils/sdk_pool.py")
-    @patch("proxy_server.get_sapaicore_sdk_session")
-    def test_get_sapaicore_sdk_client_returns_cached_client(self, mock_get_session):
-        """Test that get_sapaicore_sdk_client returns cached client."""
-        mock_client = Mock()
-        proxy_server._bedrock_clients["gpt-4"] = mock_client
-
-        result = proxy_server.get_bedrock_client("gpt-4")
-
-        assert result == mock_client
-        mock_get_session.assert_not_called()
 
 
 # ============================================================================

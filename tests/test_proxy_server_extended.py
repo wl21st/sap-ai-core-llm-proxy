@@ -437,35 +437,6 @@ class TestStopReasonMapping:
         assert result is None
 
 
-class TestSDKSessionManagement:
-    """Test cases for SDK session and client management."""
-
-    @pytest.mark.skip(
-        reason="Tests internal implementation of utils/sdk_pool.py, not proxy_server.py"
-    )
-    def test_get_sapaicore_sdk_session_creates_once(self):
-        """Test that SDK session is created only once."""
-        pass
-
-    @pytest.mark.skip(
-        reason="Tests internal implementation of utils/sdk_pool.py, not proxy_server.py"
-    )
-    def test_get_sapaicore_sdk_client_caches_per_model(self):
-        """Test that SDK client is cached per model."""
-        pass
-
-
-class TestOptionsEndpoint:
-    """Test cases for OPTIONS endpoint."""
-
-    @pytest.mark.skip(
-        reason="OPTIONS handling not implemented for /v1/chat/completions endpoint"
-    )
-    def test_options_request(self, client):
-        """Test OPTIONS request to chat completions."""
-        pass
-
-
 class TestModelsEndpoint:
     """Test cases for models listing endpoint."""
 
