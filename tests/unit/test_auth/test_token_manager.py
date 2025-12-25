@@ -19,7 +19,7 @@ class TestTokenManager:
             client_id="test_client_id",
             client_secret="test_client_secret",
             auth_url="https://test.auth.com",
-            identity_zone_id="test_zone"
+            identity_zone_id="test_zone",
         )
 
     @pytest.fixture
@@ -29,7 +29,7 @@ class TestTokenManager:
             name="test_subaccount",
             resource_group="test_resource_group",
             service_key_json="/path/to/service_key.json",
-            model_to_deployment_urls={"model1": ["url1"], "model2": ["url2"]}
+            model_to_deployment_urls={"model1": ["url1"], "model2": ["url2"]},
         )
         subaccount.service_key = mock_service_key
         return subaccount
@@ -42,7 +42,7 @@ class TestTokenManager:
     def test_init(self, token_manager, mock_subaccount):
         """Test TokenManager initialization."""
         assert token_manager.subaccount == mock_subaccount
-        assert hasattr(token_manager, '_lock')
+        assert hasattr(token_manager, "_lock")
 
     def test_get_token_cached_valid(self, token_manager, mock_subaccount):
         """Test getting cached valid token."""
@@ -59,7 +59,9 @@ class TestTokenManager:
         mock_subaccount.token_info.token = "expired_token"
         mock_subaccount.token_info.expiry = time.time() - 3600  # Expired 1 hour ago
 
-        with patch.object(token_manager, '_fetch_new_token', return_value='new_token') as mock_fetch:
+        with patch.object(
+            token_manager, "_fetch_new_token", return_value="new_token"
+        ) as mock_fetch:
             token = token_manager.get_token()
             assert token == "new_token"
             mock_fetch.assert_called_once()
@@ -70,59 +72,66 @@ class TestTokenManager:
         mock_subaccount.token_info.token = None
         mock_subaccount.token_info.expiry = 0
 
-        with patch.object(token_manager, '_fetch_new_token', return_value='new_token') as mock_fetch:
+        with patch.object(
+            token_manager, "_fetch_new_token", return_value="new_token"
+        ) as mock_fetch:
             token = token_manager.get_token()
             assert token == "new_token"
             mock_fetch.assert_called_once()
 
-    @patch('requests.post')
+    @patch("requests.post")
     def test_fetch_new_token_success(self, mock_post, token_manager, mock_subaccount):
         """Test successful token fetching."""
         # Mock successful response
         mock_response = Mock()
         mock_response.json.return_value = {
-            'access_token': 'new_access_token',
-            'expires_in': 3600
+            "access_token": "new_access_token",
+            "expires_in": 3600,
         }
         mock_response.raise_for_status.return_value = None
         mock_post.return_value = mock_response
 
         token = token_manager._fetch_new_token()
 
-        assert token == 'new_access_token'
-        assert mock_subaccount.token_info.token == 'new_access_token'
+        assert token == "new_access_token"
+        assert mock_subaccount.token_info.token == "new_access_token"
         assert mock_subaccount.token_info.expiry > time.time()
 
         # Verify request was made correctly
         mock_post.assert_called_once()
         call_args = mock_post.call_args
-        assert call_args[0][0] == "https://test.auth.com/oauth/token?grant_type=client_credentials"
+        assert (
+            call_args[0][0]
+            == "https://test.auth.com/oauth/token?grant_type=client_credentials"
+        )
         assert "Authorization" in call_args[1]["headers"]
 
-    @patch('requests.post')
+    @patch("requests.post")
     def test_fetch_new_token_empty_token(self, mock_post, token_manager):
         """Test handling of empty token in response."""
         mock_response = Mock()
-        mock_response.json.return_value = {'access_token': ''}
+        mock_response.json.return_value = {"access_token": ""}
         mock_response.raise_for_status.return_value = None
         mock_post.return_value = mock_response
 
         with pytest.raises(ValueError, match="Fetched token is empty"):
             token_manager._fetch_new_token()
 
-    @patch('requests.post')
+    @patch("requests.post")
     def test_fetch_new_token_timeout(self, mock_post, token_manager):
         """Test handling of timeout errors."""
         from requests.exceptions import Timeout
+
         mock_post.side_effect = Timeout("Connection timed out")
 
         with pytest.raises(TimeoutError, match="Timeout connecting to token endpoint"):
             token_manager._fetch_new_token()
 
-    @patch('requests.post')
+    @patch("requests.post")
     def test_fetch_new_token_http_error(self, mock_post, token_manager):
         """Test handling of HTTP errors."""
         from requests.exceptions import HTTPError
+
         mock_response = Mock()
         mock_response.status_code = 400
         mock_response.text = "Bad Request"
@@ -172,7 +181,7 @@ class TestBackwardCompatibility:
             client_id="test_client_id",
             client_secret="test_client_secret",
             auth_url="https://test.auth.com",
-            identity_zone_id="test_zone"
+            identity_zone_id="test_zone",
         )
 
     @pytest.fixture
@@ -182,26 +191,14 @@ class TestBackwardCompatibility:
             name="test_subaccount",
             resource_group="test_resource_group",
             service_key_json="/path/to/service_key.json",
-            model_to_deployment_urls={"model1": ["url1"], "model2": ["url2"]}
+            model_to_deployment_urls={"model1": ["url1"], "model2": ["url2"]},
         )
         subaccount.service_key = mock_service_key
         return subaccount
 
+    @pytest.mark.skip(
+        reason="fetch_token function has been removed, no longer deprecated"
+    )
     def test_fetch_token_deprecated(self, mock_subaccount):
         """Test deprecated fetch_token function."""
-        from auth import fetch_token
-        import warnings
-
-        # Mock proxy_config
-        proxy_config = Mock()
-        proxy_config.subaccounts = {'test_subaccount': mock_subaccount}
-
-        with patch('auth.token_manager.TokenManager.get_token', return_value='test_token'):
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                token = fetch_token('test_subaccount', proxy_config)
-
-                assert token == 'test_token'
-                assert len(w) == 1
-                assert issubclass(w[0].category, DeprecationWarning)
-                assert "fetch_token() is deprecated" in str(w[0].message)
+        pass
