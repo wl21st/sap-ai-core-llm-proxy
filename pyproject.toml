@@ -13,6 +13,7 @@ dependencies = [
     "litellm==1.80.10",
     "openai>=2.8.0",
     "protobuf>=6.33.1",
+    "pydantic>=2.0.0",
     "sap-ai-sdk-gen[all]>=5.10.0",
     "tenacity>=9.0.0",
     "urllib3>=2.6.0",

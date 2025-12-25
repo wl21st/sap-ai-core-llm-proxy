@@ -115,28 +115,3 @@ class TestRequestValidator:
 
         token = validator._extract_token(mock_request)
         assert token == "Bearer auth_token"
-
-
-class TestBackwardCompatibility:
-    """Test backward compatibility functions."""
-
-    def test_verify_request_token_deprecated(self):
-        """Test deprecated verify_request_token function."""
-        from auth import verify_request_token
-        import warnings
-
-        # Mock request and proxy_config
-        mock_request = Mock()
-        mock_request.headers = {"Authorization": "Bearer valid_token"}
-
-        mock_proxy_config = Mock()
-        mock_proxy_config.secret_authentication_tokens = ["valid_token"]
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = verify_request_token(mock_request, mock_proxy_config)
-
-            assert result is True
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "verify_request_token() is deprecated" in str(w[0].message)

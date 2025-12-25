@@ -2,21 +2,17 @@ import argparse
 import ast
 import json
 import logging
-import os
 import random
 import subprocess
 import sys
-import threading
 import time
-from typing import Dict, Any
+from logging import Logger
 
 import requests
-from botocore.config import Config
 from botocore.exceptions import ClientError
 from flask import Flask, request, jsonify, Response, stream_with_context
-
+from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
 # SAP AI SDK imports
-from gen_ai_hub.proxy.native.amazon.clients import Session
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -25,19 +21,33 @@ from tenacity import (
 )
 
 from auth import TokenManager, RequestValidator
-
 # Import from new modular structure
-from config import ServiceKey, SubAccountConfig, ProxyConfig, load_config
+from config import ProxyConfig, load_proxy_config
 from proxy_helpers import Detector, Converters
-from utils import setup_logging, get_token_logger, handle_http_429_error
+from utils.error_handlers import handle_http_429_error
+from utils.logging_utils import get_server_logger, init_logging
+from utils.sdk_utils import extract_deployment_id
 
-DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.5-sonnet"
+logger: Logger = get_server_logger(__name__)
+
+from utils.sdk_pool import get_bedrock_client
+
+API_VERSION_2023_05_15 = "2023-05-15"
+API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
+API_VERSION_BEDROCK_2023_05_31 = "bedrock-2023-05-31"
+
+DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.5-sonnet"
+DEFAULT_GEMINI_MODEL: str = "gemini-2.5-pro"
+DEFAULT_EMBEDDING_MODEL: str = "text-embedding-3-small"
+DEFAULT_GPT_MODEL = "gpt-4.1"
 
 # Retry configuration constants (centralized for future configurability)
 RETRY_MAX_ATTEMPTS = 4  # Total attempts (1 original + 3 retries)
 RETRY_MULTIPLIER = 2  # Exponential backoff multiplier
 RETRY_MIN_WAIT = 4  # Minimum wait time in seconds
 RETRY_MAX_WAIT = 16  # Maximum wait time in seconds
+
+"""SAP API Reference are documented at https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/example-payloads-for-inferencing-third-party-models"""
 
 
 # Retry decorator for SAP AI SDK calls that may hit rate limits
@@ -55,12 +65,12 @@ def retry_on_rate_limit(exception):
     # Fallback to string matching for other exception types
     error_message = str(exception).lower()
     return (
-        "too many tokens" in error_message
-        or "rate limit" in error_message
-        or "throttling" in error_message
-        or "too many requests" in error_message
-        or "exceeding the allowed request" in error_message
-        or "rate limited by ai core" in error_message
+            "too many tokens" in error_message
+            or "rate limit" in error_message
+            or "throttling" in error_message
+            or "too many requests" in error_message
+            or "exceeding the allowed request" in error_message
+            or "rate limited by ai core" in error_message
     )
 
 
@@ -122,52 +132,6 @@ proxy_config = ProxyConfig()
 
 app = Flask(__name__)
 
-# ------------------------
-# SAP AI SDK session/client cache for performance
-# ------------------------
-# Creating a new SDK Session()/client per request is expensive. Reuse a process-wide
-# Session and cache clients per model in a thread-safe manner.
-_sdk_session = None
-_sdk_session_lock = threading.Lock()
-_bedrock_clients: Dict[str, Any] = {}
-_bedrock_clients_lock = threading.Lock()
-
-
-def get_sapaicore_sdk_session() -> Session:
-    """Lazily initialize and return a global SAP AI Core SDK Session."""
-    global _sdk_session
-    if _sdk_session is None:
-        with _sdk_session_lock:
-            if _sdk_session is None:
-                logging.info("Initializing global SAP AI SDK Session")
-                _sdk_session = Session()
-    return _sdk_session
-
-
-def get_sapaicore_sdk_client(model_name: str):
-    """Get or create a cached SAP AI Core (Bedrock) client for the given model."""
-    client = _bedrock_clients.get(model_name)
-    if client is not None:
-        return client
-    with _bedrock_clients_lock:
-        client = _bedrock_clients.get(model_name)
-        if client is None:
-            logging.info(f"Creating SAP AI SDK client for model '{model_name}'")
-            # Configure client with minimal retries since we handle retries at application level
-            client_config = Config(
-                retries={
-                    "max_attempts": 1,  # Disable botocore retries, let tenacity handle it
-                    "mode": "standard",
-                },
-                max_pool_connections=50,
-                tcp_keepalive=True,
-            )
-            client = get_sapaicore_sdk_session().client(
-                model_name=model_name, config=client_config
-            )
-            _bedrock_clients[model_name] = client
-    return client
-
 
 # handle_http_429_error is now imported from utils.error_handlers
 
@@ -181,7 +145,7 @@ def handle_embedding_request():
 
     payload = request.json
     input_text = payload.get("input")
-    model = payload.get("model", "text-embedding-3-large")
+    model = payload.get("model", "text-embedding-3-small")
     encoding_format = payload.get("encoding_format")
 
     if not input_text:
@@ -200,7 +164,7 @@ def handle_embedding_request():
             "Content-Type": "application/json",
             "Authorization": f"Bearer {subaccount_token}",
             "AI-Resource-Group": resource_group,
-            "AI-Tenant-Id": service_key.identityzoneid,
+            "AI-Tenant-Id": service_key.identity_zone_id,
         }
         response = requests.post(endpoint_url, headers=headers, json=modified_payload)
         response.raise_for_status()
@@ -231,7 +195,7 @@ def handle_embedding_service_call(input_text, model, encoding_format):
     # Construct the URL based on the official SAP AI Core documentation
     # This is critical or it will return 404
     # TODO: Follow up on what is the required
-    api_version = "2023-05-15"
+    api_version = API_VERSION_2023_05_15
     endpoint_url = f"{selected_url.rstrip('/')}/embeddings?api-version={api_version}"
 
     # The payload for the embeddings endpoint only requires the input.
@@ -255,7 +219,7 @@ def format_embedding_response(response, model):
 
 
 # Initialize token logger (will be configured on first use)
-token_logger = get_token_logger()
+token_usage_logger: logging.Logger = get_server_logger("token_usage")
 
 
 # load_config is now imported from config.loader
@@ -411,12 +375,12 @@ def get_claude_stop_reason_from_openai_chunk(openai_chunk):
     return None
 
 
-def load_balance_url(model_name: str) -> tuple:
+def load_balance_url(selected_model_name: str) -> tuple:
     """
     Load balance requests for a model across all subAccounts that have it deployed.
 
     Args:
-        model_name: Name of the model to load balance
+        selected_model_name: Name of the model to load balance
 
     Returns:
         Tuple of (selected_url, subaccount_name, resource_group, final_model_name)
@@ -430,102 +394,101 @@ def load_balance_url(model_name: str) -> tuple:
 
     # Get list of subAccounts that have this model
     if (
-        model_name not in proxy_config.model_to_subaccounts
-        or not proxy_config.model_to_subaccounts[model_name]
+            selected_model_name not in proxy_config.model_to_subaccounts
+            or not proxy_config.model_to_subaccounts[selected_model_name]
     ):
         # Check if it's a Claude or Gemini model and try fallback
-        if Detector.is_claude_model(model_name):
+        if Detector.is_claude_model(selected_model_name):
             logging.info(
-                f"Claude model '{model_name}' not found, trying fallback models"
+                f"Claude model '{selected_model_name}' not found, trying fallback models"
             )
             # Try common Claude model fallbacks
-            # fallback_models = ["anthropic--claude-4-sonnet"]
             fallback_models = ["anthropic--claude-4.5-sonnet"]
             for fallback in fallback_models:
                 if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
+                        fallback in proxy_config.model_to_subaccounts
+                        and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logging.info(
-                        f"Using fallback Claude model '{fallback}' for '{model_name}'"
+                        f"Using fallback Claude model '{fallback}' for '{selected_model_name}'"
                     )
-                    model_name = fallback
+                    selected_model_name = fallback
                     break
             else:
                 logging.error(f"No Claude models available in any subAccount")
                 raise ValueError(
-                    f"Claude model '{model_name}' and fallbacks not available in any subAccount"
+                    f"Claude model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
-        elif Detector.is_gemini_model(model_name):
+        elif Detector.is_gemini_model(selected_model_name):
             logging.info(
-                f"Gemini model '{model_name}' not found, trying fallback models"
+                f"Gemini model '{selected_model_name}' not found, trying fallback models"
             )
             # Try common Gemini model fallbacks
             fallback_models = ["gemini-2.5-pro"]
             for fallback in fallback_models:
                 if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
+                        fallback in proxy_config.model_to_subaccounts
+                        and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logging.info(
-                        f"Using fallback Gemini model '{fallback}' for '{model_name}'"
+                        f"Using fallback Gemini model '{fallback}' for '{selected_model_name}'"
                     )
-                    model_name = fallback
+                    selected_model_name = fallback
                     break
             else:
                 logging.error(f"No Gemini models available in any subAccount")
                 raise ValueError(
-                    f"Gemini model '{model_name}' and fallbacks not available in any subAccount"
+                    f"Gemini model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
         else:
             # For other models, try common fallbacks
-            logging.warning(f"Model '{model_name}' not found, trying fallback models")
-            fallback_models = ["gpt-5"]
+            logging.warning(f"Model '{selected_model_name}' not found, trying fallback models")
+            fallback_models = ["gpt-4.1"]
             for fallback in fallback_models:
                 if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
+                        fallback in proxy_config.model_to_subaccounts
+                        and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logging.info(
-                        f"Using fallback model '{fallback}' for '{model_name}'"
+                        f"Using fallback model '{fallback}' for '{selected_model_name}'"
                     )
-                    model_name = fallback
+                    selected_model_name = fallback
                     break
             else:
                 logging.error(
-                    f"No subAccounts with model '{model_name}' or fallbacks found"
+                    f"No subAccounts with model '{selected_model_name}' or fallbacks found"
                 )
                 raise ValueError(
-                    f"Model '{model_name}' and fallbacks not available in any subAccount"
+                    f"Model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
 
-    subaccount_names = proxy_config.model_to_subaccounts[model_name]
+    subaccount_names = proxy_config.model_to_subaccounts[selected_model_name]
 
     # Create counter for this model if it doesn't exist
-    if model_name not in load_balance_url.counters:
-        load_balance_url.counters[model_name] = 0
+    if selected_model_name not in load_balance_url.counters:
+        load_balance_url.counters[selected_model_name] = 0
 
     # Select subAccount using round-robin
-    subaccount_index = load_balance_url.counters[model_name] % len(subaccount_names)
+    subaccount_index = load_balance_url.counters[selected_model_name] % len(subaccount_names)
     selected_subaccount = subaccount_names[subaccount_index]
 
     # Increment counter for next request
-    load_balance_url.counters[model_name] += 1
+    load_balance_url.counters[selected_model_name] += 1
 
     # Get the model URL list from the selected subAccount
     subaccount = proxy_config.subaccounts[selected_subaccount]
-    url_list = subaccount.normalized_models.get(model_name, [])
+    url_list = subaccount.model_to_deployment_urls.get(selected_model_name, [])
 
     if not url_list:
         logging.error(
-            f"Model '{model_name}' listed for subAccount '{selected_subaccount}' but no URLs found"
+            f"Model '{selected_model_name}' listed for subAccount '{selected_subaccount}' but no URLs found"
         )
         raise ValueError(
-            f"Configuration error: No URLs for model '{model_name}' in subAccount '{selected_subaccount}'"
+            f"Configuration error: No URLs for model '{selected_model_name}' in subAccount '{selected_subaccount}'"
         )
 
     # Select URL using round-robin within the subAccount
-    url_counter_key = f"{selected_subaccount}:{model_name}"
+    url_counter_key = f"{selected_subaccount}:{selected_model_name}"
     if url_counter_key not in load_balance_url.counters:
         load_balance_url.counters[url_counter_key] = 0
 
@@ -536,12 +499,12 @@ def load_balance_url(model_name: str) -> tuple:
     load_balance_url.counters[url_counter_key] += 1
 
     # Get resource group for the selected subAccount
-    resource_group = subaccount.resource_group
+    selected_resource_group = subaccount.resource_group
 
     logging.info(
-        f"Selected subAccount '{selected_subaccount}' and URL '{selected_url}' for model '{model_name}'"
+        f"Selected subAccount '{selected_subaccount}' and URL '{selected_url}' for model '{selected_model_name}'"
     )
-    return selected_url, selected_subaccount, resource_group, model_name
+    return selected_url, selected_subaccount, selected_resource_group, selected_model_name
 
 
 def handle_claude_request(payload, model="3.5-sonnet"):
@@ -635,7 +598,7 @@ def handle_gemini_request(payload, model="gemini-2.5-pro"):
     return endpoint_url, modified_payload, subaccount_name
 
 
-def handle_default_request(payload, model="gpt-4o"):
+def handle_default_request(payload, model="gpt-4.1"):
     """Handle default (non-Claude, non-Gemini) model request with multi-subAccount support.
 
     Args:
@@ -646,23 +609,11 @@ def handle_default_request(payload, model="gpt-4o"):
         Tuple of (endpoint_url, modified_payload, subaccount_name)
     """
     # Get the selected URL, subaccount and resource group using our load balancer
-    try:
-        selected_url, subaccount_name, _, model = load_balance_url(model)
-    except ValueError as e:
-        logging.error(f"Failed to load balance URL for model '{model}': {e}")
-        # Try with default model if specified model not found
-        try:
-            fallback_model = "gpt-4o"  # Default fallback
-            logging.info(f"Falling back to '{fallback_model}' model")
-            selected_url, subaccount_name, _, model = load_balance_url(fallback_model)
-        except ValueError:
-            raise ValueError(
-                f"No valid model found for '{model}' or fallback in any subAccount"
-            )
+    selected_url, subaccount_name, _, model = load_balance_url(model)
 
     # Determine API version based on model
     if any(m in model for m in ["o3", "o4-mini", "o3-mini"]):
-        api_version = "2024-12-01-preview"
+        api_version = API_VERSION_2024_12_01_PREVIEW
         # Remove unsupported parameters for o3-mini
         modified_payload = payload.copy()
         if "temperature" in modified_payload:
@@ -670,7 +621,7 @@ def handle_default_request(payload, model="gpt-4o"):
             del modified_payload["temperature"]
         # Add checks for other potentially unsupported parameters if needed
     else:
-        api_version = "2023-05-15"
+        api_version = API_VERSION_2023_05_15
         modified_payload = payload
 
     endpoint_url = (
@@ -681,44 +632,6 @@ def handle_default_request(payload, model="gpt-4o"):
         f"handle_default_request: {endpoint_url} (subAccount: {subaccount_name})"
     )
     return endpoint_url, modified_payload, subaccount_name
-
-
-@app.route("/v1/chat/completions", methods=["OPTIONS"])
-def proxy_openai_stream2():
-    logging.info("OPTIONS:Received request to /v1/chat/completions")
-    logging.info(f"Request headers: {request.headers}")
-    logging.info(f"Request payload as string: {request.data.decode('utf-8')}")
-    return jsonify(
-        {
-            "id": "gen-1747041021-KLZff2aBrJPmV6L1bZf1",
-            "provider": "OpenAI",
-            "model": "gpt-4o",
-            "object": "chat.completion",
-            "created": 1747041021,
-            "choices": [
-                {
-                    "logprobs": None,
-                    "finish_reason": "stop",
-                    "native_finish_reason": "stop",
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": "Hi.",
-                        "refusal": None,
-                        "reasoning": None,
-                    },
-                }
-            ],
-            "system_fingerprint": "fp_f5bdcc3276",
-            "usage": {
-                "prompt_tokens": 26,
-                "completion_tokens": 3,
-                "total_tokens": 29,
-                "prompt_tokens_details": {"cached_tokens": 0},
-                "completion_tokens_details": {"reasoning_tokens": 0},
-            },
-        }
-    ), 204
 
 
 @app.route("/v1/models", methods=["GET", "OPTIONS"])
@@ -781,14 +694,14 @@ def proxy_openai_stream():
     model = payload.get("model")
     if not model:
         logging.warning("No model specified in request, using default model")
-        model = "gpt-4o"  # Default model
+        model = DEFAULT_GPT_MODEL  # Default model
 
     # Check if model is available in any subAccount
     if model not in proxy_config.model_to_subaccounts:
         logging.warning(
             f"Model '{model}' not found in any subAccount, falling back to default"
         )
-        model = "gpt-4o"  # Fallback model
+        model = DEFAULT_GPT_MODEL  # Fallback model
         if model not in proxy_config.model_to_subaccounts:
             return jsonify(
                 {"error": f"Model '{model}' not available in any subAccount."}
@@ -828,7 +741,7 @@ def proxy_openai_stream():
             "AI-Resource-Group": resource_group,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {subaccount_token}",
-            "AI-Tenant-Id": service_key.identityzoneid,
+            "AI-Tenant-Id": service_key.identity_zone_id,
         }
 
         logging.info(
@@ -914,11 +827,11 @@ def proxy_claude_request():
         )
     except ValueError as e:
         logging.error(f"Model validation failed: {e}")
-        model = request_model
-        # return jsonify({
-        #     "type": "error",
-        #     "error": {"type": "invalid_request_error", "message": f"Model '{request_model}' not available"}
-        # }), 400
+
+        return jsonify({
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": f"Model '{request_model}' not available"}
+        }), 400
 
     # Check if this is an Anthropic model that should use the SDK
     if not Detector.is_claude_model(model):
@@ -930,13 +843,15 @@ def proxy_claude_request():
 
     logging.info(f"Request from Claude API for model: {model}")
 
-    # Extract streaming flag
-    stream = request_json.get("stream", False)
+    # Extract streaming flag, default to True
+    stream = request_json.get("stream", True)
 
     try:
         # Use cached SAP AI SDK client for the model
         logging.info(f"Obtaining SAP AI SDK client for model: {model}")
-        bedrock = get_sapaicore_sdk_client(model)
+        bedrock_client: ClientWrapper = get_bedrock_client(
+            model_name=model,
+            deployment_id=extract_deployment_id(selected_url))
         logging.info("SAP AI SDK client ready (cached)")
 
         # Get the conversation messages
@@ -958,13 +873,13 @@ def proxy_claude_request():
                 items_to_remove = []
                 for i, item in enumerate(content):
                     if item.get("type") == "text" and (
-                        not item.get("text") or item.get("text") == ""
+                            not item.get("text") or item.get("text") == ""
                     ):
                         # Mark empty text items for removal
                         items_to_remove.append(i)
                     elif (
-                        item.get("type") == "image"
-                        and item.get("source", {}).get("type") == "base64"
+                            item.get("type") == "image"
+                            and item.get("source", {}).get("type") == "base64"
                     ):
                         # Compress image data if available (would need ImageCompressor utility)
                         image_data = item.get("source", {}).get("data")
@@ -988,7 +903,7 @@ def proxy_claude_request():
         body.pop("stream", None)
 
         # Add required anthropic_version for Bedrock
-        body["anthropic_version"] = "bedrock-2023-05-31"
+        body["anthropic_version"] = API_VERSION_BEDROCK_2023_05_31
 
         # Remove unsupported fields for Bedrock
         unsupported_fields = ["context_management", "metadata"]
@@ -1092,7 +1007,7 @@ def proxy_claude_request():
             # Handle streaming response
             # Check for errors before starting the stream (to return proper status code)
             try:
-                response = invoke_bedrock_streaming(bedrock, body_json)
+                response = invoke_bedrock_streaming(bedrock_client, body_json)
                 # Extract status code if available - default to None to detect malformed responses
                 response_status = response.get("ResponseMetadata", {}).get(
                     "HTTPStatusCode"
@@ -1189,7 +1104,7 @@ def proxy_claude_request():
 
         else:
             # Handle non-streaming response
-            response = invoke_bedrock_non_streaming(bedrock, body_json)
+            response = invoke_bedrock_non_streaming(bedrock_client, body_json)
             # Extract status code from response metadata - default to None to detect malformed responses
             response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             response_body = response.get("body")
@@ -1327,9 +1242,9 @@ def proxy_claude_request_original():
         else:  # Assume OpenAI-compatible
             backend_payload = Detector.convert_claude_request_to_openai(payload)
             api_version = (
-                "2024-12-01-preview"
+                API_VERSION_2024_12_01_PREVIEW
                 if any(m in model for m in ["o3", "o4-mini", "o3-mini"])
-                else "2023-05-15"
+                else API_VERSION_2023_05_15
             )
             endpoint_path = f"/chat/completions?api-version={api_version}"
 
@@ -1340,7 +1255,7 @@ def proxy_claude_request_original():
             "AI-Resource-Group": resource_group,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {subaccount_token}",
-            "AI-Tenant-Id": service_key.identityzoneid,
+            "AI-Tenant-Id": service_key.identity_zone_id,
         }
 
         # Handle anthropic-specific headers
@@ -1529,7 +1444,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         try:
             # For Claude models, check if response is SSE format (backend may send SSE even for non-streaming)
             if Detector.is_claude_model(model) and response.text.strip().startswith(
-                "data: "
+                    "data: "
             ):
                 logging.info(
                     "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
@@ -1568,7 +1483,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         ip_address = request.remote_addr or request.headers.get(
             "X-Forwarded-For", "unknown_ip"
         )
-        token_logger.info(
+        token_usage_logger.info(
             f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
             f"PromptTokens: {prompt_tokens}, CompletionTokens: {completion_tokens}, TotalTokens: {total_tokens}"
         )
@@ -1626,7 +1541,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
 
     # Make streaming request to backend
     with requests.post(
-        url, headers=headers, json=payload, stream=True, timeout=600
+            url, headers=headers, json=payload, stream=True, timeout=600
     ) as response:
         try:
             response.raise_for_status()
@@ -1732,7 +1647,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                     ip_address = request.remote_addr or request.headers.get(
                         "X-Forwarded-For", "unknown_ip"
                     )
-                    token_logger.info(
+                    token_usage_logger.info(
                         f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
                         f"PromptTokens: {prompt_tokens}, CompletionTokens: {completion_tokens}, TotalTokens: {total_tokens} (Streaming)"
                     )
@@ -1861,7 +1776,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                     ip_address = request.remote_addr or request.headers.get(
                         "X-Forwarded-For", "unknown_ip"
                     )
-                    token_logger.info(
+                    token_usage_logger.info(
                         f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
                         f"PromptTokens: {prompt_tokens}, CompletionTokens: {completion_tokens}, TotalTokens: {total_tokens} (Streaming)"
                     )
@@ -1877,7 +1792,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                     start = buffer.index("data: ") + len("data: ")
                                     end = buffer.index("\n\n", start)
                                     json_chunk_str = buffer[start:end].strip()
-                                    buffer = buffer[end + 2 :]
+                                    buffer = buffer[end + 2:]
 
                                     # Convert Claude chunk to OpenAI format
                                     openai_sse_chunk_str = (
@@ -1898,7 +1813,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                                 "usage"
                                             ].get("output_tokens", 0)
                                             total_tokens = (
-                                                prompt_tokens + completion_tokens
+                                                    prompt_tokens + completion_tokens
                                             )
                                     except json.JSONDecodeError:
                                         pass
@@ -1919,8 +1834,8 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                                     if '"finish_reason":' in chunk_text:
                                         for line in chunk_text.strip().split("\n"):
                                             if (
-                                                line.startswith("data: ")
-                                                and line[6:].strip() != "[DONE]"
+                                                    line.startswith("data: ")
+                                                    and line[6:].strip() != "[DONE]"
                                             ):
                                                 try:
                                                     data = json.loads(line[6:])
@@ -1942,7 +1857,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
             # Log token usage at the end of the stream (only for non-Claude 3.7/4 models)
             # Claude 3.7/4 models already log their token usage after sending the final usage chunk
             if not (
-                Detector.is_claude_model(model) and Detector.is_claude_37_or_4(model)
+                    Detector.is_claude_model(model) and Detector.is_claude_37_or_4(model)
             ):
                 user_id = request.headers.get("Authorization", "unknown")
                 if user_id and len(user_id) > 20:
@@ -1952,7 +1867,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                 )
 
                 # Log with subAccount information
-                token_logger.info(
+                token_usage_logger.info(
                     f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
                     f"PromptTokens: {prompt_tokens if 'prompt_tokens' in locals() else 0}, "
                     f"CompletionTokens: {completion_tokens if 'completion_tokens' in locals() else 0}, "
@@ -2043,7 +1958,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
         )
         try:
             with requests.post(
-                url, headers=headers, json=payload, stream=True, timeout=600
+                    url, headers=headers, json=payload, stream=True, timeout=600
             ) as response:
                 response.raise_for_status()
                 logging.debug(f"Claude backend response status: {response.status_code}")
@@ -2216,7 +2131,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
 
     try:
         with requests.post(
-            url, headers=headers, json=payload, stream=True, timeout=600
+                url, headers=headers, json=payload, stream=True, timeout=600
         ) as response:
             response.raise_for_status()
             logging.debug(f"Backend response status: {response.status_code}")
@@ -2346,89 +2261,31 @@ if __name__ == "__main__":
     args = parse_arguments()
 
     # Setup logging using the new modular function
-    setup_logging(debug=args.debug)
+    init_logging(debug=args.debug)
 
     # Log version information at startup
     version_info = get_version_string()
     logging.info(f"SAP AI Core LLM Proxy Server - Version: {version_info}")
 
     logging.info(f"Loading configuration from: {args.config}")
-    config = load_config(args.config)
+    config = load_proxy_config(args.config)
 
     # Check if this is the new format with subAccounts
-    if isinstance(config, ProxyConfig):
-        proxy_config = config
-        # Initialize all subaccounts and build model mappings
-        proxy_config.initialize()
+    proxy_config = config
 
-        # Get server configuration
-        host = proxy_config.host
-        port = proxy_config.port
+    # Get server configuration
+    host = proxy_config.host
+    port = proxy_config.port
 
-        logging.info(
-            f"Loaded multi-subAccount configuration with {len(proxy_config.subaccounts)} subAccounts"
-        )
-        logging.info(
-            f"Available subAccounts: {', '.join(proxy_config.subaccounts.keys())}"
-        )
-        logging.info(
-            f"Available models: {', '.join(proxy_config.model_to_subaccounts.keys())}"
-        )
-    else:
-        # Legacy configuration support
-        logging.warning("Using legacy configuration format (single subAccount)")
-
-        # Initialize global variables for backward compatibility
-        service_key_json = config["service_key_json"]
-        model_deployment_urls = config["deployment_models"]
-        secret_authentication_tokens = config["secret_authentication_tokens"]
-        resource_group = config["resource_group"]
-
-        # Normalize model_deployment_urls keys
-        normalized_model_deployment_urls = {
-            key.replace("anthropic--", ""): value
-            for key, value in model_deployment_urls.items()
-        }
-
-        # Load service key
-        service_key = load_config(service_key_json)
-
-        host = config.get(
-            "host", "127.0.0.1"
-        )  # Use host from config, default to 127.0.0.1 if not specified
-        port = config.get(
-            "port", 3001
-        )  # Use port from config, default to 3001 if not specified
-
-        # Initialize the proxy_config for compatibility with new code
-        proxy_config.secret_authentication_tokens = secret_authentication_tokens
-        proxy_config.host = host
-        proxy_config.port = port
-
-        # Create a default subAccount
-        default_subaccount = SubAccountConfig(
-            name="default",
-            resource_group=resource_group,
-            service_key_json=service_key_json,
-            deployment_models=model_deployment_urls,
-        )
-
-        # Add service key
-        default_subaccount.service_key = ServiceKey(
-            clientid=service_key.get("clientid", ""),
-            clientsecret=service_key.get("clientsecret", ""),
-            url=service_key.get("url", ""),
-            identityzoneid=service_key.get("identityzoneid", ""),
-        )
-
-        # Normalize model names
-        default_subaccount.normalized_models = normalized_model_deployment_urls
-
-        # Add to proxy_config
-        proxy_config.subaccounts["default"] = default_subaccount
-
-        # Build model mappings
-        proxy_config.build_model_mapping()
+    logging.info(
+        f"Loaded multi-subAccount configuration with {len(proxy_config.subaccounts)} subAccounts"
+    )
+    logging.info(
+        f"Available subAccounts: {', '.join(proxy_config.subaccounts.keys())}"
+    )
+    logging.info(
+        f"Available models: {', '.join(proxy_config.model_to_subaccounts.keys())}"
+    )
 
     logging.info(f"Starting proxy server on host {host} and port {port}...")
     logging.info(f"API Host: http://{host}:{port}/v1")

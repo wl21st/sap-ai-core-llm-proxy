@@ -80,14 +80,14 @@ The [`normalize_model_names()`](../proxy_server.py#L56) method in [`SubAccountCo
 def normalize_model_names(self):
     """Normalize model names by removing prefixes like 'anthropic--'"""
     if False:  # ❌ Hardcoded condition
-        self.normalized_models = {
+        self.parsed_models_url_list = {
             key.replace("anthropic--", ""): value
-            for key, value in self.deployment_models.items()
+            for key, value in self.model_to_deployment_urls.items()
         }
     else:
-        self.normalized_models = {
+        self.parsed_models_url_list = {
             key: value
-            for key, value in self.deployment_models.items()
+            for key, value in self.model_to_deployment_urls.items()
         }
 ```
 

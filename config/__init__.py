@@ -7,13 +7,13 @@ This package handles:
 - Subaccount initialization and model mapping
 """
 
-from .models import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig
-from .loader import load_config
+from .config_models import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig
+from .config_parser import load_proxy_config
 
 __all__ = [
     'ServiceKey',
     'TokenInfo',
     'SubAccountConfig',
     'ProxyConfig',
-    'load_config',
+    'load_proxy_config',
 ]
