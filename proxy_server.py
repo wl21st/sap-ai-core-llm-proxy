@@ -28,7 +28,10 @@ from utils.error_handlers import handle_http_429_error
 from utils.logging_utils import get_server_logger, init_logging
 from utils.sdk_utils import extract_deployment_id
 
+# Initialize token logger (will be configured on first use)
 logger: Logger = get_server_logger(__name__)
+token_usage_logger: Logger = get_server_logger("token_usage")
+
 
 from utils.sdk_pool import get_bedrock_client
 
@@ -80,7 +83,7 @@ bedrock_retry = retry(
         multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT
     ),
     retry=retry_on_rate_limit,
-    before_sleep=lambda retry_state: logging.warning(
+    before_sleep=lambda retry_state: logger.warning(
         f"Rate limit hit, retrying in {retry_state.next_action.sleep if retry_state.next_action else 'unknown'} seconds "
         f"(attempt {retry_state.attempt_number}/{RETRY_MAX_ATTEMPTS}): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
     ),
@@ -138,7 +141,7 @@ app = Flask(__name__)
 
 @app.route("/v1/embeddings", methods=["POST"])
 def handle_embedding_request():
-    logging.info("Received request to /v1/embeddings")
+    logger.info("Received request to /v1/embeddings")
     validator = RequestValidator(proxy_config.secret_authentication_tokens)
     if not validator.validate(request):
         return jsonify({"error": "Unauthorized"}), 401
@@ -177,15 +180,15 @@ def handle_embedding_request():
             return handle_http_429_error(http_err, f"embedding request for {model}")
         else:
             # Handle other HTTP errors
-            logging.error(f"HTTP Error handling embedding request({model}): {http_err}")
+            logger.error(f"HTTP Error handling embedding request({model}): {http_err}")
             if http_err.response is not None:
-                logging.error(f"HTTP Status Code: {http_err.response.status_code}")
-                logging.error(f"Response Body: {http_err.response.text}")
+                logger.error(f"HTTP Status Code: {http_err.response.status_code}")
+                logger.error(f"Response Body: {http_err.response.text}")
             return jsonify(
                 {"error": str(http_err)}
             ), http_err.response.status_code if http_err.response else 500
     except Exception as e:
-        logging.error(f"Error handling embedding request: {e}")
+        logger.error(f"Error handling embedding request: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -217,13 +220,6 @@ def format_embedding_response(response, model):
             "total_tokens": len(embedding_data),
         },
     }
-
-
-# Initialize token logger (will be configured on first use)
-token_usage_logger: logging.Logger = get_server_logger("token_usage")
-
-
-# load_config is now imported from config.loader
 
 
 def get_version_info():
@@ -400,7 +396,7 @@ def load_balance_url(selected_model_name: str) -> tuple:
     ):
         # Check if it's a Claude or Gemini model and try fallback
         if Detector.is_claude_model(selected_model_name):
-            logging.info(
+            logger.info(
                 f"Claude model '{selected_model_name}' not found, trying fallback models"
             )
             # Try common Claude model fallbacks
@@ -410,18 +406,18 @@ def load_balance_url(selected_model_name: str) -> tuple:
                         fallback in proxy_config.model_to_subaccounts
                         and proxy_config.model_to_subaccounts[fallback]
                 ):
-                    logging.info(
+                    logger.info(
                         f"Using fallback Claude model '{fallback}' for '{selected_model_name}'"
                     )
                     selected_model_name = fallback
                     break
             else:
-                logging.error(f"No Claude models available in any subAccount")
+                logger.error(f"No Claude models available in any subAccount")
                 raise ValueError(
                     f"Claude model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
         elif Detector.is_gemini_model(selected_model_name):
-            logging.info(
+            logger.info(
                 f"Gemini model '{selected_model_name}' not found, trying fallback models"
             )
             # Try common Gemini model fallbacks
@@ -431,32 +427,32 @@ def load_balance_url(selected_model_name: str) -> tuple:
                         fallback in proxy_config.model_to_subaccounts
                         and proxy_config.model_to_subaccounts[fallback]
                 ):
-                    logging.info(
+                    logger.info(
                         f"Using fallback Gemini model '{fallback}' for '{selected_model_name}'"
                     )
                     selected_model_name = fallback
                     break
             else:
-                logging.error(f"No Gemini models available in any subAccount")
+                logger.error(f"No Gemini models available in any subAccount")
                 raise ValueError(
                     f"Gemini model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
         else:
             # For other models, try common fallbacks
-            logging.warning(f"Model '{selected_model_name}' not found, trying fallback models")
+            logger.warning(f"Model '{selected_model_name}' not found, trying fallback models")
             fallback_models = ["gpt-4.1"]
             for fallback in fallback_models:
                 if (
                         fallback in proxy_config.model_to_subaccounts
                         and proxy_config.model_to_subaccounts[fallback]
                 ):
-                    logging.info(
+                    logger.info(
                         f"Using fallback model '{fallback}' for '{selected_model_name}'"
                     )
                     selected_model_name = fallback
                     break
             else:
-                logging.error(
+                logger.error(
                     f"No subAccounts with model '{selected_model_name}' or fallbacks found"
                 )
                 raise ValueError(
@@ -481,7 +477,7 @@ def load_balance_url(selected_model_name: str) -> tuple:
     url_list = subaccount.model_to_deployment_urls.get(selected_model_name, [])
 
     if not url_list:
-        logging.error(
+        logger.error(
             f"Model '{selected_model_name}' listed for subAccount '{selected_subaccount}' but no URLs found"
         )
         raise ValueError(
@@ -502,7 +498,7 @@ def load_balance_url(selected_model_name: str) -> tuple:
     # Get resource group for the selected subAccount
     selected_resource_group = subaccount.resource_group
 
-    logging.info(
+    logger.info(
         f"Selected subAccount '{selected_subaccount}' and URL '{selected_url}' for model '{selected_model_name}'"
     )
     return selected_url, selected_subaccount, selected_resource_group, selected_model_name
@@ -519,13 +515,13 @@ def handle_claude_request(payload, model="3.5-sonnet"):
         Tuple of (endpoint_url, modified_payload, subaccount_name)
     """
     stream = payload.get("stream", True)
-    logging.info(f"handle_claude_request: model={model} stream={stream}")
+    logger.info(f"handle_claude_request: model={model} stream={stream}")
 
     # Get the selected URL, subaccount and resource group using our load balancer
     try:
         selected_url, subaccount_name, _, model = load_balance_url(model)
     except ValueError as e:
-        logging.error(f"Failed to load balance URL for model '{model}': {e}")
+        logger.error(f"Failed to load balance URL for model '{model}': {e}")
         raise ValueError(f"No valid Claude model found for '{model}' in any subAccount")
 
     # Determine the endpoint path based on model and streaming settings
@@ -550,7 +546,7 @@ def handle_claude_request(payload, model="3.5-sonnet"):
     else:
         modified_payload = Converters.convert_openai_to_claude(payload)
 
-    logging.info(
+    logger.info(
         f"handle_claude_request: {endpoint_url} (subAccount: {subaccount_name})"
     )
     return endpoint_url, modified_payload, subaccount_name
@@ -567,13 +563,13 @@ def handle_gemini_request(payload, model="gemini-2.5-pro"):
         Tuple of (endpoint_url, modified_payload, subaccount_name)
     """
     stream = payload.get("stream", True)  # Default to True if 'stream' is not provided
-    logging.info(f"handle_gemini_request: model={model} stream={stream}")
+    logger.info(f"handle_gemini_request: model={model} stream={stream}")
 
     # Get the selected URL, subaccount and resource group using our load balancer
     try:
         selected_url, subaccount_name, _, model = load_balance_url(model)
     except ValueError as e:
-        logging.error(f"Failed to load balance URL for model '{model}': {e}")
+        logger.error(f"Failed to load balance URL for model '{model}': {e}")
         raise ValueError(f"No valid Gemini model found for '{model}' in any subAccount")
 
     # Extract the model name for the endpoint (e.g., "gemini-2.5-pro" from the model)
@@ -593,7 +589,7 @@ def handle_gemini_request(payload, model="gemini-2.5-pro"):
     # Convert the payload to Gemini format
     modified_payload = Converters.convert_openai_to_gemini(payload)
 
-    logging.info(
+    logger.info(
         f"handle_gemini_request: {endpoint_url} (subAccount: {subaccount_name})"
     )
     return endpoint_url, modified_payload, subaccount_name
@@ -618,7 +614,7 @@ def handle_default_request(payload, model="gpt-4.1"):
         # Remove unsupported parameters for o3-mini
         modified_payload = payload.copy()
         if "temperature" in modified_payload:
-            logging.info(f"Removing 'temperature' parameter for o3-mini model.")
+            logger.info(f"Removing 'temperature' parameter for o3-mini model.")
             del modified_payload["temperature"]
         # Add checks for other potentially unsupported parameters if needed
     else:
@@ -629,7 +625,7 @@ def handle_default_request(payload, model="gpt-4.1"):
         f"{selected_url.rstrip('/')}/chat/completions?api-version={api_version}"
     )
 
-    logging.info(
+    logger.info(
         f"handle_default_request: {endpoint_url} (subAccount: {subaccount_name})"
     )
     return endpoint_url, modified_payload, subaccount_name
@@ -638,12 +634,12 @@ def handle_default_request(payload, model="gpt-4.1"):
 @app.route("/v1/models", methods=["GET", "OPTIONS"])
 def list_models():
     """Lists all available models across all subAccounts."""
-    logging.info("Received request to /v1/models")
-    logging.info(f"Request headers: {request.headers}")
-    # logging.info(f"Request payload: {request.get_json()}")
+    logger.info("Received request to /v1/models")
+    logger.info(f"Request headers: {request.headers}")
+    # logger.info(f"Request payload: {request.get_json()}")
 
     # if not verify_request_token(request):
-    #     logging.info("Unauthorized request to list models.")
+    #     logger.info("Unauthorized request to list models.")
     #     return jsonify({"error": "Unauthorized"}), 401
 
     # Collect all available models from all subAccounts
@@ -666,9 +662,9 @@ def list_models():
 @app.route("/api/event_logging/batch", methods=["POST", "OPTIONS"])
 def handle_event_logging():
     """Dummy endpoint for Claude Code event logging to prevent 404 errors."""
-    logging.info("Received request to /api/event_logging/batch")
-    logging.debug(f"Request headers: {request.headers}")
-    logging.debug(f"Request body: {request.get_json(silent=True)}")
+    logger.info("Received request to /api/event_logging/batch")
+    logger.debug(f"Request headers: {request.headers}")
+    logger.debug(f"Request body: {request.get_json(silent=True)}")
 
     # Return success response for event logging
     return jsonify({"status": "success", "message": "Events logged successfully"}), 200
@@ -680,26 +676,26 @@ content_type = "Application/json"
 @app.route("/v1/chat/completions", methods=["POST"])
 def proxy_openai_stream():
     """Main handler for chat completions endpoint with multi-subAccount support."""
-    logging.info("Received request to /v1/chat/completions")
-    logging.debug(f"Request headers: {request.headers}")
-    logging.debug(f"Request body:\n{json.dumps(request.get_json(), indent=4)}")
+    logger.info("Received request to /v1/chat/completions")
+    logger.debug(f"Request headers: {request.headers}")
+    logger.debug(f"Request body:\n{json.dumps(request.get_json(), indent=4)}")
 
     # Verify client authentication token
     validator = RequestValidator(proxy_config.secret_authentication_tokens)
     if not validator.validate(request):
-        logging.info("Unauthorized request received. Token verification failed.")
+        logger.info("Unauthorized request received. Token verification failed.")
         return jsonify({"error": "Unauthorized"}), 401
 
     # Extract model from the request payload
     payload = request.json
     model = payload.get("model")
     if not model:
-        logging.warning("No model specified in request, using default model")
+        logger.warning("No model specified in request, using default model")
         model = DEFAULT_GPT_MODEL  # Default model
 
     # Check if model is available in any subAccount
     if model not in proxy_config.model_to_subaccounts:
-        logging.warning(
+        logger.warning(
             f"Model '{model}' not found in any subAccount, falling back to default"
         )
         model = DEFAULT_GPT_MODEL  # Fallback model
@@ -710,7 +706,7 @@ def proxy_openai_stream():
 
     # Check streaming mode
     is_stream = payload.get("stream", False)
-    logging.info(f"Model: {model}, Streaming: {is_stream}")
+    logger.info(f"Model: {model}, Streaming: {is_stream}")
 
     try:
         # Handle request based on model type
@@ -745,7 +741,7 @@ def proxy_openai_stream():
             "AI-Tenant-Id": service_key.identity_zone_id,
         }
 
-        logging.info(
+        logger.info(
             f"Forwarding request to {endpoint_url} with subAccount '{subaccount_name}'"
         )
 
@@ -766,20 +762,20 @@ def proxy_openai_stream():
         )
 
     except ValueError as err:
-        logging.error(f"Value error during request handling: {err}")
+        logger.error(f"Value error during request handling: {err}")
         return jsonify({"error": str(err)}), 400
 
     except Exception as err:
-        logging.error(f"Unexpected error during request handling: {err}", exc_info=True)
+        logger.error(f"Unexpected error during request handling: {err}", exc_info=True)
         return jsonify({"error": str(err)}), 500
 
 
 @app.route("/v1/messages", methods=["POST"])
 def proxy_claude_request():
     """Handles requests that are compatible with the Anthropic Claude Messages API using SAP AI SDK."""
-    logging.info("Received request to /v1/messages")
-    logging.debug(f"Request headers: {request.headers}")
-    logging.debug(f"Request body:\n{json.dumps(request.get_json(), indent=4)}")
+    logger.info("Received request to /v1/messages")
+    logger.debug(f"Request headers: {request.headers}")
+    logger.debug(f"Request body:\n{json.dumps(request.get_json(), indent=4)}")
 
     # Validate API key using proxy config authentication
     api_key = request.headers.get("X-Api-Key", "")
@@ -806,9 +802,9 @@ def proxy_claude_request():
     if (request_model is None) or (request_model == ""):
         # Hardcode to anthropic--claude-4.5-sonnet if no model specified
         request_model = DEFAULT_CLAUDE_MODEL
-        logging.info(f"hardcode request_model to: {request_model}")
+        logger.info(f"hardcode request_model to: {request_model}")
     else:
-        logging.info(f"request_model is: {request_model}")
+        logger.info(f"request_model is: {request_model}")
 
     if not request_model:
         return jsonify(
@@ -827,7 +823,7 @@ def proxy_claude_request():
             request_model
         )
     except ValueError as e:
-        logging.error(f"Model validation failed: {e}")
+        logger.error(f"Model validation failed: {e}")
 
         return jsonify({
             "type": "error",
@@ -836,31 +832,31 @@ def proxy_claude_request():
 
     # Check if this is an Anthropic model that should use the SDK
     if not Detector.is_claude_model(model):
-        logging.warning(
+        logger.warning(
             f"Model '{model}' is not a Claude model, falling back to original implementation"
         )
         # Fall back to original implementation for non-Claude models
         return proxy_claude_request_original()
 
-    logging.info(f"Request from Claude API for model: {model}")
+    logger.info(f"Request from Claude API for model: {model}")
 
     # Extract streaming flag, default to True
     stream = request_json.get("stream", True)
 
     try:
         # Use cached SAP AI SDK client for the model
-        logging.info(f"Obtaining SAP AI SDK client for model: {model}")
+        logger.info(f"Obtaining SAP AI SDK client for model: {model}")
         bedrock_client: ClientWrapper = get_bedrock_client(
             model_name=model,
             deployment_id=extract_deployment_id(selected_url))
-        logging.info("SAP AI SDK client ready (cached)")
+        logger.info("SAP AI SDK client ready (cached)")
 
         # Get the conversation messages
         conversation = request_json.get("messages", [])
-        logging.debug(f"Original conversation: {conversation}")
+        logger.debug(f"Original conversation: {conversation}")
 
         thinking_cfg_preview = request_json.get("thinking")
-        logging.info(
+        logger.info(
             "Claude request context: stream=%s, messages=%s, has_thinking=%s",
             stream,
             len(conversation) if isinstance(conversation, list) else "unknown",
@@ -887,7 +883,7 @@ def proxy_claude_request():
                         if image_data:
                             # Note: ImageCompressor would need to be imported/implemented
                             # For now, keeping original data
-                            logging.debug("Image data found in message content")
+                            logger.debug("Image data found in message content")
 
                 # Remove empty text items (in reverse order to maintain indices)
                 for i in reversed(items_to_remove):
@@ -897,7 +893,7 @@ def proxy_claude_request():
         body = request_json.copy()
 
         # Log the original request body for debugging
-        logging.info("Original request body keys: %s", list(body.keys()))
+        logger.info("Original request body keys: %s", list(body.keys()))
 
         # Remove model and stream from body as they're handled separately
         body.pop("model", None)
@@ -910,7 +906,7 @@ def proxy_claude_request():
         unsupported_fields = ["context_management", "metadata"]
         for field in unsupported_fields:
             if field in body:
-                logging.info(
+                logger.info(
                     "Removing unsupported top-level field '%s' from request body", field
                 )
                 body.pop(field, None)
@@ -919,7 +915,7 @@ def proxy_claude_request():
         thinking_cfg = body.get("thinking")
         if isinstance(thinking_cfg, dict):
             if "context_management" in thinking_cfg:
-                logging.info("Removing 'context_management' from thinking config")
+                logger.info("Removing 'context_management' from thinking config")
                 thinking_cfg.pop("context_management", None)
 
         # Remove unsupported fields inside tools for Bedrock
@@ -946,7 +942,7 @@ def proxy_claude_request():
             try:
                 max_tokens_value = int(raw_max_tokens)
             except (TypeError, ValueError):
-                logging.warning(
+                logger.warning(
                     f"Invalid max_tokens value '{raw_max_tokens}' in request; resetting to None"
                 )
                 max_tokens_value = None
@@ -957,35 +953,35 @@ def proxy_claude_request():
                 required_min_tokens = budget_tokens + 1
                 if max_tokens_value is None or max_tokens_value <= budget_tokens:
                     body["max_tokens"] = required_min_tokens
-                    logging.info(
+                    logger.info(
                         "Adjusted max_tokens to %s to satisfy thinking.budget_tokens=%s",
                         required_min_tokens,
                         budget_tokens,
                     )
                 else:
-                    logging.debug(
+                    logger.debug(
                         "max_tokens=%s already greater than thinking.budget_tokens=%s",
                         max_tokens_value,
                         budget_tokens,
                     )
             else:
-                logging.debug("No integer thinking.budget_tokens found in request")
+                logger.debug("No integer thinking.budget_tokens found in request")
         elif thinking_cfg is not None:
-            logging.debug("Ignoring non-dict thinking config in request body")
+            logger.debug("Ignoring non-dict thinking config in request body")
 
         if body.get("max_tokens") is not None:
-            logging.info(
+            logger.info(
                 "Final max_tokens for model %s request: %s",
                 model,
                 body["max_tokens"],
             )
         else:
-            logging.info("No max_tokens specified after adjustment for model %s", model)
+            logger.info("No max_tokens specified after adjustment for model %s", model)
 
         # Log final body keys before sending to Bedrock
-        logging.info("Final request body keys before Bedrock: %s", list(body.keys()))
+        logger.info("Final request body keys before Bedrock: %s", list(body.keys()))
         if "thinking" in body:
-            logging.info(
+            logger.info(
                 "Thinking config keys: %s",
                 list(body["thinking"].keys())
                 if isinstance(body["thinking"], dict)
@@ -1002,7 +998,7 @@ def proxy_claude_request():
             )
         except Exception:
             pretty_body_json = body_json
-        logging.info("Request body for Bedrock (pretty):\n%s", pretty_body_json)
+        logger.info("Request body for Bedrock (pretty):\n%s", pretty_body_json)
 
         if stream:
             # Handle streaming response
@@ -1017,7 +1013,7 @@ def proxy_claude_request():
 
                 # Check for malformed response first (missing status code)
                 if response_status is None:
-                    logging.error("Missing HTTPStatusCode in response metadata")
+                    logger.error("Missing HTTPStatusCode in response metadata")
                     error_response = {
                         "type": "error",
                         "error": {
@@ -1029,7 +1025,7 @@ def proxy_claude_request():
 
                 # If status is not 200, return error before starting stream
                 if response_status != 200:
-                    logging.error(f"Non-200 status code from SDK: {response_status}")
+                    logger.error(f"Non-200 status code from SDK: {response_status}")
                     error_response = {
                         "type": "error",
                         "error": {
@@ -1041,7 +1037,7 @@ def proxy_claude_request():
 
                 # If we detect an error before streaming starts, return error response
                 if response_body is None:
-                    logging.error(
+                    logger.error(
                         "Response body is None from SDK invoke_model_with_response_stream"
                     )
                     error_response = {
@@ -1056,7 +1052,7 @@ def proxy_claude_request():
 
             except Exception as e:
                 # If error occurs before streaming, we can return proper error status
-                logging.error(f"Error before streaming: {e}", exc_info=True)
+                logger.error(f"Error before streaming: {e}", exc_info=True)
                 error_response = {
                     "type": "error",
                     "error": {"type": "api_error", "message": str(e)},
@@ -1068,7 +1064,7 @@ def proxy_claude_request():
                 try:
                     for event in response_body:
                         chunk = json.loads(event["chunk"]["bytes"])
-                        logging.debug(f"Streaming chunk: {chunk}")
+                        logger.debug(f"Streaming chunk: {chunk}")
 
                         chunk_type = chunk.get("type")
 
@@ -1094,7 +1090,7 @@ def proxy_claude_request():
 
                 except Exception as e:
                     # Errors during streaming can only be sent as SSE events
-                    logging.error(f"Error during streaming: {e}", exc_info=True)
+                    logger.error(f"Error during streaming: {e}", exc_info=True)
                     error_chunk = {
                         "type": "error",
                         "error": {"type": "api_error", "message": str(e)},
@@ -1112,7 +1108,7 @@ def proxy_claude_request():
 
             # Check for malformed response (missing status code)
             if response_status is None:
-                logging.error("Missing HTTPStatusCode in response metadata")
+                logger.error("Missing HTTPStatusCode in response metadata")
                 return jsonify(
                     {
                         "type": "error",
@@ -1129,11 +1125,11 @@ def proxy_claude_request():
 
                 if chunk_data:
                     final_response = json.loads(chunk_data)
-                    logging.debug(f"Non-streaming response: {final_response}")
+                    logger.debug(f"Non-streaming response: {final_response}")
                     # Use actual response status code
                     return jsonify(final_response), response_status
                 else:
-                    logging.warning("Empty chunk_data from non-streaming response body")
+                    logger.warning("Empty chunk_data from non-streaming response body")
                     error_status = response_status if response_status >= 400 else 500
                     return jsonify(
                         {
@@ -1145,7 +1141,7 @@ def proxy_claude_request():
                         }
                     ), error_status
             else:
-                logging.error("Response body is None from SDK invoke_model")
+                logger.error("Response body is None from SDK invoke_model")
                 error_status = response_status if response_status >= 400 else 500
                 return jsonify(
                     {
@@ -1163,7 +1159,7 @@ def proxy_claude_request():
             cause = e.__cause__
             # Use the same retry_on_rate_limit function to classify the error
             if retry_on_rate_limit(cause):
-                logging.warning(f"Rate limit exceeded for Anthropic proxy request: {e}")
+                logger.warning(f"Rate limit exceeded for Anthropic proxy request: {e}")
                 error_dict = {
                     "type": "error",
                     "error": {
@@ -1173,7 +1169,7 @@ def proxy_claude_request():
                 }
                 return jsonify(error_dict), 429
 
-        logging.error(
+        logger.error(
             f"Error handling Anthropic proxy request using SDK: {e}", exc_info=True
         )
         error_dict = {
@@ -1185,7 +1181,7 @@ def proxy_claude_request():
 
 def proxy_claude_request_original():
     """Original implementation preserved as fallback."""
-    logging.info("Using original Claude request implementation")
+    logger.info("Using original Claude request implementation")
 
     validator = RequestValidator(proxy_config.secret_authentication_tokens)
     if not validator.validate(request):
@@ -1213,7 +1209,7 @@ def proxy_claude_request_original():
         ), 400
 
     is_stream = payload.get("stream", False)
-    logging.info(f"Claude API request for model: {model}, Streaming: {is_stream}")
+    logger.info(f"Claude API request for model: {model}, Streaming: {is_stream}")
 
     try:
         base_url, subaccount_name, resource_group, model = load_balance_url(model)
@@ -1277,7 +1273,7 @@ def proxy_claude_request_original():
                     # Set new anthropic-beta header
                     headers["anthropic-beta"] = "fine-grained-tool-streaming-2025-05-14"
 
-        logging.info(
+        logger.info(
             f"Forwarding converted request to {endpoint_url} for subAccount '{subaccount_name}'"
         )
 
@@ -1300,7 +1296,7 @@ def proxy_claude_request_original():
                 )
 
             # Log the response for debug purposes
-            logging.info(
+            logger.info(
                 f"Final response to client: {json.dumps(final_response, indent=2)}"
             )
 
@@ -1316,7 +1312,7 @@ def proxy_claude_request_original():
             )
 
     except ValueError as err:
-        logging.error(f"Value error during Claude request handling: {err}")
+        logger.error(f"Value error during Claude request handling: {err}")
         return jsonify(
             {
                 "type": "error",
@@ -1324,7 +1320,7 @@ def proxy_claude_request_original():
             }
         ), 400
     except requests.exceptions.HTTPError as err:
-        logging.error(f"HTTP error in Claude request({model}): {err}")
+        logger.error(f"HTTP error in Claude request({model}): {err}")
         try:
             return jsonify(err.response.json()), err.response.status_code
         except:
@@ -1332,7 +1328,7 @@ def proxy_claude_request_original():
                 {"error": str(err)}
             ), err.response.status_code if err.response else 500
     except Exception as err:
-        logging.error(
+        logger.error(
             f"Unexpected error during Claude request handling: {err}", exc_info=True
         )
         return jsonify(
@@ -1384,7 +1380,7 @@ def parse_sse_response_to_claude_json(response_text):
                     stop_reason = data["messageStop"].get("stopReason", "end_turn")
 
             except (json.JSONDecodeError, ValueError, SyntaxError) as e:
-                logging.warning(
+                logger.warning(
                     f"Failed to parse SSE data line: {data_str}, error: {e}"
                 )
                 continue
@@ -1422,23 +1418,23 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
     """
     try:
         # Log the raw request body and payload being forwarded
-        logging.info(
+        logger.info(
             f"Raw request received (non-streaming): {json.dumps(request.json, indent=2)}"
         )
-        logging.info(
+        logger.info(
             f"Forwarding payload to API (non-streaming): {json.dumps(payload, indent=2)}"
         )
 
         # Make request to backend API
         response = requests.post(url, headers=headers, json=payload, timeout=600)
         response.raise_for_status()
-        logging.info(
+        logger.info(
             f"Non-streaming request succeeded for model '{model}' using subAccount '{subaccount_name}'"
         )
 
         # Validate response has content before parsing
         if not response.content:
-            logging.error("Empty response body received from backend API")
+            logger.error("Empty response body received from backend API")
             return jsonify({"error": "Empty response from backend API"}), 500
 
         # Process response based on model type
@@ -1447,16 +1443,16 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
             if Detector.is_claude_model(model) and response.text.strip().startswith(
                     "data: "
             ):
-                logging.info(
+                logger.info(
                     "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
                 )
                 response_data = parse_sse_response_to_claude_json(response.text)
             else:
                 response_data = response.json()
         except (json.JSONDecodeError, ValueError) as e:
-            logging.error(f"Failed to parse JSON response from backend API: {e}")
-            logging.error(f"Response text: {response.text}")
-            logging.error(f"Response headers: {dict(response.headers)}")
+            logger.error(f"Failed to parse JSON response from backend API: {e}")
+            logger.error(f"Response text: {response.text}")
+            logger.error(f"Response headers: {dict(response.headers)}")
             return jsonify(
                 {
                     "error": "Invalid JSON response from backend API",
@@ -1492,7 +1488,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         return jsonify(final_response), 200
 
     except requests.exceptions.HTTPError as http_err:
-        logging.error(f"HTTP error in non-streaming request({model}): {http_err}")
+        logger.error(f"HTTP error in non-streaming request({model}): {http_err}")
 
         if http_err.response is not None:
             response = http_err.response
@@ -1502,12 +1498,12 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
             if status_code == 429:
                 return handle_http_429_error(http_err, f"non-streaming request for {model}")
 
-            logging.error(f"Error response status: {response.status_code}")
-            logging.error(f"Error response headers: {dict(response.headers)}")
-            logging.error(f"Error response body: {response.text}")
+            logger.error(f"Error response status: {response.status_code}")
+            logger.error(f"Error response headers: {dict(response.headers)}")
+            logger.error(f"Error response body: {response.text}")
             try:
                 error_data = http_err.response.json()
-                logging.error(
+                logger.error(
                     f"Error response JSON: {json.dumps(error_data, indent=2)}"
                 )
                 return jsonify(error_data), http_err.response.status_code
@@ -1517,7 +1513,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
             return jsonify({"error": str(http_err)}), 500
 
     except Exception as err:
-        logging.error(f"Error in non-streaming request: {err}", exc_info=True)
+        logger.error(f"Error in non-streaming request: {err}", exc_info=True)
         return jsonify({"error": str(err)}), 500
 
 
@@ -1535,10 +1531,10 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
         SSE formatted response chunks
     """
     # Log the raw request body and payload being forwarded
-    logging.info(
+    logger.info(
         f"Raw request received (streaming): {json.dumps(request.json, indent=2)}"
     )
-    logging.info(
+    logger.info(
         f"Forwarding payload to API (streaming): {json.dumps(payload, indent=2)}"
     )
 
@@ -1558,7 +1554,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
 
             # --- Claude 3.7/4 Streaming Logic ---
             if Detector.is_claude_model(model) and Detector.is_claude_37_or_4(model):
-                logging.info(
+                logger.info(
                     f"Using Claude 3.7/4 streaming for subAccount '{subaccount_name}'"
                 )
                 for line_bytes in response.iter_lines():
@@ -1566,7 +1562,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                         line = line_bytes.decode("utf-8")
                         if line.startswith("data: "):
                             line_content = line.replace("data: ", "").strip()
-                            # logging.info(f"Raw data chunk from Claude API: {line_content}")
+                            # logger.info(f"Raw data chunk from Claude API: {line_content}")
                             try:
                                 line_content = ast.literal_eval(line_content)
                                 line_content = json.dumps(line_content)
@@ -1577,7 +1573,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                     claude_metadata = claude_dict_chunk.get(
                                         "metadata", {}
                                     )
-                                    logging.info(
+                                    logger.info(
                                         f"Found metadata chunk from '{subaccount_name}': {claude_metadata}"
                                     )
                                     # Extract token counts immediately
@@ -1591,7 +1587,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                         completion_tokens = claude_metadata[
                                             "usage"
                                         ].get("outputTokens", 0)
-                                        logging.info(
+                                        logger.info(
                                             f"Extracted token usage from metadata: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
                                         )
                                     # Don't process this chunk further, just continue to next
@@ -1606,7 +1602,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                 if openai_sse_chunk_str:
                                     yield openai_sse_chunk_str
                             except Exception as e:
-                                logging.error(
+                                logger.error(
                                     f"Error processing Claude 3.7 chunk from '{subaccount_name}': {e}",
                                     exc_info=True,
                                 )
@@ -1642,11 +1638,11 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                         },
                     }
                     final_usage_chunk_str = f"data: {json.dumps(final_usage_chunk)}\n\n"
-                    logging.info(
+                    logger.info(
                         f"Sending final usage chunk with SSE format: {final_usage_chunk_str[:200]}..."
                     )
                     yield final_usage_chunk_str
-                    logging.info(
+                    logger.info(
                         f"Sent final usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
                     )
 
@@ -1664,30 +1660,30 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
 
             # --- Gemini Streaming Logic ---
             elif Detector.is_gemini_model(model):
-                logging.info(
+                logger.info(
                     f"Using Gemini streaming for subAccount '{subaccount_name}'"
                 )
                 for line_bytes in response.iter_lines():
                     if line_bytes:
                         line = line_bytes.decode("utf-8")
-                        logging.info(f"Gemini raw line received: {line}")
+                        logger.info(f"Gemini raw line received: {line}")
 
                         # Process Gemini streaming lines
                         line_content = ""
                         if line.startswith("data: "):
                             line_content = line.replace("data: ", "").strip()
-                            logging.info(f"Gemini data line content: {line_content}")
+                            logger.info(f"Gemini data line content: {line_content}")
                         elif line.strip():
                             # Handle lines without "" prefix
                             line_content = line.strip()
-                            logging.info(
+                            logger.info(
                                 f"Gemini line content (no prefix): {line_content}"
                             )
 
                         if line_content and line_content != "[DONE]":
                             try:
                                 gemini_chunk = json.loads(line_content)
-                                logging.info(
+                                logger.info(
                                     f"Gemini parsed chunk: {json.dumps(gemini_chunk, indent=2)}"
                                 )
 
@@ -1698,12 +1694,12 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                     )
                                 )
                                 if openai_sse_chunk_str:
-                                    logging.info(
+                                    logger.info(
                                         f"Gemini converted to OpenAI chunk: {openai_sse_chunk_str}"
                                     )
                                     yield openai_sse_chunk_str
                                 else:
-                                    logging.info(
+                                    logger.info(
                                         f"Gemini chunk conversion returned None"
                                     )
 
@@ -1719,24 +1715,24 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                     completion_tokens = usage_metadata.get(
                                         "candidatesTokenCount", 0
                                     )
-                                    logging.info(
+                                    logger.info(
                                         f"Gemini token usage: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
                                     )
 
                             except json.JSONDecodeError as e:
-                                logging.error(
+                                logger.error(
                                     f"Error parsing Gemini chunk from '{subaccount_name}': {e}"
                                 )
-                                logging.error(
+                                logger.error(
                                     f"Problematic line content: {line_content}"
                                 )
                                 continue
                             except Exception as e:
-                                logging.error(
+                                logger.error(
                                     f"Error processing Gemini chunk from '{subaccount_name}': {e}",
                                     exc_info=True,
                                 )
-                                logging.error(
+                                logger.error(
                                     f"Problematic chunk: {gemini_chunk if 'gemini_chunk' in locals() else 'Failed to parse'}"
                                 )
                                 error_payload = {
@@ -1771,11 +1767,11 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                         },
                     }
                     final_usage_chunk_str = f"{json.dumps(final_usage_chunk)}\n\n"
-                    logging.info(
+                    logger.info(
                         f"Sending final Gemini usage chunk with SSE format: {final_usage_chunk_str[:200]}..."
                     )
                     yield final_usage_chunk_str
-                    logging.info(
+                    logger.info(
                         f"Sent final Gemini usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
                     )
 
@@ -1830,7 +1826,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                 except ValueError:
                                     break  # Not enough data in buffer
                                 except Exception as e:
-                                    logging.error(
+                                    logger.error(
                                         f"Error processing claude chunk: {e}",
                                         exc_info=True,
                                     )
@@ -1888,7 +1884,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
             yield "data: [DONE]\n\n"
 
         except requests.exceptions.HTTPError as http_err:
-            logging.error(f"HTTP Error in streaming response:({model}): {http_err}")
+            logger.error(f"HTTP Error in streaming response:({model}): {http_err}")
 
             error_content: str = ""
 
@@ -1901,20 +1897,20 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                 if status_code == 429:
                     return handle_http_429_error(http_err, f"streaming request for {model}")
 
-                logging.error(f"Error response status: {response.status_code}")
-                logging.error(f"Error response headers: {dict(response.headers)}")
-                logging.error(f"Error response body: {response.text}")
+                logger.error(f"Error response status: {response.status_code}")
+                logger.error(f"Error response headers: {dict(response.headers)}")
+                logger.error(f"Error response body: {response.text}")
                 try:
-                    logging.error(f"Error response body: {error_content}")
+                    logger.error(f"Error response body: {error_content}")
 
                     # Try to parse as JSON for better formatting
                     try:
                         error_content = json.dumps(response.json(), indent=2)
-                        logging.error(f"Error response JSON: {error_content}")
+                        logger.error(f"Error response JSON: {error_content}")
                     except json.JSONDecodeError:
                         pass
                 except Exception as e:
-                    logging.error(f"Could not read error response content: {e}")
+                    logger.error(f"Could not read error response content: {e}")
             else:
                 status_code = 500
                 error_content = str(http_err)
@@ -1935,7 +1931,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
             yield "data: [DONE]\n\n"
 
         except Exception as http_err:
-            logging.error(
+            logger.error(
                 f"Error in streaming response from '{subaccount_name}': {http_err}",
                 exc_info=True,
             )
@@ -1962,18 +1958,18 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
     If the backend is a Claude model, it passes the stream through.
     If the backend is Gemini or OpenAI, it converts their SSE stream to Claude's format.
     """
-    logging.info(
+    logger.info(
         f"Starting Claude streaming response for model '{model}' using subAccount '{subaccount_name}'"
     )
-    logging.debug(
+    logger.debug(
         f"Forwarding payload to API (Claude streaming): {json.dumps(payload, indent=2)}"
     )
-    logging.debug(f"Request URL: {url}")
-    logging.debug(f"Request headers: {headers}")
+    logger.debug(f"Request URL: {url}")
+    logger.debug(f"Request headers: {headers}")
 
     # If the backend is already a Claude model, we need to convert the response format.
     if Detector.is_claude_model(model):
-        logging.info(
+        logger.info(
             f"Backend is Claude model, converting response format for '{model}'"
         )
         try:
@@ -1981,7 +1977,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                     url, headers=headers, json=payload, stream=True, timeout=600
             ) as response:
                 response.raise_for_status()
-                logging.debug(f"Claude backend response status: {response.status_code}")
+                logger.debug(f"Claude backend response status: {response.status_code}")
 
                 # Send message_start event
                 message_start_data = {
@@ -2020,7 +2016,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                         continue
 
                     line_str = line.decode("utf-8", errors="ignore").strip()
-                    logging.debug(f"Claude backend chunk {chunk_count}: {line_str}")
+                    logger.debug(f"Claude backend chunk {chunk_count}: {line_str}")
 
                     if line_str.startswith("data: "):
                         data_content = line_str[6:].strip()  # Remove 'data: ' prefix
@@ -2095,23 +2091,23 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                                 yield message_stop_event.encode("utf-8")
 
                         except (json.JSONDecodeError, ValueError, SyntaxError) as e:
-                            logging.warning(
+                            logger.warning(
                                 f"Could not parse Claude backend data: {data_content}, error: {e}"
                             )
                             continue
 
-                logging.info(
+                logger.info(
                     f"Claude backend conversion completed with {chunk_count} chunks"
                 )
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Error in Claude backend conversion for '{model}': {e}", exc_info=True
             )
             raise
         return
 
     # For other models, we need to convert the stream to Claude's event format.
-    logging.info(f"Converting non-Claude model '{model}' stream to Claude format")
+    logger.info(f"Converting non-Claude model '{model}' stream to Claude format")
 
     # 1. Send message_start event
     message_start_data = {
@@ -2130,7 +2126,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
     message_start_event = (
         f"event: message_start\ndata: {json.dumps(message_start_data)}\n\n"
     )
-    logging.debug(f"Sending message_start event: {message_start_event}")
+    logger.debug(f"Sending message_start event: {message_start_event}")
     yield message_start_event.encode("utf-8")
 
     # 2. Send content_block_start event
@@ -2142,7 +2138,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
     content_block_start_event = (
         f"event: content_block_start\ndata: {json.dumps(content_block_start_data)}\n\n"
     )
-    logging.debug(f"Sending content_block_start event: {content_block_start_event}")
+    logger.debug(f"Sending content_block_start event: {content_block_start_event}")
     yield content_block_start_event.encode("utf-8")
 
     stop_reason = None
@@ -2154,34 +2150,34 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                 url, headers=headers, json=payload, stream=True, timeout=600
         ) as response:
             response.raise_for_status()
-            logging.debug(f"Backend response status: {response.status_code}")
-            logging.debug(f"Backend response headers: {dict(response.headers)}")
+            logger.debug(f"Backend response status: {response.status_code}")
+            logger.debug(f"Backend response headers: {dict(response.headers)}")
 
             # 3. Iterate and yield content_block_delta events
             for line in response.iter_lines():
                 chunk_count += 1
-                logging.debug(f"Processing backend chunk {chunk_count}: {line}")
+                logger.debug(f"Processing backend chunk {chunk_count}: {line}")
 
                 if not line or not line.strip().startswith(b"data:"):
-                    logging.debug(f"Skipping non-data line {chunk_count}: {line}")
+                    logger.debug(f"Skipping non-data line {chunk_count}: {line}")
                     continue
 
                 line_str = line.decode("utf-8", errors="ignore")[5:].strip()
-                logging.debug(f"Extracted line content: {line_str}")
+                logger.debug(f"Extracted line content: {line_str}")
 
                 if line_str == "[DONE]":
-                    logging.info(f"Received [DONE] signal at chunk {chunk_count}")
+                    logger.info(f"Received [DONE] signal at chunk {chunk_count}")
                     break
 
                 try:
                     backend_chunk = json.loads(line_str)
-                    logging.debug(
+                    logger.debug(
                         f"Parsed backend chunk: {json.dumps(backend_chunk, indent=2)}"
                     )
 
                     claude_delta = None
                     if Detector.is_gemini_model(model):
-                        logging.debug(f"Converting Gemini chunk to Claude delta")
+                        logger.debug(f"Converting Gemini chunk to Claude delta")
                         claude_delta = Converters.convert_gemini_chunk_to_claude_delta(
                             backend_chunk
                         )
@@ -2190,11 +2186,11 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                                 backend_chunk
                             )
                             if stop_reason:
-                                logging.debug(
+                                logger.debug(
                                     f"Extracted stop reason from Gemini: {stop_reason}"
                                 )
                     else:  # Assume OpenAI-compatible
-                        logging.debug(f"Converting OpenAI chunk to Claude delta")
+                        logger.debug(f"Converting OpenAI chunk to Claude delta")
                         claude_delta = Converters.convert_openai_chunk_to_claude_delta(
                             backend_chunk
                         )
@@ -2203,56 +2199,56 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                                 backend_chunk
                             )
                             if stop_reason:
-                                logging.debug(
+                                logger.debug(
                                     f"Extracted stop reason from OpenAI: {stop_reason}"
                                 )
 
                     if claude_delta:
                         delta_count += 1
                         delta_event = f"event: content_block_delta\ndata: {json.dumps(claude_delta)}\n\n"
-                        logging.debug(
+                        logger.debug(
                             f"Sending content_block_delta {delta_count}: {delta_event}"
                         )
                         yield delta_event.encode("utf-8")
                     else:
-                        logging.debug(f"No delta extracted from chunk {chunk_count}")
+                        logger.debug(f"No delta extracted from chunk {chunk_count}")
 
                 except json.JSONDecodeError as e:
-                    logging.warning(
+                    logger.warning(
                         f"Could not decode JSON from stream chunk {chunk_count}: {line_str}, error: {e}"
                     )
                     continue
                 except Exception as e:
-                    logging.error(
+                    logger.error(
                         f"Error processing chunk {chunk_count}: {e}", exc_info=True
                     )
                     continue
 
-            logging.info(
+            logger.info(
                 f"Processed {chunk_count} chunks, generated {delta_count} deltas"
             )
 
     except requests.exceptions.HTTPError as e:
-        logging.error(
+        logger.error(
             f"HTTP error in Claude streaming conversion({model}): {e}",
             exc_info=True,
         )
         if hasattr(e, "response") and e.response:
-            logging.error(f"Error response status: {e.response.status_code}")
-            logging.error(f"Error response body: {e.response.text}")
+            logger.error(f"Error response status: {e.response.status_code}")
+            logger.error(f"Error response body: {e.response.text}")
         raise
     except Exception as e:
-        logging.error(
+        logger.error(
             f"Unexpected error in Claude streaming conversion for '{model}': {e}",
             exc_info=True,
         )
         raise
 
     # 4. Send stop events
-    logging.debug(f"Sending stop events with stop_reason: {stop_reason}")
+    logger.debug(f"Sending stop events with stop_reason: {stop_reason}")
 
     content_block_stop_event = f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-    logging.debug(f"Sending content_block_stop event: {content_block_stop_event}")
+    logger.debug(f"Sending content_block_stop event: {content_block_stop_event}")
     yield content_block_stop_event.encode("utf-8")
 
     message_delta_data = {
@@ -2263,16 +2259,16 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
     message_delta_event = (
         f"event: message_delta\ndata: {json.dumps(message_delta_data)}\n\n"
     )
-    logging.debug(f"Sending message_delta event: {message_delta_event}")
+    logger.debug(f"Sending message_delta event: {message_delta_event}")
     yield message_delta_event.encode("utf-8")
 
     message_stop_event = (
         f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
     )
-    logging.debug(f"Sending message_stop event: {message_stop_event}")
+    logger.debug(f"Sending message_stop event: {message_stop_event}")
     yield message_stop_event.encode("utf-8")
 
-    logging.info(
+    logger.info(
         f"Claude streaming response completed for model '{model}' with {delta_count} content deltas"
     )
 
@@ -2285,9 +2281,9 @@ if __name__ == "__main__":
 
     # Log version information at startup
     version_info = get_version_string()
-    logging.info(f"SAP AI Core LLM Proxy Server - Version: {version_info}")
+    logger.info(f"SAP AI Core LLM Proxy Server - Version: {version_info}")
 
-    logging.info(f"Loading configuration from: {args.config}")
+    logger.info(f"Loading configuration from: {args.config}")
     config = load_proxy_config(args.config)
 
     # Check if this is the new format with subAccounts
@@ -2297,21 +2293,21 @@ if __name__ == "__main__":
     host = proxy_config.host
     port = proxy_config.port
 
-    logging.info(
+    logger.info(
         f"Loaded multi-subAccount configuration with {len(proxy_config.subaccounts)} subAccounts"
     )
-    logging.info(
+    logger.info(
         f"Available subAccounts: {', '.join(proxy_config.subaccounts.keys())}"
     )
-    logging.info(
+    logger.info(
         f"Available models: {', '.join(proxy_config.model_to_subaccounts.keys())}"
     )
 
-    logging.info(f"Starting proxy server on host {host} and port {port}...")
-    logging.info(f"API Host: http://{host}:{port}/v1")
-    logging.info(f"Available endpoints:")
-    logging.info(f"  - OpenAI Compatible API: http://{host}:{port}/v1/chat/completions")
-    logging.info(f"  - Anthropic Claude API: http://{host}:{port}/v1/messages")
-    logging.info(f"  - Models Listing: http://{host}:{port}/v1/models")
-    logging.info(f"  - Embeddings API: http://{host}:{port}/v1/embeddings")
+    logger.info(f"Starting proxy server on host {host} and port {port}...")
+    logger.info(f"API Host: http://{host}:{port}/v1")
+    logger.info(f"Available endpoints:")
+    logger.info(f"  - OpenAI Compatible API: http://{host}:{port}/v1/chat/completions")
+    logger.info(f"  - Anthropic Claude API: http://{host}:{port}/v1/messages")
+    logger.info(f"  - Models Listing: http://{host}:{port}/v1/models")
+    logger.info(f"  - Embeddings API: http://{host}:{port}/v1/embeddings")
     app.run(host=host, port=port, debug=args.debug)

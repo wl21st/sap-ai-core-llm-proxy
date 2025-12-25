@@ -7,16 +7,14 @@ system with the provided config.json file.
 """
 
 import json
-import logging
+from logging import Logger
 import sys
 from pathlib import Path
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from utils.logging_utils import get_client_logger
+
+logger: Logger = get_client_logger(__name__)
 
 # Import Pydantic models and loader
 from config.pydantic_models import ProxyConfigModel

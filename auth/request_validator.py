@@ -5,9 +5,13 @@ This module provides request validation against configured authentication tokens
 """
 
 import logging
+from logging import Logger
 from typing import List, Optional
 from flask import Request
 
+from utils.logging_utils import get_client_logger
+
+logger: Logger = get_client_logger(__name__)
 
 class RequestValidator:
     """Validates incoming requests against configured tokens.
@@ -38,20 +42,20 @@ class RequestValidator:
         token = self._extract_token(request)
 
         if not self.valid_tokens:
-            logging.info("Authentication disabled - no tokens configured")
+            logger.info("Authentication disabled - no tokens configured")
             return True
 
         if not token:
-            logging.error("Missing authentication token")
+            logger.error("Missing authentication token")
             return False
 
         # Check if any valid token is in the request token
         # Handles both "Bearer <token>" and just "<token>"
         if not any(valid_token in token for valid_token in self.valid_tokens):
-            logging.error("Invalid authentication token")
+            logger.error("Invalid authentication token")
             return False
 
-        logging.debug("Request authenticated successfully")
+        logger.debug("Request authenticated successfully")
         return True
 
     def _extract_token(self, request: Request) -> Optional[str]:
@@ -66,6 +70,6 @@ class RequestValidator:
         token = request.headers.get("Authorization") or request.headers.get("x-api-key")
 
         if token:
-            logging.debug(f"Token extracted: {token[:15]}...")
+            logger.debug(f"Token extracted: {token[:15]}...")
 
         return token

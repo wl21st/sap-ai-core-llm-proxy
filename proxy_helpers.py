@@ -1,8 +1,11 @@
 import json
-import logging
+from logging import Logger
 import random
 import time
 
+from utils.logging_utils import get_server_logger
+
+logger: Logger = get_server_logger(__name__)
 
 class Detector:
     @staticmethod
@@ -74,7 +77,7 @@ class Converters:
         Converts an OpenAI API request payload to the format expected by the
         Claude 3.7 /converse endpoint.
         """
-        logging.debug(f"Original OpenAI payload for Claude 3.7 conversion: {json.dumps(payload, indent=2)}")
+        logger.debug(f"Original OpenAI payload for Claude 3.7 conversion: {json.dumps(payload, indent=2)}")
 
         # Extract system message if present
         system_message = ""
@@ -89,13 +92,13 @@ class Converters:
             try:
                 inference_config["maxTokens"] = int(payload["max_tokens"])
             except (ValueError, TypeError):
-                logging.warning(f"Invalid value for max_tokens: {payload['max_tokens']}. Using default or omitting.")
+                logger.warning(f"Invalid value for max_tokens: {payload['max_tokens']}. Using default or omitting.")
         if "temperature" in payload:
             # Ensure temperature is a float
             try:
                 inference_config["temperature"] = float(payload["temperature"])
             except (ValueError, TypeError):
-                logging.warning(f"Invalid value for temperature: {payload['temperature']}. Using default or omitting.")
+                logger.warning(f"Invalid value for temperature: {payload['temperature']}. Using default or omitting.")
         if "stop" in payload:
             stop_sequences = payload["stop"]
             if isinstance(stop_sequences, str):
@@ -103,7 +106,7 @@ class Converters:
             elif isinstance(stop_sequences, list) and all(isinstance(s, str) for s in stop_sequences):
                 inference_config["stopSequences"] = stop_sequences
             else:
-                logging.warning(f"Unsupported type or content for 'stop' parameter: {stop_sequences}. Ignoring.")
+                logger.warning(f"Unsupported type or content for 'stop' parameter: {stop_sequences}. Ignoring.")
 
         # Convert messages format
         converted_messages = []
@@ -135,7 +138,7 @@ class Converters:
                                 # Convert string item to block format
                                 validated_content.append({"text": item})
                             else:
-                                logging.warning(f"Skipping invalid content block for role {role}: {item}")
+                                logger.warning(f"Skipping invalid content block for role {role}: {item}")
 
                         if validated_content:
                             converted_messages.append({
@@ -143,16 +146,16 @@ class Converters:
                                 "content": validated_content
                             })
                         else:
-                            logging.warning(
+                            logger.warning(
                                 f"Skipping message for role {role} due to all content blocks being invalid: {content}")
                     else:
-                        logging.warning(
+                        logger.warning(
                             f"Skipping message for role {role} due to unsupported content type: {type(content)}")
                 else:
-                    logging.warning(f"Skipping message for role {role} due to missing content: {msg}")
+                    logger.warning(f"Skipping message for role {role} due to missing content: {msg}")
             else:
                 # Skip any other unsupported roles
-                logging.warning(f"Skipping message with unsupported role for Claude /converse: {role}")
+                logger.warning(f"Skipping message with unsupported role for Claude /converse: {role}")
                 continue
 
         # add the system_message to the converted_messages as the first element
@@ -177,13 +180,13 @@ class Converters:
         # Claude /converse API supports a top-level system prompt as a list of blocks
         # claude_payload["system"] = [{"text": system_message}]
 
-        logging.debug(f"Converted Claude 3.7 payload: {json.dumps(claude_payload, indent=2)}")
+        logger.debug(f"Converted Claude 3.7 payload: {json.dumps(claude_payload, indent=2)}")
         return claude_payload
 
     @staticmethod
     def convert_claude_request_to_openai(payload):
         """Converts a Claude Messages API request to an OpenAI Chat Completion request."""
-        logging.debug(f"Original Claude payload for OpenAI conversion: {json.dumps(payload, indent=2)}")
+        logger.debug(f"Original Claude payload for OpenAI conversion: {json.dumps(payload, indent=2)}")
 
         openai_messages = []
         if "system" in payload and payload["system"]:
@@ -218,15 +221,15 @@ class Converters:
                 }
                 openai_tools.append(openai_tool)
             openai_payload["tools"] = openai_tools
-            logging.debug(f"Converted {len(openai_tools)} tools for OpenAI format")
+            logger.debug(f"Converted {len(openai_tools)} tools for OpenAI format")
 
-        logging.debug(f"Converted OpenAI payload: {json.dumps(openai_payload, indent=2)}")
+        logger.debug(f"Converted OpenAI payload: {json.dumps(openai_payload, indent=2)}")
         return openai_payload
 
     @staticmethod
     def convert_claude_request_to_gemini(payload):
         """Converts a Claude Messages API request to a Google Gemini request."""
-        logging.debug(f"Original Claude payload for Gemini conversion: {json.dumps(payload, indent=2)}")
+        logger.debug(f"Original Claude payload for Gemini conversion: {json.dumps(payload, indent=2)}")
 
         gemini_contents = []
         system_prompt = payload.get("system", "")
@@ -285,9 +288,9 @@ class Converters:
                 }
                 gemini_tools.append(gemini_tool)
             gemini_payload["tools"] = gemini_tools
-            logging.debug(f"Converted {len(gemini_tools)} tools for Gemini format")
+            logger.debug(f"Converted {len(gemini_tools)} tools for Gemini format")
 
-        logging.debug(f"Converted Gemini payload: {json.dumps(gemini_payload, indent=2)}")
+        logger.debug(f"Converted Gemini payload: {json.dumps(gemini_payload, indent=2)}")
         return gemini_payload
 
     @staticmethod
@@ -296,7 +299,7 @@ class Converters:
         Converts a Claude Messages API request to Bedrock Claude format.
         Handles tools conversion for Bedrock compatibility.
         """
-        logging.debug(f"Original Claude payload for Bedrock conversion: {json.dumps(payload, indent=2)}")
+        logger.debug(f"Original Claude payload for Bedrock conversion: {json.dumps(payload, indent=2)}")
 
         bedrock_payload = {}
 
@@ -335,7 +338,7 @@ class Converters:
         # Handle tools conversion if present
         if "tools" in payload and payload["tools"]:
             bedrock_payload["tools"] = payload["tools"]
-            logging.debug(f"Tools present in request: {len(payload['tools'])} tools")
+            logger.debug(f"Tools present in request: {len(payload['tools'])} tools")
 
         # Handle anthropic_beta if present (but not in payload, should be in headers)
         # Remove it from payload as it should be in headers only
@@ -344,21 +347,21 @@ class Converters:
         if "anthropic_version" not in bedrock_payload:
             bedrock_payload["anthropic_version"] = "bedrock-2023-05-31"
 
-        logging.debug(f"Converted Bedrock Claude payload: {json.dumps(bedrock_payload, indent=2)}")
+        logger.debug(f"Converted Bedrock Claude payload: {json.dumps(bedrock_payload, indent=2)}")
         return bedrock_payload
 
     @staticmethod
     def convert_claude_to_openai(response, model):
         # Check if the model is Claude 3.7 or 4
         if Detector.is_claude_37_or_4(model):
-            logging.info(f"Detected Claude 3.7/4 model ('{model}'), using convert_claude37_to_openai.")
+            logger.info(f"Detected Claude 3.7/4 model ('{model}'), using convert_claude37_to_openai.")
             return Converters.convert_claude37_to_openai(response, model)
 
         # Proceed with the original Claude conversion logic for other models
-        logging.info(f"Using standard Claude conversion for model '{model}'.")
+        logger.info(f"Using standard Claude conversion for model '{model}'.")
 
         try:
-            logging.info(f"Raw response from Claude API: {json.dumps(response, indent=4)}")
+            logger.info(f"Raw response from Claude API: {json.dumps(response, indent=4)}")
 
             # Ensure the response contains the expected structure
             if "content" not in response or not isinstance(response["content"], list):
@@ -391,10 +394,10 @@ class Converters:
                         "output_tokens", 0)
                 }
             }
-            logging.debug(f"Converted response to OpenAI format: {json.dumps(openai_response, indent=4)}")
+            logger.debug(f"Converted response to OpenAI format: {json.dumps(openai_response, indent=4)}")
             return openai_response
         except Exception as e:
-            logging.error(f"Error converting Claude response to OpenAI format: {e}")
+            logger.error(f"Error converting Claude response to OpenAI format: {e}")
             return {
                 "error": "Invalid response from Claude API",
                 "details": str(e)
@@ -407,7 +410,7 @@ class Converters:
         to the format expected by the OpenAI Chat Completion API.
         """
         try:
-            logging.debug(f"Raw response from Claude 3.7/4 API: {json.dumps(response, indent=2)}")
+            logger.debug(f"Raw response from Claude 3.7/4 API: {json.dumps(response, indent=2)}")
 
             # Validate the overall response structure
             if not isinstance(response, dict):
@@ -441,7 +444,7 @@ class Converters:
                 # Log the type if it's not text, for debugging.
                 block_type = first_content_block.get("type", "unknown") if isinstance(first_content_block,
                                                                                       dict) else "not a dict"
-                logging.warning(
+                logger.warning(
                     f"First content block is not of type 'text' or missing 'text' key. Type: {block_type}. Content: {first_content_block}")
                 # Decide how to handle non-text blocks. For now, raise error if no text found.
                 # Find the first text block if available?
@@ -449,7 +452,7 @@ class Converters:
                 for block in content_list:
                     if isinstance(block, dict) and block.get("type") == "text" and "text" in block:
                         content_text = block["text"]
-                        logging.info(f"Found text content in block at index {content_list.index(block)}")
+                        logger.info(f"Found text content in block at index {content_list.index(block)}")
                         break
                 if content_text is None:
                     raise ValueError("No text content block found in the response message content")
@@ -462,7 +465,7 @@ class Converters:
             # --- Extract 'usage' information ---
             usage = response.get("usage")
             if not isinstance(usage, dict):
-                logging.warning("Usage information missing or invalid in Claude response. Setting tokens to 0.")
+                logger.warning("Usage information missing or invalid in Claude response. Setting tokens to 0.")
                 usage = {}  # Use empty dict to avoid errors in .get() calls below
 
             input_tokens = usage.get("inputTokens", 0)
@@ -515,16 +518,16 @@ class Converters:
             # Add prompt_tokens_details if cache tokens are present
             if prompt_tokens_details:
                 openai_response["usage"]["prompt_tokens_details"] = prompt_tokens_details
-                logging.debug(f"Added prompt_tokens_details to response: {prompt_tokens_details}")
+                logger.debug(f"Added prompt_tokens_details to response: {prompt_tokens_details}")
 
-            logging.debug(f"Converted response to OpenAI format: {json.dumps(openai_response, indent=2)}")
+            logger.debug(f"Converted response to OpenAI format: {json.dumps(openai_response, indent=2)}")
             return openai_response
 
         except Exception as e:
             # Log the error with traceback for better debugging
-            logging.error(f"Error converting Claude 3.7/4 response to OpenAI format: {e}", exc_info=True)
+            logger.error(f"Error converting Claude 3.7/4 response to OpenAI format: {e}", exc_info=True)
             # Log the problematic response structure that caused the error
-            logging.error(f"Problematic Claude response structure: {json.dumps(response, indent=2)}")
+            logger.error(f"Problematic Claude response structure: {json.dumps(response, indent=2)}")
             # Return an error structure compliant with OpenAI format
             return {
                 "object": "error",
@@ -545,7 +548,7 @@ class Converters:
         try:
             # Log the raw chunk received
             # Log the raw chunk received only if it's a 3.7 model
-            logging.info(f"{model} Raw Claude chunk received: {chunk}")
+            logger.info(f"{model} Raw Claude chunk received: {chunk}")
             # Parse the Claude chunk
             data = json.loads(chunk.replace("data: ", "").strip())
 
@@ -573,10 +576,10 @@ class Converters:
 
             return f"data: {json.dumps(openai_chunk)}\n\n"
         except json.JSONDecodeError as e:
-            logging.error(f"JSON decode error: {e}")
+            logger.error(f"JSON decode error: {e}")
             return f"data: {{\"error\": \"Invalid JSON format\"}}\n\n"
         except Exception as e:
-            logging.error(f"Error processing chunk: {e}")
+            logger.error(f"Error processing chunk: {e}")
             return f"data: {{\"error\": \"Error processing chunk\"}}\n\n"
 
     @staticmethod
@@ -614,15 +617,15 @@ class Converters:
             if isinstance(claude_chunk, str):
                 try:
                     # claude_chunk = json.dumps(claude_chunk.replace("data: ", "").strip())
-                    logging.info(f"Parsed Claude chunk: {claude_chunk}")
+                    logger.info(f"Parsed Claude chunk: {claude_chunk}")
                     claude_chunk = json.loads(claude_chunk)
-                    logging.info(f"Decoded Claude chunk: {json.dumps(claude_chunk, indent=2)}")
+                    logger.info(f"Decoded Claude chunk: {json.dumps(claude_chunk, indent=2)}")
                 except json.JSONDecodeError as e:
-                    logging.error(f"JSON decode error: {e}")
+                    logger.error(f"JSON decode error: {e}")
                     return None
 
             if not isinstance(claude_chunk, dict) or not claude_chunk:
-                logging.warning(f"Invalid or empty Claude chunk received: {claude_chunk}")
+                logger.warning(f"Invalid or empty Claude chunk received: {claude_chunk}")
                 return None
 
             chunk_type = next(iter(claude_chunk))  # Get the first key
@@ -631,17 +634,17 @@ class Converters:
                 # Extract role, default to assistant if not present
                 role = claude_chunk.get("messageStart", {}).get("role", "assistant")
                 openai_chunk_payload["choices"][0]["delta"]["role"] = role
-                logging.debug(f"Converted messageStart chunk: {openai_chunk_payload}")
+                logger.debug(f"Converted messageStart chunk: {openai_chunk_payload}")
 
             elif chunk_type == "contentBlockDelta":
                 # Extract text delta
                 text_delta = claude_chunk.get("contentBlockDelta", {}).get("delta", {}).get("text")
                 if text_delta is not None:  # Send even if empty string delta? OpenAI usually does.
                     openai_chunk_payload["choices"][0]["delta"]["content"] = text_delta
-                    logging.debug(f"Converted contentBlockDelta chunk: {openai_chunk_payload}")
+                    logger.debug(f"Converted contentBlockDelta chunk: {openai_chunk_payload}")
                 else:
                     # If delta or text is missing, maybe log but don't send?
-                    logging.debug(f"Ignoring contentBlockDelta without text: {claude_chunk}")
+                    logger.debug(f"Ignoring contentBlockDelta without text: {claude_chunk}")
                     return None  # Don't send chunk if no actual text delta
 
             elif chunk_type == "messageStop":
@@ -660,9 +663,9 @@ class Converters:
                     openai_chunk_payload["choices"][0]["finish_reason"] = finish_reason
                     # Delta should be empty or null for the final chunk with finish_reason
                     openai_chunk_payload["choices"][0]["delta"] = {}  # Ensure delta is empty
-                    logging.debug(f"Converted messageStop chunk: {openai_chunk_payload}")
+                    logger.debug(f"Converted messageStop chunk: {openai_chunk_payload}")
                 else:
-                    logging.warning(
+                    logger.warning(
                         f"Unmapped or missing stopReason in messageStop: {stop_reason}. Chunk: {claude_chunk}")
                     # Decide if to send a default stop or ignore
                     # Sending with finish_reason=null might be confusing. Let's ignore.
@@ -673,10 +676,10 @@ class Converters:
                 # containing message delta or finish reason. Ignore them for streaming output.
                 # Metadata chunk should be handled separately in the calling function (`generate`)
                 # to extract usage information.
-                logging.debug(f"Ignoring Claude chunk type for OpenAI stream: {chunk_type}")
+                logger.debug(f"Ignoring Claude chunk type for OpenAI stream: {chunk_type}")
                 return None
             else:
-                logging.warning(f"Unknown Claude 3.7/4 chunk type encountered: {chunk_type}. Chunk: {claude_chunk}")
+                logger.warning(f"Unknown Claude 3.7/4 chunk type encountered: {chunk_type}. Chunk: {claude_chunk}")
                 return None
 
             # Format as SSE string if a valid payload was constructed
@@ -684,8 +687,8 @@ class Converters:
             return sse_string
 
         except Exception as e:
-            logging.error(f"Error converting Claude 3.7/4 chunk to OpenAI format: {e}", exc_info=True)
-            logging.error(f"Problematic Claude chunk: {json.dumps(claude_chunk, indent=2)}")
+            logger.error(f"Error converting Claude 3.7/4 chunk to OpenAI format: {e}", exc_info=True)
+            logger.error(f"Problematic Claude chunk: {json.dumps(claude_chunk, indent=2)}")
             # Optionally return an error chunk in SSE format to the client
             error_payload = {
                 "id": f"chatcmpl-error-{random.randint(10000, 99999)}",
@@ -704,7 +707,7 @@ class Converters:
         Converts an OpenAI API request payload to the format expected by the
         Google Vertex AI Gemini generateContent endpoint.
         """
-        logging.info(f"Original OpenAI payload for Gemini conversion: {json.dumps(payload, indent=2)}")
+        logger.info(f"Original OpenAI payload for Gemini conversion: {json.dumps(payload, indent=2)}")
 
         # Extract system message if present
         system_message = ""
@@ -718,19 +721,19 @@ class Converters:
             try:
                 generation_config["maxOutputTokens"] = int(payload["max_tokens"])
             except (ValueError, TypeError):
-                logging.warning(f"Invalid value for max_tokens: {payload['max_tokens']}. Using default or omitting.")
+                logger.warning(f"Invalid value for max_tokens: {payload['max_tokens']}. Using default or omitting.")
 
         if "temperature" in payload:
             try:
                 generation_config["temperature"] = float(payload["temperature"])
             except (ValueError, TypeError):
-                logging.warning(f"Invalid value for temperature: {payload['temperature']}. Using default or omitting.")
+                logger.warning(f"Invalid value for temperature: {payload['temperature']}. Using default or omitting.")
 
         if "top_p" in payload:
             try:
                 generation_config["topP"] = float(payload["top_p"])
             except (ValueError, TypeError):
-                logging.warning(f"Invalid value for top_p: {payload['top_p']}. Using default or omitting.")
+                logger.warning(f"Invalid value for top_p: {payload['top_p']}. Using default or omitting.")
 
         # Convert messages to Gemini format
         # For single message case (most common), create a simple structure
@@ -784,7 +787,7 @@ class Converters:
                 elif role == "assistant":
                     gemini_role = "model"
                 else:
-                    logging.warning(f"Skipping message with unsupported role for Gemini: {role}")
+                    logger.warning(f"Skipping message with unsupported role for Gemini: {role}")
                     continue
 
                 if content:
@@ -836,7 +839,7 @@ class Converters:
         # Add safety settings
         gemini_payload["safety_settings"] = safety_settings
 
-        logging.debug(f"Converted Gemini payload: {json.dumps(gemini_payload, indent=2)}")
+        logger.debug(f"Converted Gemini payload: {json.dumps(gemini_payload, indent=2)}")
         return gemini_payload
 
     @staticmethod
@@ -846,7 +849,7 @@ class Converters:
         to the format expected by the OpenAI Chat Completion API.
         """
         try:
-            logging.debug(f"Raw response from Gemini API: {json.dumps(response, indent=2)}")
+            logger.debug(f"Raw response from Gemini API: {json.dumps(response, indent=2)}")
 
             # Validate the overall response structure
             if not isinstance(response, dict):
@@ -919,12 +922,12 @@ class Converters:
                 }
             }
 
-            logging.debug(f"Converted response to OpenAI format: {json.dumps(openai_response, indent=2)}")
+            logger.debug(f"Converted response to OpenAI format: {json.dumps(openai_response, indent=2)}")
             return openai_response
 
         except Exception as e:
-            logging.error(f"Error converting Gemini response to OpenAI format: {e}", exc_info=True)
-            logging.error(f"Problematic Gemini response structure: {json.dumps(response, indent=2)}")
+            logger.error(f"Error converting Gemini response to OpenAI format: {e}", exc_info=True)
+            logger.error(f"Problematic Gemini response structure: {json.dumps(response, indent=2)}")
             return {
                 "object": "error",
                 "message": f"Failed to convert Gemini response to OpenAI format. Error: {str(e)}. Check proxy logs for details.",
@@ -940,7 +943,7 @@ class Converters:
         to the format expected by the Anthropic Claude Messages API.
         """
         try:
-            logging.debug(f"Raw response from Gemini API for Claude conversion: {json.dumps(response, indent=2)}")
+            logger.debug(f"Raw response from Gemini API for Claude conversion: {json.dumps(response, indent=2)}")
 
             if not isinstance(response, dict) or "candidates" not in response or not response["candidates"]:
                 raise ValueError("Invalid Gemini response: 'candidates' field is missing or empty")
@@ -980,11 +983,11 @@ class Converters:
                     "output_tokens": completion_tokens
                 }
             }
-            logging.debug(f"Converted Gemini response to Claude format: {json.dumps(claude_response, indent=2)}")
+            logger.debug(f"Converted Gemini response to Claude format: {json.dumps(claude_response, indent=2)}")
             return claude_response
 
         except Exception as e:
-            logging.error(f"Error converting Gemini response to Claude format: {e}", exc_info=True)
+            logger.error(f"Error converting Gemini response to Claude format: {e}", exc_info=True)
             return {
                 "type": "error",
                 "error": {
@@ -1000,7 +1003,7 @@ class Converters:
         to the format expected by the Anthropic Claude Messages API.
         """
         try:
-            logging.debug(f"Raw response from OpenAI API for Claude conversion: {json.dumps(response, indent=2)}")
+            logger.debug(f"Raw response from OpenAI API for Claude conversion: {json.dumps(response, indent=2)}")
 
             if not isinstance(response, dict) or "choices" not in response or not response["choices"]:
                 raise ValueError("Invalid OpenAI response: 'choices' field is missing or empty")
@@ -1058,11 +1061,11 @@ class Converters:
                     "output_tokens": completion_tokens
                 }
             }
-            logging.debug(f"Converted OpenAI response to Claude format: {json.dumps(claude_response, indent=2)}")
+            logger.debug(f"Converted OpenAI response to Claude format: {json.dumps(claude_response, indent=2)}")
             return claude_response
 
         except Exception as e:
-            logging.error(f"Error converting OpenAI response to Claude format: {e}", exc_info=True)
+            logger.error(f"Error converting OpenAI response to Claude format: {e}", exc_info=True)
             return {
                 "type": "error",
                 "error": {
@@ -1125,11 +1128,11 @@ class Converters:
                 try:
                     gemini_chunk = json.loads(gemini_chunk)
                 except json.JSONDecodeError as e:
-                    logging.error(f"JSON decode error: {e}")
+                    logger.error(f"JSON decode error: {e}")
                     return None
 
             if not isinstance(gemini_chunk, dict):
-                logging.warning(f"Invalid Gemini chunk received: {gemini_chunk}")
+                logger.warning(f"Invalid Gemini chunk received: {gemini_chunk}")
                 return None
 
             # Extract candidates
@@ -1158,7 +1161,7 @@ class Converters:
 
                 if parts and "text" in parts[0]:
                     text_delta = parts[0]["text"]
-                    logging.info(f"Gemini text delta: {text_delta}")
+                    logger.info(f"Gemini text delta: {text_delta}")
                     openai_chunk_payload["choices"][0]["delta"]["content"] = text_delta
             else:
                 # Extract content delta
@@ -1167,7 +1170,7 @@ class Converters:
 
                 if parts and "text" in parts[0]:
                     text_delta = parts[0]["text"]
-                    logging.info(f"Gemini text delta: {text_delta}")
+                    logger.info(f"Gemini text delta: {text_delta}")
                     openai_chunk_payload["choices"][0]["delta"]["content"] = text_delta
 
             # Format as SSE string
@@ -1175,7 +1178,7 @@ class Converters:
             return sse_string
 
         except Exception as e:
-            logging.error(f"Error converting Gemini chunk to OpenAI format: {e}", exc_info=True)
+            logger.error(f"Error converting Gemini chunk to OpenAI format: {e}", exc_info=True)
             error_payload = {
                 "id": f"chatcmpl-error-{random.randint(10000, 99999)}",
                 "object": "chat.completion.chunk",

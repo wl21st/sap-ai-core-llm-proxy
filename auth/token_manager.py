@@ -10,12 +10,17 @@ Features:
 
 import base64
 import logging
+from logging import Logger
 import threading
 import time
 
 import requests
 
 from config import SubAccountConfig
+
+from utils.logging_utils import get_server_logger
+
+logger: Logger = get_server_logger(__name__)
 
 
 class TokenManager:
@@ -64,7 +69,7 @@ class TokenManager:
 
     def _fetch_new_token(self) -> str:
         """Fetch new token from SAP AI Core."""
-        logging.info(f"Fetching new token for subaccount '{self.subaccount.name}'")
+        logger.info(f"Fetching new token for subaccount '{self.subaccount.name}'")
 
         service_key = self.subaccount.service_key
         if not service_key:
@@ -93,21 +98,21 @@ class TokenManager:
             self.subaccount.token_info.token = access_token
             self.subaccount.token_info.expiry = time.time() + expires_in - 300
 
-            logging.info(f"Token fetched successfully for '{self.subaccount.name}'")
+            logger.info(f"Token fetched successfully for '{self.subaccount.name}'")
             return access_token
 
         except requests.exceptions.Timeout as err:
-            logging.error(f"Timeout fetching token: {err}")
+            logger.error(f"Timeout fetching token: {err}")
             raise TimeoutError(f"Timeout connecting to token endpoint") from err
 
         except requests.exceptions.HTTPError as err:
-            logging.error(f"HTTP error fetching token: {err.response.status_code}")
+            logger.error(f"HTTP error fetching token: {err.response.status_code}")
             raise ConnectionError(f"HTTP Error {err.response.status_code}") from err
 
         except ValueError as err:
             # Re-raise ValueError as-is (e.g., empty token)
-            logging.error(f"Value error fetching token: {err}")
+            logger.error(f"Value error fetching token: {err}")
             raise
         except Exception as err:
-            logging.error(f"Unexpected error fetching token: {err}", exc_info=True)
+            logger.error(f"Unexpected error fetching token: {err}", exc_info=True)
             raise RuntimeError(f"Unexpected error: {err}") from err
