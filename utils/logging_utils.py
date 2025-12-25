@@ -40,7 +40,7 @@ def init_logging(debug: bool = True) -> None:
         # Configure basic logging for console output
         logging.basicConfig(
             level=level,
-            format='%(asctime)s.%(msecs)03d - [%(threadName)s] - %(name)s - %(levelname)s - %(message)s',
+            format='%(asctime)s.%(msecs)03d [%(levelname)s] [%(threadName)s] [%(filename)s:%(lineno)d]:  %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
 

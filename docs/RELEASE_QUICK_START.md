@@ -9,7 +9,7 @@
 make build-tested
 
 # Test the binary
-./dist/sap_ai_proxy --help
+./dist/proxy --help
 
 # When satisfied, version and release
 make version-bump-patch
@@ -128,12 +128,12 @@ make release-docker         # Build Docker image
 ```
 project/
 ├── dist/                    # Build output
-│   └── sap_ai_proxy
+│   └── proxy
 ├── releases/                # Release artifacts
 │   └── v0.1.0/
-│       ├── sap_ai_proxy-0.1.0-macos
-│       ├── sap_ai_proxy-0.1.0-macos.tar.gz
-│       └── sap_ai_proxy-0.1.0-macos.zip
+│       ├── proxy-0.1.0-macos
+│       ├── proxy-0.1.0-macos.tar.gz
+│       └── proxy-0.1.0-macos.zip
 └── pyproject.toml          # Version source of truth
 ```
 

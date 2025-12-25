@@ -21,7 +21,7 @@ The release process has been decoupled into independent stages:
 make build-tested
 
 # 2. Review the build
-./dist/sap_ai_proxy --help
+./dist/proxy --help
 
 # 3. Bump version (choose one)
 make version-bump-patch   # 0.1.0 -> 0.1.1
@@ -77,7 +77,7 @@ make build-gui
 make build-tested
 ```
 
-**Output**: Binary in `dist/sap_ai_proxy` (or `.exe` on Windows)
+**Output**: Binary in `dist/proxy` (or `.exe` on Windows)
 
 ### 2. Version Management (Separate from Build)
 
@@ -122,9 +122,9 @@ make release-prepare
 
 This creates:
 
-- `releases/v{VERSION}/sap_ai_proxy-{VERSION}-{PLATFORM}` (binary)
-- `releases/v{VERSION}/sap_ai_proxy-{VERSION}-{PLATFORM}.tar.gz` (tarball)
-- `releases/v{VERSION}/sap_ai_proxy-{VERSION}-{PLATFORM}.zip` (zip archive)
+- `releases/v{VERSION}/proxy-{VERSION}-{PLATFORM}` (binary)
+- `releases/v{VERSION}/proxy-{VERSION}-{PLATFORM}.tar.gz` (tarball)
+- `releases/v{VERSION}/proxy-{VERSION}-{PLATFORM}.zip` (zip archive)
 
 ### 5. Multi-Platform Upload
 
@@ -151,8 +151,8 @@ make release-docker
 This builds the Docker image. To push to a registry:
 
 ```bash
-docker tag sap_ai_proxy:0.1.0 your-registry/sap_ai_proxy:0.1.0
-docker push your-registry/sap_ai_proxy:0.1.0
+docker tag proxy:0.1.0 your-registry/proxy:0.1.0
+docker push your-registry/proxy:0.1.0
 ```
 
 #### PyPI (if applicable)
@@ -186,7 +186,7 @@ You want to build and test thoroughly before committing to a version:
 make build-tested
 
 # Test the binary extensively
-./dist/sap_ai_proxy
+./dist/proxy
 
 # When satisfied, bump version and tag
 make version-bump-patch
@@ -267,7 +267,7 @@ The Makefile automatically detects your platform:
 - **Linux**: Builds Linux binary
 - **Windows**: Builds `.exe` binary
 
-Platform is included in artifact names: `sap_ai_proxy-0.1.0-macos.tar.gz`
+Platform is included in artifact names: `proxy-0.1.0-macos.tar.gz`
 
 ## Version Source
 
@@ -285,12 +285,12 @@ All version-related commands use this as the source of truth.
 ```
 project/
 ├── dist/                          # Build output
-│   └── sap_ai_proxy              # Binary
+│   └── proxy              # Binary
 ├── releases/                      # Release artifacts
 │   └── v0.1.0/                   # Version-specific releases
-│       ├── sap_ai_proxy-0.1.0-macos
-│       ├── sap_ai_proxy-0.1.0-macos.tar.gz
-│       └── sap_ai_proxy-0.1.0-macos.zip
+│       ├── proxy-0.1.0-macos
+│       ├── proxy-0.1.0-macos.tar.gz
+│       └── proxy-0.1.0-macos.zip
 └── build/                         # PyInstaller build cache
 ```
 

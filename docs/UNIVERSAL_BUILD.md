@@ -20,7 +20,7 @@ Instead of attempting universal builds, build separate binaries for each archite
 - **On Intel Macs**: Creates x86_64 binary
 
 Distribute both binaries with clear naming:
-- `sap_ai_proxy-v0.1.11-macos-arm64`
-- `sap_ai_proxy-v0.1.11-macos-x86_64`
+- `proxy-v0.1.11-macos-arm64`
+- `proxy-v0.1.11-macos-x86_64`
 
 This approach is simpler, more reliable, and follows standard practice for Python applications.

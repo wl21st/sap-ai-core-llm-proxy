@@ -38,7 +38,7 @@ class RequestValidator:
         token = self._extract_token(request)
 
         if not self.valid_tokens:
-            logging.warning("Authentication disabled - no tokens configured")
+            logging.info("Authentication disabled - no tokens configured")
             return True
 
         if not token:

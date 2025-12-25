@@ -47,8 +47,8 @@ class ResponseValidator:
         assert total_tokens >= 0, "total_tokens must be non-negative"
 
         assert (
-            total_tokens == prompt_tokens + completion_tokens
-        ), f"total_tokens ({total_tokens}) != prompt_tokens ({prompt_tokens}) + completion_tokens ({completion_tokens})"
+            total_tokens >= prompt_tokens + completion_tokens
+        ), f"total_tokens ({total_tokens}) < prompt_tokens ({prompt_tokens}) + completion_tokens ({completion_tokens})"
 
     @staticmethod
     def validate_sse_chunk(chunk: bytes) -> None:

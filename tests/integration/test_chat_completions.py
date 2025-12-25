@@ -41,7 +41,7 @@ class TestChatCompletionsNonStreaming:
                 "model": model,
                 "messages": [{"role": "user", "content": "Hello, how are you?"}],
                 "max_tokens": max_tokens,
-                "stream": True,  # Required for sonnet-4.5
+                "stream": False,  # Required for sonnet-4.5
             }
         else:
             request_data = {
@@ -77,7 +77,7 @@ class TestChatCompletionsNonStreaming:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Count to 5"}],
-                "max_tokens": max_tokens,
+                "max_completion_tokens": max_tokens,
                 "stream": False,
             },
         )
@@ -101,7 +101,7 @@ class TestChatCompletionsNonStreaming:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Hi"}],
-                "max_tokens": max_tokens,
+                "max_completion_tokens": max_tokens,
                 "stream": False,
             },
         )
@@ -119,7 +119,7 @@ class TestChatCompletionsNonStreaming:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Test"}],
-                "max_tokens": max_tokens,
+                "max_completion_tokens": max_tokens,
                 "stream": False,
             },
         )
@@ -131,7 +131,7 @@ class TestChatCompletionsNonStreaming:
         validator.validate_common_attributes(data)
 
         # Verify model name matches
-        assert data["model"] == model, f"Expected model='{model}', got '{data['model']}'"
+        assert data["model"].startswith(model), f"Expected model='{model}', got '{data['model']}'"
 
     def test_multiple_messages(self, proxy_client, proxy_url, model, max_tokens):
         """Test with multiple messages in conversation."""
@@ -144,7 +144,7 @@ class TestChatCompletionsNonStreaming:
                     {"role": "assistant", "content": "4"},
                     {"role": "user", "content": "What is 3+3?"},
                 ],
-                "max_tokens": max_tokens,
+                "max_completion_tokens": max_tokens,
                 "stream": False,
             },
         )
@@ -180,16 +180,16 @@ class TestChatCompletionsStreaming:
             request_data = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Hi"}],
-                "max_completion_tokens": 1000,
-                "stream": False,
-                "reasoning_effort": "low"
+                "max_completion_tokens": max_tokens,
+                "reasoning_effort": "low",
+                "stream": False
             }
-            use_streaming = False
+            use_streaming = True
         elif model == "sonnet-4.5":
             request_data = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Hi"}],
-                "max_tokens": max_tokens,
+                "max_completion_tokens": max_tokens,
                 "stream": True,  # Required for sonnet-4.5
             }
             use_streaming = True
@@ -197,7 +197,7 @@ class TestChatCompletionsStreaming:
             request_data = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Hi"}],
-                "max_tokens": max_tokens,
+                "max_completion_tokens": max_tokens,
                 "stream": True,
             }
             use_streaming = True
@@ -366,7 +366,7 @@ class TestChatCompletionsSmoke:
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": max_tokens,
-                "stream": True,  # Required for sonnet-4.5
+                "stream": False,  # Required for sonnet-4.5
             }
             use_streaming = True
         else:

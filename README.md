@@ -558,12 +558,12 @@ make build-tested
 make build-debug
 ```
 
-The binary will be created in the `dist/` directory as `sap_ai_proxy` (or `.exe` on Windows).
+The binary will be created in the `dist/` directory as `proxy` (or `.exe` on Windows).
 
 To run the binary:
 
 ```sh
-./dist/sap_ai_proxy --config config.json
+./dist/proxy --config config.json
 ```
 
 ### Release Workflow
@@ -617,7 +617,7 @@ You can also build manually using PyInstaller:
 uv sync
 
 # Build the binary
-pyinstaller --onefile --name sap_ai_proxy proxy_server.py
+pyinstaller --onefile --name proxy proxy_server.py
 ```
 
 ## License

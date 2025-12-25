@@ -145,7 +145,7 @@ def handle_embedding_request():
 
     payload = request.json
     input_text = payload.get("input")
-    model = payload.get("model", "text-embedding-3-small")
+    model = payload.get("model", DEFAULT_EMBEDDING_MODEL)
     encoding_format = payload.get("encoding_format")
 
     if not input_text:
@@ -155,6 +155,7 @@ def handle_embedding_request():
         endpoint_url, modified_payload, subaccount_name = handle_embedding_service_call(
             input_text, model, encoding_format
         )
+        # Create a global token manager for sub accounts
         token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
         subaccount_token = token_manager.get_token()
         subaccount = proxy_config.subaccounts[subaccount_name]
@@ -173,10 +174,10 @@ def handle_embedding_request():
     except requests.exceptions.HTTPError as http_err:
         # Handle HTTP 429 (Too Many Requests) specifically
         if http_err.response is not None and http_err.response.status_code == 429:
-            return handle_http_429_error(http_err, "embedding request")
+            return handle_http_429_error(http_err, f"embedding request for {model}")
         else:
             # Handle other HTTP errors
-            logging.error(f"HTTP Error handling embedding request: {http_err}")
+            logging.error(f"HTTP Error handling embedding request({model}): {http_err}")
             if http_err.response is not None:
                 logging.error(f"HTTP Status Code: {http_err.response.status_code}")
                 logging.error(f"Response Body: {http_err.response.text}")
@@ -612,7 +613,7 @@ def handle_default_request(payload, model="gpt-4.1"):
     selected_url, subaccount_name, _, model = load_balance_url(model)
 
     # Determine API version based on model
-    if any(m in model for m in ["o3", "o4-mini", "o3-mini"]):
+    if any(m in model for m in ["o3", "o4-mini", "o3-mini", "gpt-5"]):
         api_version = API_VERSION_2024_12_01_PREVIEW
         # Remove unsupported parameters for o3-mini
         modified_payload = payload.copy()
@@ -1323,7 +1324,7 @@ def proxy_claude_request_original():
             }
         ), 400
     except requests.exceptions.HTTPError as err:
-        logging.error(f"HTTP error in Claude request: {err}")
+        logging.error(f"HTTP error in Claude request({model}): {err}")
         try:
             return jsonify(err.response.json()), err.response.status_code
         except:
@@ -1490,28 +1491,37 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
 
         return jsonify(final_response), 200
 
-    except requests.exceptions.HTTPError as err:
-        logging.error(f"HTTP error in non-streaming request: {err}")
-        if err.response:
-            logging.error(f"Error response status: {err.response.status_code}")
-            logging.error(f"Error response headers: {dict(err.response.headers)}")
-            logging.error(f"Error response body: {err.response.text}")
+    except requests.exceptions.HTTPError as http_err:
+        logging.error(f"HTTP error in non-streaming request({model}): {http_err}")
+
+        if http_err.response is not None:
+            response = http_err.response
+            status_code = response.status_code
+
+            # Handle HTTP 429 (Too Many Requests) specifically
+            if status_code == 429:
+                return handle_http_429_error(http_err, f"non-streaming request for {model}")
+
+            logging.error(f"Error response status: {response.status_code}")
+            logging.error(f"Error response headers: {dict(response.headers)}")
+            logging.error(f"Error response body: {response.text}")
             try:
-                error_data = err.response.json()
+                error_data = http_err.response.json()
                 logging.error(
                     f"Error response JSON: {json.dumps(error_data, indent=2)}"
                 )
-                return jsonify(error_data), err.response.status_code
+                return jsonify(error_data), http_err.response.status_code
             except json.JSONDecodeError:
-                return jsonify({"error": err.response.text}), err.response.status_code
-        return jsonify({"error": str(err)}), 500
+                return jsonify({"error": http_err.response.text}), status_code
+        else:
+            return jsonify({"error": str(http_err)}), 500
 
     except Exception as err:
         logging.error(f"Error in non-streaming request: {err}", exc_info=True)
         return jsonify({"error": str(err)}), 500
 
 
-def generate_streaming_response(url, headers, payload, model, subaccount_name):
+def generate_streaming_response(url, headers, payload, model: str, subaccount_name: str):
     """Generate streaming response from backend API.
 
     Args:
@@ -1877,26 +1887,37 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
             # Standard stream end
             yield "data: [DONE]\n\n"
 
-        except requests.exceptions.HTTPError as err:
-            logging.error(
-                f"HTTP Error in streaming response from '{subaccount_name}': {err}"
-            )
-            if hasattr(err, "response") and err.response is not None:
-                logging.error(f"Error response status: {err.response.status_code}")
-                logging.error(f"Error response headers: {dict(err.response.headers)}")
+        except requests.exceptions.HTTPError as http_err:
+            logging.error(f"HTTP Error in streaming response:({model}): {http_err}")
+
+            error_content: str = ""
+
+            if http_err.response is not None:
+                response = http_err.response
+                status_code = response.status_code
+                error_content = response.text
+
+                # Handle HTTP 429 (Too Many Requests) specifically
+                if status_code == 429:
+                    return handle_http_429_error(http_err, f"streaming request for {model}")
+
+                logging.error(f"Error response status: {response.status_code}")
+                logging.error(f"Error response headers: {dict(response.headers)}")
+                logging.error(f"Error response body: {response.text}")
                 try:
-                    error_content = err.response.text
                     logging.error(f"Error response body: {error_content}")
+
                     # Try to parse as JSON for better formatting
                     try:
-                        error_json = err.response.json()
-                        logging.error(
-                            f"Error response JSON: {json.dumps(error_json, indent=2)}"
-                        )
+                        error_content = json.dumps(response.json(), indent=2)
+                        logging.error(f"Error response JSON: {error_content}")
                     except json.JSONDecodeError:
                         pass
                 except Exception as e:
                     logging.error(f"Could not read error response content: {e}")
+            else:
+                status_code = 500
+                error_content = str(http_err)
 
             error_payload = {
                 "id": f"error-{random.randint(10000, 99999)}",
@@ -1904,19 +1925,18 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                 "created": int(time.time()),
                 "model": model,
                 "error": {
-                    "message": str(err),
+                    "message": error_content,
                     "type": "http_error",
-                    "code": err.response.status_code
-                    if hasattr(err, "response") and err.response
-                    else 500,
+                    "code": status_code,
                     "subaccount": subaccount_name,
                 },
             }
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
-        except Exception as err:
+
+        except Exception as http_err:
             logging.error(
-                f"Error in streaming response from '{subaccount_name}': {err}",
+                f"Error in streaming response from '{subaccount_name}': {http_err}",
                 exc_info=True,
             )
             error_payload = {
@@ -1925,7 +1945,7 @@ def generate_streaming_response(url, headers, payload, model, subaccount_name):
                 "created": int(time.time()),
                 "model": model,
                 "error": {
-                    "message": str(err),
+                    "message": str(http_err),
                     "type": "proxy_error",
                     "code": 500,
                     "subaccount": subaccount_name,
@@ -2214,7 +2234,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
 
     except requests.exceptions.HTTPError as e:
         logging.error(
-            f"HTTP error in Claude streaming conversion for '{model}': {e}",
+            f"HTTP error in Claude streaming conversion({model}): {e}",
             exc_info=True,
         )
         if hasattr(e, "response") and e.response:

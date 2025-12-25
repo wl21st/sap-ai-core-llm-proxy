@@ -1,5 +1,5 @@
 # Configuration
-APP_NAME := sap_ai_proxy
+APP_NAME := proxy
 UV := uv
 MAIN_SCRIPT := ./proxy_server.py
 ICON_FILE := assets/icon.ico
@@ -373,7 +373,7 @@ workflow-major: version-bump-major build-tested workflow-commit-and-tag release-
 # Clean build artifacts only
 clean:
 	rm -rf $(DIST_DIR) $(BUILD_DIR) $(RELEASE_DIR) __pycache__
-	rm -f sap_ai_proxy.spec _version.txt
+	rm -f proxy.spec _version.txt
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 
