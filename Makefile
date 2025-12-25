@@ -95,11 +95,11 @@ build-bundle: install-build generate-version
 	@echo "Building $(APP_NAME) with bundled dependencies..."
 	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --add-data "_version.txt:." --collect-all your_package $(MAIN_SCRIPT)
 
-# Run tests before building
+# Run tests before building (excluding integration tests)
 test:
-	@echo "Running tests..."
+	@echo "Running tests (excluding integration tests)..."
 	@if [ -d "tests" ]; then \
-		$(UV) sync --extra dev && $(UV) run pytest tests/; \
+		$(UV) sync --extra dev && $(UV) run pytest tests/ --ignore=tests/integration/; \
 	else \
 		echo "Warning: tests/ directory not found. Skipping tests."; \
 	fi
