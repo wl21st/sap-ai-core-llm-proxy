@@ -5,8 +5,7 @@ This module handles loading and parsing configuration from JSON files.
 """
 
 import json
-from typing import Union, Dict, Any, Optional
-from urllib.parse import urlparse
+from typing import Union, Dict, Any
 
 from config import ProxyConfig, SubAccountConfig
 
@@ -48,5 +47,3 @@ def load_proxy_config(file_path: str) -> Union[ProxyConfig, Dict[str, Any]]:
     proxy_conf.parse()
 
     return proxy_conf
-
-
