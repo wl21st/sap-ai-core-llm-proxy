@@ -23,6 +23,23 @@ Once the LLM model is deployed, obtain the URL and update it in the config.json 
 
 ## Quick Start
 
+### Using uvx (Recommended - No Installation Required)
+
+The fastest way to run the proxy server without installing dependencies:
+
+```shell
+# Standard mode
+uvx --from . sap-ai-proxy --config config.json
+
+# Debug mode
+uvx --from . sap-ai-proxy --config config.json --debug
+
+# After publishing to PyPI, run from anywhere:
+uvx sap-ai-proxy --config config.json
+```
+
+### Using Python Directly
+
 ```shell
 python proxy_server.py --config config.json
 ```
@@ -213,10 +230,16 @@ The proxy now supports distributing requests across multiple subAccounts:
 
 ### Running the Proxy Server over HTTP
 
-Start the proxy server using the following command:
+Start the proxy server using one of the following methods:
 
+**Using uvx (recommended):**
 ```sh
-python proxy_server.py
+uvx --from . sap-ai-proxy --config config.json
+```
+
+**Using Python:**
+```sh
+python proxy_server.py --config config.json
 ```
 
 The server will run on `http://127.0.0.1:3001`.

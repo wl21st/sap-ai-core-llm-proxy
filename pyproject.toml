@@ -32,6 +32,9 @@ build = [
     "pyinstaller>=6.16.0",
 ]
 
+[project.scripts]
+sap-ai-proxy = "proxy_server:main"
+
 [dependency-groups]
 dev = [
     "black>=25.12.0",
@@ -44,3 +47,7 @@ dev = [
     "ruff>=0.14.10",
     "safety>=3.7.0",
 ]
+
+[tool.setuptools]
+packages = ["auth", "config", "utils"]
+py-modules = ["proxy_server", "proxy_helpers"]

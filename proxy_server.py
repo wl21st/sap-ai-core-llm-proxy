@@ -2312,7 +2312,8 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
     )
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Main entry point for the SAP AI Core LLM Proxy Server."""
     args = parse_arguments()
 
     # Setup logging using the new modular function
@@ -2347,3 +2348,7 @@ if __name__ == "__main__":
     logger.info(f"  - Models Listing: http://{host}:{port}/v1/models")
     logger.info(f"  - Embeddings API: http://{host}:{port}/v1/embeddings")
     app.run(host=host, port=port, debug=args.debug)
+
+
+if __name__ == "__main__":
+    main()

@@ -30,6 +30,10 @@ uv sync --extra build
 
 ### Running the Server
 ```bash
+# Using uvx (recommended - no installation needed)
+uvx --from . sap-ai-proxy --config config.json
+uvx --from . sap-ai-proxy --config config.json --debug
+
 # Standard mode
 python proxy_server.py --config config.json
 
@@ -38,6 +42,9 @@ python proxy_server.py --config config.json --debug
 
 # Using uv
 uv run python proxy_server.py --config config.json
+
+# After publishing to PyPI (run from anywhere)
+uvx sap-ai-proxy --config config.json
 ```
 
 ### Testing
@@ -296,7 +303,7 @@ See `docs/ARCHITECTURE.md` for complete technical debt analysis.
 4. Run integration tests to validate end-to-end
 
 ### Debugging Issues
-1. Enable debug mode: `python proxy_server.py --config config.json --debug`
+1. Enable debug mode: `uvx --from . sap-ai-proxy --config config.json --debug` (or `python proxy_server.py --config config.json --debug`)
 2. Check logs in `logs/` directory (if configured)
 3. Use integration tests with logging: `pytest tests/integration/ --log-cli-level=DEBUG -v`
 4. Inspect SAP AI Core responses in transport logs
@@ -341,5 +348,6 @@ make release-github
 - **Architecture Diagrams:** `docs/ARCHITECTURE.md` - System overview, request flow, data models
 - **Testing Guide:** `docs/TESTING.md` - Comprehensive testing documentation
 - **Release Workflow:** `docs/RELEASE_WORKFLOW.md` - Complete release process
+- **UVX Usage Guide:** `docs/UVX_USAGE.md` - Running with uvx (recommended method)
 - **Python Conventions:** `PYTHON_CONVENTIONS.md` - Naming and style guide
 - **Integration Tests:** `tests/integration/README.md` - Real integration test guide
