@@ -882,8 +882,9 @@ def proxy_claude_request():
         logger.info(
             f"Obtaining SAP AI SDK client for model[{model}] for subaccount[{subaccount_name}]"
         )
+
         bedrock_client: ClientWrapper = get_bedrock_client(
-            sub_account_config=proxy_config.get_subaccount(subaccount_name),
+            sub_account_config=proxy_config.subaccounts[subaccount_name],
             model_name=model,
             deployment_id=extract_deployment_id(selected_url),
         )

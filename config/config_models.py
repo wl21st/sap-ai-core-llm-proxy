@@ -125,8 +125,4 @@ class ProxyConfig:
         logger.info("Model to subaccounts mapping: %s", self.model_to_subaccounts)
 
     def get_subaccount(self, subaccount_name: str) -> SubAccountConfig:
-        result = self.subaccounts[subaccount_name]
-        if result:
-            return result
-        else:
-            raise ValueError(f"Subaccount '{subaccount_name}' not found.")
+        return self.subaccounts[subaccount_name]
