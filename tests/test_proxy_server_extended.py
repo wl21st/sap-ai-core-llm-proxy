@@ -128,6 +128,9 @@ class TestEmbeddingEndpoint:
         mock_response = Mock()
         mock_response.json.return_value = {"embedding": [0.1, 0.2, 0.3]}
         mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.text = '{"embedding": [0.1, 0.2, 0.3]}'
         mock_post.return_value = mock_response
 
         response = client.post(
@@ -638,6 +641,9 @@ class TestHandleNonStreamingRequest:
         }
         mock_response.text = '{"id": "msg_123", "type": "message", "content": [{"type": "text", "text": "Hello"}]}'
         mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.content = b'{"id": "msg_123", "type": "message", "content": [{"type": "text", "text": "Hello"}]}'
         mock_post.return_value = mock_response
 
         with client.application.test_request_context(
@@ -651,6 +657,7 @@ class TestHandleNonStreamingRequest:
                 {"messages": [{"role": "user", "content": "test"}]},
                 "claude-3.5-sonnet",
                 "test-sub",
+                "test-tid-123",
             )
 
             assert result[1] == 200
@@ -682,6 +689,7 @@ class TestHandleNonStreamingRequest:
                 {"messages": [{"role": "user", "content": "test"}]},
                 "gpt-4",
                 "test-sub",
+                "test-tid-123",
             )
 
             assert result[1] == 500
@@ -713,6 +721,7 @@ class TestHandleNonStreamingRequest:
                 {"messages": [{"role": "user", "content": "test"}]},
                 "gpt-4",
                 "test-sub",
+                "test-tid-123",
             )
 
             assert result[1] == 500
@@ -748,6 +757,7 @@ class TestHandleNonStreamingRequest:
                 {"messages": [{"role": "user", "content": "test"}]},
                 "gpt-4",
                 "test-sub",
+                "test-tid-123",
             )
 
             assert result[1] == 400
@@ -785,6 +795,7 @@ class TestGenerateStreamingResponse:
                 {"messages": [{"role": "user", "content": "test"}]},
                 "gpt-4",
                 "test-sub",
+                "test-tid-123",
             )
 
             # Result should be a generator function
@@ -817,6 +828,7 @@ class TestGenerateStreamingResponse:
                 {"messages": [{"role": "user", "content": "test"}]},
                 "claude-3.5-sonnet",
                 "test-sub",
+                "test-tid-123",
             )
 
             assert result is not None
@@ -1008,6 +1020,9 @@ class TestEmbeddingEndpointEdgeCases:
         mock_response = Mock()
         mock_response.json.return_value = {"embeddings": [[0.1, 0.2], [0.3, 0.4]]}
         mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.text = '{"embeddings": [[0.1, 0.2], [0.3, 0.4]]}'
         mock_post.return_value = mock_response
 
         response = client.post(
@@ -1173,6 +1188,9 @@ class TestProxyOpenAIStreamEndpoint:
         }
         mock_response.text = '{"output": {"message": {"role": "assistant", "content": [{"text": "Hello"}]}}}'
         mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.content = b'{"output": {"message": {"role": "assistant", "content": [{"text": "Hello"}]}}}'
         mock_post.return_value = mock_response
 
         response = client.post(
@@ -1208,6 +1226,10 @@ class TestProxyOpenAIStreamEndpoint:
             "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 10},
         }
         mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.text = '{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
+        mock_response.content = b'{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
         mock_post.return_value = mock_response
 
         response = client.post(

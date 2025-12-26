@@ -835,6 +835,9 @@ class TestFlaskEndpoints:
             "data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}],
         }
         mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.text = '{"object": "list", "data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]}'
         mock_post.return_value = mock_response
 
         # Setup subaccount
@@ -961,6 +964,10 @@ class TestIntegration:
                     },
                 }
                 mock_response.raise_for_status = Mock()
+                mock_response.status_code = 200
+                mock_response.headers = {}
+                mock_response.text = '{"id": "chatcmpl-123", "object": "chat.completion"}'
+                mock_response.content = b'{"id": "chatcmpl-123"}'
                 return mock_response
 
         mock_post.side_effect = mock_post_side_effect

@@ -145,6 +145,13 @@ app = Flask(__name__)
 @app.route("/v1/embeddings", methods=["POST"])
 def handle_embedding_request():
     logger.info("Received request to /v1/embeddings")
+    tid = str(uuid.uuid4())
+
+    # Log raw request received from client
+    transport_logger.info(
+        f"EMBED_REQ[{tid}] url={request.url}, body={request.get_data(as_text=True)}"
+    )
+
     validator = RequestValidator(proxy_config.secret_authentication_tokens)
     if not validator.validate(request):
         return jsonify({"error": "Unauthorized"}), 401
@@ -174,18 +181,23 @@ def handle_embedding_request():
             "AI-Tenant-Id": service_key.identity_zone_id,
         }
 
-        trace_uuid: str = str(uuid.uuid4())
-        transport_logger.info(f"EMBED_REQ[{trace_uuid}]={request}")
+        # Log request being sent to LLM service - no formatting
+        transport_logger.info(
+            f"EMBED_REQ_LLM[{tid}] url={endpoint_url}, body={modified_payload}"
+        )
 
         response = requests.post(endpoint_url, headers=headers, json=modified_payload)
 
-        transport_logger.info(f"EMBED_RSP[{trace_uuid}]={response}")
+        # Log raw response from LLM service - no formatting
+        transport_logger.info(
+            f"EMBED_RSP_LLM: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
+        )
 
         response.raise_for_status()
         return response.json(), 200
         # return jsonify(format_embedding_response(response.json(), model)), 200
     except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error in embedding request({model}): {http_err}")
+        logger.error(f"HTTP error in embedding request({model}): {http_err}", exc_info=True)
 
         if http_err.response is not None:
             response = http_err.response
@@ -195,19 +207,32 @@ def handle_embedding_request():
             if status_code == 429:
                 return handle_http_429_error(http_err, f"embedding request for {model}")
 
-            logger.error(f"Error response status: {response.status_code}")
-            logger.error(f"Error response headers: {dict(response.headers)}")
-            logger.error(f"Error response body: {response.text}")
+            logger.error(
+                f"EMBED_ERR: tid={tid}, status={status_code}, headers={dict(response.headers)}, body={response.text}",
+                exc_info=True
+            )
+            transport_logger.error(
+                f"EMBED_ERR: tid={tid}, status={status_code}, headers={dict(response.headers)}, body={response.text}"
+            )
+
             try:
                 error_json = http_err.response.json()
-                logger.error(f"Error response JSON: {json.dumps(error_json, indent=2)}")
+                logger.error(
+                    f"EMBED_ERR: tid={tid}, response={json.dumps(error_json, indent=2)}",
+                    exc_info=True
+                )
                 return jsonify(error_json), status_code
             except json.JSONDecodeError:
+                logger.error(f"EMBED_ERR: tid={tid}, response={response.text}", exc_info=True)
                 return jsonify({"error": response.text}), status_code
         else:
+            logger.error(
+                f"EMBED_ERR: tid={tid}, reason=no_response, error={str(http_err)}",
+                exc_info=True
+            )
             return jsonify({"error": str(http_err)}), 500
     except Exception as e:
-        logger.error(f"Error handling embedding request: {e}")
+        logger.error(f"EMBED_ERR: tid={tid}, reason=no_response, error={str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -550,7 +575,7 @@ def handle_claude_request(payload, model="3.5-sonnet"):
     try:
         selected_url, subaccount_name, _, model = load_balance_url(model)
     except ValueError as e:
-        logger.error(f"Failed to load balance URL for model '{model}': {e}")
+        logger.error(f"Failed to load balance URL for model '{model}': {e}", exc_info=True)
         raise ValueError(f"No valid Claude model found for '{model}' in any subAccount")
 
     # Determine the endpoint path based on model and streaming settings
@@ -598,7 +623,7 @@ def handle_gemini_request(payload, model="gemini-2.5-pro"):
     try:
         selected_url, subaccount_name, _, model = load_balance_url(model)
     except ValueError as e:
-        logger.error(f"Failed to load balance URL for model '{model}': {e}")
+        logger.error(f"Failed to load balance URL for model '{model}': {e}", exc_info=True)
         raise ValueError(f"No valid Gemini model found for '{model}' in any subAccount")
 
     # Extract the model name for the endpoint (e.g., "gemini-2.5-pro" from the model)
@@ -706,8 +731,12 @@ content_type = "Application/json"
 def proxy_openai_stream():
     """Main handler for chat completions endpoint with multi-subAccount support."""
     logger.info("Received request to /v1/chat/completions")
-    logger.debug(f"Request headers: {request.headers}")
-    logger.debug(f"Request body:\n{json.dumps(request.get_json(), indent=4)}")
+    tid = str(uuid.uuid4())
+
+    # Log raw request received from client
+    transport_logger.info(
+        f"CHAT_REQ: tid={tid}, url={request.url}, body={request.get_data(as_text=True)}"
+    )
 
     # Verify client authentication token
     validator = RequestValidator(proxy_config.secret_authentication_tokens)
@@ -717,50 +746,51 @@ def proxy_openai_stream():
 
     # Extract model from the request payload
     payload = request.json
-    model = payload.get("model")
-    if not model:
-        logger.warning("No model specified in request, using default model")
-        model = DEFAULT_GPT_MODEL  # Default model
+    original_model = payload.get("model")
+    effective_model = original_model or DEFAULT_GPT_MODEL
+
+    if not original_model:
+        logger.warning(
+            f"No model specified in request, using fallback model {effective_model}"
+        )
 
     # Check if model is available in any subAccount
-    if model not in proxy_config.model_to_subaccounts:
-        logger.warning(
-            f"Model '{model}' not found in any subAccount, falling back to default"
-        )
-        model = DEFAULT_GPT_MODEL  # Fallback model
-        if model not in proxy_config.model_to_subaccounts:
-            return jsonify(
-                {"error": f"Model '{model}' not available in any subAccount."}
-            ), 404
+    if effective_model not in proxy_config.model_to_subaccounts:
+        error_message: str = f"Model {effective_model} is not supported."
+        if effective_model != original_model:
+            error_message = f"Models '{original_model}' and '{effective_model}'(fallback) are NOT defined in any subAccount"
+
+        return jsonify({"error": error_message}), 404
 
     # Check streaming mode
     is_stream = payload.get("stream", False)
-    logger.info(f"Model: {model}, Streaming: {is_stream}")
+    logger.info(f"Model: {original_model}, Streaming: {is_stream}")
 
     try:
         # Handle request based on model type
-        if Detector.is_claude_model(model):
+        if Detector.is_claude_model(original_model):
             endpoint_url, modified_payload, subaccount_name = handle_claude_request(
-                payload, model
+                payload, original_model
             )
-        elif Detector.is_gemini_model(model):
+        elif Detector.is_gemini_model(original_model):
             endpoint_url, modified_payload, subaccount_name = handle_gemini_request(
-                payload, model
+                payload, original_model
             )
         else:
             endpoint_url, modified_payload, subaccount_name = handle_default_request(
-                payload, model
+                payload, original_model
             )
 
         # Get token for the selected subAccount
-        token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
-        subaccount_token = token_manager.get_token()
+        # TODO: Put TokenManager to module level instead of creating a new one for each request
+        subaccount = proxy_config.subaccounts[subaccount_name]
+        subaccount_token = TokenManager(subaccount).get_token()
 
         # Get resource group for the selected subAccount
-        resource_group = proxy_config.subaccounts[subaccount_name].resource_group
+        resource_group = subaccount.resource_group
 
         # Get service key for tenant ID
-        service_key = proxy_config.subaccounts[subaccount_name].service_key
+        service_key = subaccount.service_key
 
         # Prepare headers for the backend request
         headers = {
@@ -771,31 +801,43 @@ def proxy_openai_stream():
         }
 
         logger.info(
-            f"Forwarding request to {endpoint_url} with subAccount '{subaccount_name}'"
+            f"CHAT: tid={tid}, url={endpoint_url}, model={effective_model}, sub_account={subaccount_name}"
         )
 
         # Handle non-streaming requests
         if not is_stream:
             return handle_non_streaming_request(
-                endpoint_url, headers, modified_payload, model, subaccount_name
+                endpoint_url,
+                headers,
+                modified_payload,
+                original_model,
+                subaccount_name,
+                tid,
             )
 
         # Handle streaming requests
         return Response(
             stream_with_context(
                 generate_streaming_response(
-                    endpoint_url, headers, modified_payload, model, subaccount_name
+                    endpoint_url,
+                    headers,
+                    modified_payload,
+                    original_model,
+                    subaccount_name,
+                    tid,
                 )
             ),
             content_type="text/event-stream",
         )
 
     except ValueError as err:
-        logger.error(f"Value error during request handling: {err}")
+        logger.error(f"CHAT: Value error, tid={tid}, {str(err)}", exc_info=True)
         return jsonify({"error": str(err)}), 400
 
     except Exception as err:
-        logger.error(f"Unexpected error during request handling: {err}", exc_info=True)
+        logger.error(
+            f"CHAT: Unexpected error, tid={tid}, {str(err)}", exc_info=True
+        )
         return jsonify({"error": str(err)}), 500
 
 
@@ -803,8 +845,13 @@ def proxy_openai_stream():
 def proxy_claude_request():
     """Handles requests that are compatible with the Anthropic Claude Messages API using SAP AI SDK."""
     logger.info("Received request to /v1/messages")
-    logger.debug(f"Request headers: {request.headers}")
-    logger.debug(f"Request body:\n{json.dumps(request.get_json(), indent=4)}")
+    tid = str(uuid.uuid4())
+
+    # Log raw request received from client
+    transport_logger.info(f"MSG_CLIENT_REQ[{tid}] URL={request.url}")
+    transport_logger.info(
+        f"MSG_CLIENT_REQ[{tid}] BODY={request.get_data(as_text=True)}"
+    )
 
     # Validate API key using proxy config authentication
     api_key = request.headers.get("X-Api-Key", "")
@@ -852,7 +899,7 @@ def proxy_claude_request():
             request_model
         )
     except ValueError as e:
-        logger.error(f"Model validation failed: {e}")
+        logger.error(f"Model validation failed: {e}", exc_info=True)
 
         return jsonify(
             {
@@ -1039,6 +1086,10 @@ def proxy_claude_request():
             pretty_body_json = body_json
         logger.info("Request body for Bedrock (pretty):\n%s", pretty_body_json)
 
+        # Log request being sent to Bedrock/LLM service
+        transport_logger.info(f"MSG_BEDROCK_REQ[{tid}] MODEL={model}")
+        transport_logger.info(f"MSG_BEDROCK_REQ[{tid}] BODY={pretty_body_json}")
+
         if stream:
             # Handle streaming response
             # Check for errors before starting the stream (to return proper status code)
@@ -1105,26 +1156,62 @@ def proxy_claude_request():
                         chunk = json.loads(event["chunk"]["bytes"])
                         logger.debug(f"Streaming chunk: {chunk}")
 
+                        # Log raw chunk from Bedrock
+                        transport_logger.info(
+                            f"MSG_BEDROCK_RSP_CHUNK[{tid}] {json.dumps(chunk)[:200]}"
+                        )
+
                         chunk_type = chunk.get("type")
 
                         # Handle different chunk types according to Claude streaming format
                         if chunk_type == "message_start":
-                            yield f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            response_line = f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            transport_logger.info(
+                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                            )
+                            yield response_line
                         elif chunk_type == "content_block_start":
-                            yield f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            response_line = f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            transport_logger.info(
+                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                            )
+                            yield response_line
                         elif chunk_type == "content_block_delta":
-                            yield f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            response_line = f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            transport_logger.info(
+                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                            )
+                            yield response_line
                         elif chunk_type == "content_block_stop":
-                            yield f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            response_line = f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            transport_logger.info(
+                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                            )
+                            yield response_line
                         elif chunk_type == "message_delta":
-                            yield f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            response_line = f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            transport_logger.info(
+                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                            )
+                            yield response_line
                         elif chunk_type == "message_stop":
-                            yield f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            response_line = f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            transport_logger.info(
+                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                            )
+                            yield response_line
+                            transport_logger.info(
+                                f"MSG_STREAM_COMPLETE[{tid}] Stream finished successfully"
+                            )
                             yield "data: [DONE]\n\n"
                             break
                         elif chunk_type == "error":
                             # Handle error chunks in the stream
-                            yield f"event: error\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            response_line = f"event: error\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                            transport_logger.info(
+                                f"MSG_CLIENT_RSP_ERROR[{tid}] {response_line[:200]}"
+                            )
+                            yield response_line
                             break
 
                 except Exception as e:
@@ -1165,6 +1252,23 @@ def proxy_claude_request():
                 if chunk_data:
                     final_response = json.loads(chunk_data)
                     logger.debug(f"Non-streaming response: {final_response}")
+
+                    # Log response from Bedrock
+                    transport_logger.info(
+                        f"MSG_BEDROCK_RSP[{tid}] STATUS={response_status}"
+                    )
+                    transport_logger.info(
+                        f"MSG_BEDROCK_RSP[{tid}] BODY={json.dumps(final_response)}"
+                    )
+
+                    # Log response being sent to client
+                    transport_logger.info(
+                        f"MSG_CLIENT_RSP[{tid}] STATUS={response_status}"
+                    )
+                    transport_logger.info(
+                        f"MSG_CLIENT_RSP[{tid}] BODY={json.dumps(final_response)}"
+                    )
+
                     # Use actual response status code
                     return jsonify(final_response), response_status
                 else:
@@ -1351,7 +1455,7 @@ def proxy_claude_request_original():
             )
 
     except ValueError as err:
-        logger.error(f"Value error during Claude request handling: {err}")
+        logger.error(f"Value error during Claude request handling: {err}", exc_info=True)
         return jsonify(
             {
                 "type": "error",
@@ -1359,7 +1463,7 @@ def proxy_claude_request_original():
             }
         ), 400
     except requests.exceptions.HTTPError as err:
-        logger.error(f"HTTP error in Claude request({model}): {err}")
+        logger.error(f"HTTP error in Claude request({model}): {err}", exc_info=True)
         try:
             return jsonify(err.response.json()), err.response.status_code
         except:
@@ -1440,7 +1544,9 @@ def parse_sse_response_to_claude_json(response_text):
     return response_data
 
 
-def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
+def handle_non_streaming_request(
+    url, headers, payload, model, subaccount_name, tid
+):
     """Handle non-streaming request to backend API.
 
     Args:
@@ -1449,29 +1555,32 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         payload: Request payload
         model: Model name
         subaccount_name: Name of the selected subAccount
+        tid: Trace UUID for logging correlation
 
     Returns:
         Flask response with the API result
     """
     try:
-        # Log the raw request body and payload being forwarded
-        logger.info(
-            f"Raw request received (non-streaming): {json.dumps(request.json, indent=2)}"
-        )
-        logger.info(
-            f"Forwarding payload to API (non-streaming): {json.dumps(payload, indent=2)}"
+        # Log request being sent to LLM service
+        transport_logger.info(
+            f"CHAT_REQ_LLM: tid={tid}, url={url}, body={json.dumps(payload)}"
         )
 
         # Make request to backend API
         response = requests.post(url, headers=headers, json=payload, timeout=600)
-        response.raise_for_status()
-        logger.info(
-            f"Non-streaming request succeeded for model '{model}' using subAccount '{subaccount_name}'"
+
+        # Log raw response from LLM service
+        transport_logger.info(
+            f"CHAT_RSP_LLM: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
         )
+
+        response.raise_for_status()
+        logger.info(f"CHAT: OK, tid={tid}, model={model}")
 
         # Validate response has content before parsing
         if not response.content:
-            logger.error("Empty response body received from backend API")
+            logger.error(f"CHAT: EMPTY_RESPONSE, tid={tid}, model={model}")
+
             return jsonify({"error": "Empty response from backend API"}), 500
 
         # Process response based on model type
@@ -1487,9 +1596,10 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
             else:
                 response_data = response.json()
         except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"Failed to parse JSON response from backend API: {e}")
-            logger.error(f"Response text: {response.text}")
-            logger.error(f"Response headers: {dict(response.headers)}")
+            logger.error(
+                f"CHAT: JSON_PARSE_ERR, tid={tid}, response={response.text}, headers={dict(response.headers)}, err={str(e)}",
+                exc_info=True
+            )
             return jsonify(
                 {
                     "error": "Invalid JSON response from backend API",
@@ -1517,16 +1627,19 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         ip_address = request.remote_addr or request.headers.get(
             "X-Forwarded-For", "unknown_ip"
         )
-        token_usage_logger.info(
-            f"User: {user_id}, IP: {ip_address}, Model: {model}, SubAccount: {subaccount_name}, "
-            f"PromptTokens: {prompt_tokens}, CompletionTokens: {completion_tokens}, TotalTokens: {total_tokens}"
+        logger.info(
+            f"CHAT_RSP: tid={tid}, user={user_id}, ip={ip_address}, model={model}, sub_account={subaccount_name}, "
+            f"prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, total_tokens={total_tokens}"
+        )
+
+        # Log response being sent to client
+        transport_logger.info(
+            f"CHAT_RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
         )
 
         return jsonify(final_response), 200
 
     except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error in non-streaming request({model}): {http_err}")
-
         if http_err.response is not None:
             response = http_err.response
             status_code = response.status_code
@@ -1537,25 +1650,26 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
                     http_err, f"non-streaming request for {model}"
                 )
 
-            logger.error(f"Error response status: {response.status_code}")
-            logger.error(f"Error response headers: {dict(response.headers)}")
-            logger.error(f"Error response body: {response.text}")
+            logger.error(
+                f"CHAT: HTTP_ERR, tid={tid}, status={status_code}, headers={dict(response.headers)}, response={response.text}",
+                exc_info=True
+            )
             try:
                 error_data = http_err.response.json()
-                logger.error(f"Error response JSON: {json.dumps(error_data, indent=2)}")
                 return jsonify(error_data), http_err.response.status_code
             except json.JSONDecodeError:
                 return jsonify({"error": http_err.response.text}), status_code
         else:
+            logger.error(f"CHAT: HTTP_ERR, tid={tid}, err={str(http_err)}", exc_info=True)
             return jsonify({"error": str(http_err)}), 500
 
     except Exception as err:
-        logger.error(f"Error in non-streaming request: {err}", exc_info=True)
+        logger.error(f"CHAT: UNKNOWN_ERR, tid={tid}, err={str(err)}", exc_info=True)
         return jsonify({"error": str(err)}), 500
 
 
 def generate_streaming_response(
-    url, headers, payload, model: str, subaccount_name: str
+    url, headers, payload, model: str, subaccount_name: str, tid: str
 ):
     """Generate streaming response from backend API.
 
@@ -1565,16 +1679,18 @@ def generate_streaming_response(
         payload: Request payload
         model: Model name
         subaccount_name: Name of the selected subAccount
+        tid: Trace UUID for logging correlation
 
     Yields:
         SSE formatted response chunks
     """
     # Log the raw request body and payload being forwarded
     logger.info(
-        f"Raw request received (streaming): {json.dumps(request.json, indent=2)}"
+        f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}"
     )
-    logger.info(
-        f"Forwarding payload to API (streaming): {json.dumps(payload, indent=2)}"
+    # Log request being sent to LLM service
+    transport_logger.info(
+        f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}"
     )
 
     buffer = ""
@@ -1613,7 +1729,7 @@ def generate_streaming_response(
                                         "metadata", {}
                                     )
                                     logger.info(
-                                        f"Found metadata chunk from '{subaccount_name}': {claude_metadata}"
+                                        f"CHAT_RSP_ST_META: {claude_metadata}"
                                     )
                                     # Extract token counts immediately
                                     if isinstance(claude_metadata.get("usage"), dict):
@@ -1639,6 +1755,13 @@ def generate_streaming_response(
                                     )
                                 )
                                 if openai_sse_chunk_str:
+                                    # Log client chunk sent
+                                    logger.info(
+                                        f"CHAT_RSP_ST_CHUNK: tid={tid}, {openai_sse_chunk_str[:200]}"
+                                    )
+                                    transport_logger.info(
+                                        f"CHAT_RSP_ST_CHUNK: tid={tid}, {openai_sse_chunk_str}"
+                                    )
                                     yield openai_sse_chunk_str
                             except Exception as e:
                                 logger.error(
@@ -1758,7 +1881,8 @@ def generate_streaming_response(
 
                             except json.JSONDecodeError as e:
                                 logger.error(
-                                    f"Error parsing Gemini chunk from '{subaccount_name}': {e}"
+                                    f"Error parsing Gemini chunk from '{subaccount_name}': {e}",
+                                    exc_info=True
                                 )
                                 logger.error(
                                     f"Problematic line content: {line_content}"
@@ -1918,10 +2042,13 @@ def generate_streaming_response(
                 )
 
             # Standard stream end
+            transport_logger.info(
+                f"CHAT_STREAM_COMPLETE[{tid}] Streaming completed"
+            )
             yield "data: [DONE]\n\n"
 
         except requests.exceptions.HTTPError as http_err:
-            logger.error(f"HTTP Error in streaming response:({model}): {http_err}")
+            logger.error(f"HTTP Error in streaming response:({model}): {http_err}", exc_info=True)
 
             error_content: str = ""
 
@@ -1949,7 +2076,7 @@ def generate_streaming_response(
                     except json.JSONDecodeError:
                         pass
                 except Exception as e:
-                    logger.error(f"Could not read error response content: {e}")
+                    logger.error(f"Could not read error response content: {e}", exc_info=True)
             else:
                 status_code = 500
                 error_content = str(http_err)
