@@ -252,12 +252,12 @@ The project currently uses `config.json` as the configuration file name, but it 
 
 ```python
 # Support both old and new naming for backward compatibility
-parser.add_argument("--profile", type=str, default="profile.json", 
-                   help="Path to the profile configuration file")
+parser.add_argument("--profile", type=str, default="profile.json",
+                    help="Path to the profile configuration file")
 parser.add_argument("--config", type=str, dest="profile",
-                   help="(Deprecated) Use --profile instead")
+                    help="(Deprecated) Use --profile instead")
 # Warn users about deprecated flag
-if args.config:
+if args.proxy_config:
     logging.warning("--config flag is deprecated, please use --profile instead")
 ```
 

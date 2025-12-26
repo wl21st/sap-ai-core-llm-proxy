@@ -19,6 +19,7 @@ class TestTokenManager:
             client_id="test_client_id",
             client_secret="test_client_secret",
             auth_url="https://test.auth.com",
+            api_url="https://test.api.com",
             identity_zone_id="test_zone",
         )
 
@@ -181,6 +182,7 @@ class TestBackwardCompatibility:
             client_id="test_client_id",
             client_secret="test_client_secret",
             auth_url="https://test.auth.com",
+            api_url="https://test.api.com",
             identity_zone_id="test_zone",
         )
 

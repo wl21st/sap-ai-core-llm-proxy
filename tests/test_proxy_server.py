@@ -123,6 +123,7 @@ def sample_service_key():
         "client_id": "test-client-id",
         "client_secret": "test-client-secret",
         "auth_url": "https://test.authentication.sap.hana.ondemand.com",
+        "api_url": "https://test.api.sap.hana.ondemand.com",
         "identity_zone_id": "test-zone-id",
     }
 
@@ -219,11 +220,13 @@ class TestServiceKey:
             client_id="test-id",
             client_secret="test-secret",
             auth_url="https://test.url",
+            api_url="https://test.api.url",
             identity_zone_id="test-zone",
         )
         assert key.client_id == "test-id"
         assert key.client_secret == "test-secret"
         assert key.auth_url == "https://test.url"
+        assert key.api_url == "https://test.api.url"
         assert key.identity_zone_id == "test-zone"
 
 
@@ -288,8 +291,10 @@ class TestSubAccountConfig:
             resource_group="default",
             service_key_json="key.json",
             model_to_deployment_urls={
-                "anthropic--claude-3.5-sonnet": ["url1"],
-                "gpt-4": ["url2"],
+                "anthropic--claude-3.5-sonnet": [
+                    "https://api.ai.com/v2/inference/deployments/deployment1"
+                ],
+                "gpt-4": ["https://api.ai.com/v2/inference/deployments/deployment2"],
             },
         )
 
@@ -844,6 +849,7 @@ class TestFlaskEndpoints:
             client_id="id",
             client_secret="secret",
             auth_url="https://auth.url",
+            api_url="https://api.url",
             identity_zone_id="zone",
         )
         subaccount.token_info.token = "test-token"
@@ -904,6 +910,7 @@ class TestConfigLoading:
         assert "account2" in result.subaccounts
         assert result.port == 3001
         assert result.host == "127.0.0.1"
+
 
 # ============================================================================
 # INTEGRATION TESTS
@@ -970,6 +977,7 @@ class TestIntegration:
             client_id="id",
             client_secret="secret",
             auth_url="https://auth.url",
+            api_url="https://api.url",
             identity_zone_id="zone",
         )
 
@@ -1238,7 +1246,9 @@ class TestFlaskEndpointsEdgeCases:
         assert len(data["data"]) == 0
 
     @patch("auth.request_validator.RequestValidator.validate")
-    def test_embeddings_missing_input(self, mock_validate, flask_client):
+    def test_embeddings_missing_input(
+        self, mock_validate, flask_client, reset_proxy_config
+    ):
         """Test embeddings endpoint with missing input."""
         mock_validate.return_value = True
 
@@ -1253,7 +1263,9 @@ class TestFlaskEndpointsEdgeCases:
         assert "error" in data
 
     @patch("auth.request_validator.RequestValidator.validate")
-    def test_embeddings_unauthorized(self, mock_validate, flask_client):
+    def test_embeddings_unauthorized(
+        self, mock_validate, flask_client, reset_proxy_config
+    ):
         """Test embeddings endpoint without authorization."""
         mock_validate.return_value = False
 

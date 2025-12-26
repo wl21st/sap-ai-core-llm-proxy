@@ -19,7 +19,6 @@ from proxy_server import (
     handle_default_request,
     get_claude_stop_reason_from_gemini_chunk,
     get_claude_stop_reason_from_openai_chunk,
-    proxy_config,
 )
 from config import SubAccountConfig, ServiceKey
 
@@ -35,12 +34,24 @@ def client():
 @pytest.fixture
 def setup_test_config():
     """Setup test configuration."""
+    # Initialize proxy_config if it doesn't exist
+    if proxy_server.proxy_config is None:
+        from config import ProxyConfig
+
+        proxy_server.proxy_config = ProxyConfig(
+            host="127.0.0.1",
+            port=8080,
+            subaccounts={},
+            model_to_subaccounts={},
+            secret_authentication_tokens=[],
+        )
+
     # Save original config
-    original_subaccounts = proxy_config.subaccounts.copy()
-    original_model_mapping = proxy_config.model_to_subaccounts.copy()
+    original_subaccounts = proxy_server.proxy_config.subaccounts.copy()
+    original_model_mapping = proxy_server.proxy_config.model_to_subaccounts.copy()
     original_tokens = (
-        proxy_config.secret_authentication_tokens.copy()
-        if proxy_config.secret_authentication_tokens
+        proxy_server.proxy_config.secret_authentication_tokens.copy()
+        if proxy_server.proxy_config.secret_authentication_tokens
         else []
     )
 
@@ -59,6 +70,7 @@ def setup_test_config():
         client_id="test-client",
         client_secret="test-secret",
         auth_url="https://test.auth.com",
+        api_url="https://test.api.com",
         identity_zone_id="test-zone",
     )
     test_subaccount.model_to_deployment_urls = {
@@ -67,20 +79,20 @@ def setup_test_config():
         "gemini-2.5-pro": ["https://test.api.com/gemini"],
     }
 
-    proxy_config.subaccounts = {"test-sub": test_subaccount}
-    proxy_config.model_to_subaccounts = {
+    proxy_server.proxy_config.subaccounts = {"test-sub": test_subaccount}
+    proxy_server.proxy_config.model_to_subaccounts = {
         "gpt-4o": ["test-sub"],
         "anthropic--claude-4.5-sonnet": ["test-sub"],
         "gemini-2.5-pro": ["test-sub"],
     }
-    proxy_config.secret_authentication_tokens = ["test-token-123"]
+    proxy_server.proxy_config.secret_authentication_tokens = ["test-token-123"]
 
     yield
 
     # Restore original config
-    proxy_config.subaccounts = original_subaccounts
-    proxy_config.model_to_subaccounts = original_model_mapping
-    proxy_config.secret_authentication_tokens = original_tokens
+    proxy_server.proxy_config.subaccounts = original_subaccounts
+    proxy_server.proxy_config.model_to_subaccounts = original_model_mapping
+    proxy_server.proxy_config.secret_authentication_tokens = original_tokens
 
 
 class TestEmbeddingEndpoint:
@@ -241,8 +253,8 @@ class TestLoadBalanceUrlExtended:
     def test_load_balance_url_no_urls_configured(self, setup_test_config):
         """Test error when model has no URLs."""
         # Add model with no URLs
-        proxy_config.model_to_subaccounts["empty-model"] = ["test-sub"]
-        proxy_config.subaccounts["test-sub"].model_to_deployment_urls[
+        proxy_server.proxy_config.model_to_subaccounts["empty-model"] = ["test-sub"]
+        proxy_server.proxy_config.subaccounts["test-sub"].model_to_deployment_urls[
             "empty-model"
         ] = []
 
@@ -252,11 +264,13 @@ class TestLoadBalanceUrlExtended:
     def test_load_balance_url_round_robin(self, setup_test_config):
         """Test round-robin load balancing."""
         # Add multiple URLs for a model
-        proxy_config.subaccounts["test-sub"].model_to_deployment_urls["test-model"] = [
+        proxy_server.proxy_config.subaccounts["test-sub"].model_to_deployment_urls[
+            "test-model"
+        ] = [
             "https://url1.com",
             "https://url2.com",
         ]
-        proxy_config.model_to_subaccounts["test-model"] = ["test-sub"]
+        proxy_server.proxy_config.model_to_subaccounts["test-model"] = ["test-sub"]
 
         if hasattr(load_balance_url, "counters"):
             load_balance_url.counters = {}
@@ -337,10 +351,12 @@ class TestHandleGeminiRequestExtended:
         payload = {"messages": [{"role": "user", "content": "test"}], "stream": False}
 
         # Add model with colon
-        proxy_config.subaccounts["test-sub"].model_to_deployment_urls[
+        proxy_server.proxy_config.subaccounts["test-sub"].model_to_deployment_urls[
             "gemini-pro:latest"
         ] = ["https://test.com"]
-        proxy_config.model_to_subaccounts["gemini-pro:latest"] = ["test-sub"]
+        proxy_server.proxy_config.model_to_subaccounts["gemini-pro:latest"] = [
+            "test-sub"
+        ]
 
         url, modified_payload, subaccount = handle_gemini_request(
             payload, "gemini-pro:latest"
@@ -362,10 +378,10 @@ class TestHandleDefaultRequestExtended:
         }
 
         # Add o3 model
-        proxy_config.subaccounts["test-sub"].model_to_deployment_urls["o3-mini"] = [
-            "https://test.com"
-        ]
-        proxy_config.model_to_subaccounts["o3-mini"] = ["test-sub"]
+        proxy_server.proxy_config.subaccounts["test-sub"].model_to_deployment_urls[
+            "o3-mini"
+        ] = ["https://test.com"]
+        proxy_server.proxy_config.model_to_subaccounts["o3-mini"] = ["test-sub"]
 
         url, modified_payload, subaccount = handle_default_request(payload, "o3-mini")
 
@@ -443,8 +459,8 @@ class TestModelsEndpoint:
     def test_list_models_empty(self, client):
         """Test listing models when no models configured."""
         # Save original
-        original = proxy_config.model_to_subaccounts.copy()
-        proxy_config.model_to_subaccounts = {}
+        original = proxy_server.proxy_config.model_to_subaccounts.copy()
+        proxy_server.proxy_config.model_to_subaccounts = {}
 
         response = client.get("/v1/models")
         assert response.status_code == 200
@@ -452,7 +468,7 @@ class TestModelsEndpoint:
         assert len(response.json["data"]) == 0
 
         # Restore
-        proxy_config.model_to_subaccounts = original
+        proxy_server.proxy_config.model_to_subaccounts = original
 
     def test_list_models_with_data(self, client, setup_test_config):
         """Test listing models with configured models."""
@@ -857,7 +873,7 @@ class TestLoadBalanceFallbacks:
         from proxy_server import load_balance_url
 
         # Clear all Claude models
-        proxy_config.model_to_subaccounts = {"gpt-4": ["test-sub"]}
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["test-sub"]}
 
         with pytest.raises(ValueError, match="Claude model.*not available"):
             load_balance_url("claude-unknown-model")
@@ -867,7 +883,7 @@ class TestLoadBalanceFallbacks:
         from proxy_server import load_balance_url
 
         # Clear all Gemini models
-        proxy_config.model_to_subaccounts = {"gpt-4": ["test-sub"]}
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["test-sub"]}
 
         with pytest.raises(ValueError, match="Gemini model.*not available"):
             load_balance_url("gemini-unknown-model")
@@ -877,7 +893,9 @@ class TestLoadBalanceFallbacks:
         from proxy_server import load_balance_url
 
         # Only have Claude models
-        proxy_config.model_to_subaccounts = {"claude-3.5-sonnet": ["test-sub"]}
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "claude-3.5-sonnet": ["test-sub"]
+        }
 
         with pytest.raises(ValueError, match="Model.*not available"):
             load_balance_url("unknown-model")
@@ -1250,14 +1268,15 @@ class TestProxyOpenAIStreamEndpoint:
             client_id="test-client",
             client_secret="test-secret",
             auth_url="https://test.auth.com",
+            api_url="https://test.api.com",
             identity_zone_id="test-zone",
         )
-        proxy_config.subaccounts = {"test-sub": test_subaccount}
-        proxy_config.model_to_subaccounts = {
+        proxy_server.proxy_config.subaccounts = {"test-sub": test_subaccount}
+        proxy_server.proxy_config.model_to_subaccounts = {
             "anthropic--claude-4.5-sonnet": ["test-sub"],
             "gemini-2.5-pro": ["test-sub"],
         }
-        proxy_config.secret_authentication_tokens = ["test-token-123"]
+        proxy_server.proxy_config.secret_authentication_tokens = ["test-token-123"]
 
         response = client.post(
             "/v1/chat/completions",
@@ -1460,7 +1479,7 @@ class TestMainExecution:
 
         # Simulate the main block logic
         args = proxy_server.parse_arguments()
-        config = proxy_server.load_proxy_config(args.config)
+        config = proxy_server.load_proxy_config(args.proxy_config)
         proxy_server.init_logging(debug=args.debug)
 
         proxy_config = config
@@ -1504,7 +1523,7 @@ class TestMainExecution:
 
         # Simulate the main block logic
         args = proxy_server.parse_arguments()
-        config = proxy_server.load_proxy_config(args.config)
+        config = proxy_server.load_proxy_config(args.proxy_config)
         proxy_server.init_logging(debug=args.debug)
 
         proxy_config = config

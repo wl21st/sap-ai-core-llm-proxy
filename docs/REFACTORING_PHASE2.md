@@ -73,15 +73,16 @@ from utils import setup_logging, get_token_logger, handle_http_429_error
 ```
 
 **Updated Main Block:**
+
 ```python
 if __name__ == '__main__':
     args = parse_arguments()
-    
+
     # Setup logging using the new modular function
     setup_logging(debug=args.debug)
-    
-    logging.info(f"Loading configuration from: {args.config}")
-    config = load_config(args.config)
+
+    logging.info(f"Loading configuration from: {args.proxy_config}")
+    config = load_config(args.proxy_config)
     # ... rest of initialization
 ```
 

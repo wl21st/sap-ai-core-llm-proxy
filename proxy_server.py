@@ -6,12 +6,14 @@ import subprocess
 import sys
 import time
 from logging import Logger
+from typing import Optional
 
 import requests
 import uuid
 from botocore.exceptions import ClientError
 from flask import Flask, request, jsonify, Response, stream_with_context
 from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
+
 # SAP AI SDK imports
 from tenacity import (
     retry,
@@ -21,6 +23,7 @@ from tenacity import (
 )
 
 from auth import TokenManager, RequestValidator
+
 # Import from new modular structure
 from config import ProxyConfig, load_proxy_config
 from proxy_helpers import Detector, Converters
@@ -68,12 +71,12 @@ def retry_on_rate_limit(exception):
     # Fallback to string matching for other exception types
     error_message = str(exception).lower()
     return (
-            "too many tokens" in error_message
-            or "rate limit" in error_message
-            or "throttling" in error_message
-            or "too many requests" in error_message
-            or "exceeding the allowed request" in error_message
-            or "rate limited by ai core" in error_message
+        "too many tokens" in error_message
+        or "rate limit" in error_message
+        or "throttling" in error_message
+        or "too many requests" in error_message
+        or "exceeding the allowed request" in error_message
+        or "rate limited by ai core" in error_message
     )
 
 
@@ -131,7 +134,7 @@ def read_response_body_stream(response_body) -> str:
 
 
 # Global configuration
-proxy_config = ProxyConfig()
+proxy_config: Optional[ProxyConfig] = None
 
 app = Flask(__name__)
 
@@ -389,7 +392,7 @@ def get_claude_stop_reason_from_openai_chunk(openai_chunk):
     return None
 
 
-def load_balance_url(selected_model_name: str) -> tuple:
+def load_balance_url(selected_model_name: str) -> tuple[str, str, str, str]:
     """
     Load balance requests for a model across all subAccounts that have it deployed.
 
@@ -408,8 +411,8 @@ def load_balance_url(selected_model_name: str) -> tuple:
 
     # Get list of subAccounts that have this model
     if (
-            selected_model_name not in proxy_config.model_to_subaccounts
-            or not proxy_config.model_to_subaccounts[selected_model_name]
+        selected_model_name not in proxy_config.model_to_subaccounts
+        or not proxy_config.model_to_subaccounts[selected_model_name]
     ):
         # Check if it's a Claude or Gemini model and try fallback
         if Detector.is_claude_model(selected_model_name):
@@ -420,8 +423,8 @@ def load_balance_url(selected_model_name: str) -> tuple:
             fallback_models = ["anthropic--claude-4.5-sonnet"]
             for fallback in fallback_models:
                 if (
-                        fallback in proxy_config.model_to_subaccounts
-                        and proxy_config.model_to_subaccounts[fallback]
+                    fallback in proxy_config.model_to_subaccounts
+                    and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logger.info(
                         f"Using fallback Claude model '{fallback}' for '{selected_model_name}'"
@@ -429,7 +432,7 @@ def load_balance_url(selected_model_name: str) -> tuple:
                     selected_model_name = fallback
                     break
             else:
-                logger.error(f"No Claude models available in any subAccount")
+                logger.error("No Claude models available in any subAccount")
                 raise ValueError(
                     f"Claude model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
@@ -441,8 +444,8 @@ def load_balance_url(selected_model_name: str) -> tuple:
             fallback_models = ["gemini-2.5-pro"]
             for fallback in fallback_models:
                 if (
-                        fallback in proxy_config.model_to_subaccounts
-                        and proxy_config.model_to_subaccounts[fallback]
+                    fallback in proxy_config.model_to_subaccounts
+                    and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logger.info(
                         f"Using fallback Gemini model '{fallback}' for '{selected_model_name}'"
@@ -450,18 +453,20 @@ def load_balance_url(selected_model_name: str) -> tuple:
                     selected_model_name = fallback
                     break
             else:
-                logger.error(f"No Gemini models available in any subAccount")
+                logger.error("No Gemini models available in any subAccount")
                 raise ValueError(
                     f"Gemini model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
         else:
             # For other models, try common fallbacks
-            logger.warning(f"Model '{selected_model_name}' not found, trying fallback models")
+            logger.warning(
+                f"Model '{selected_model_name}' not found, trying fallback models"
+            )
             fallback_models = [DEFAULT_GPT_MODEL]
             for fallback in fallback_models:
                 if (
-                        fallback in proxy_config.model_to_subaccounts
-                        and proxy_config.model_to_subaccounts[fallback]
+                    fallback in proxy_config.model_to_subaccounts
+                    and proxy_config.model_to_subaccounts[fallback]
                 ):
                     logger.info(
                         f"Using fallback model '{fallback}' for '{selected_model_name}'"
@@ -483,8 +488,10 @@ def load_balance_url(selected_model_name: str) -> tuple:
         load_balance_url.counters[selected_model_name] = 0
 
     # Select subAccount using round-robin
-    subaccount_index = load_balance_url.counters[selected_model_name] % len(subaccount_names)
-    selected_subaccount = subaccount_names[subaccount_index]
+    subaccount_index = load_balance_url.counters[selected_model_name] % len(
+        subaccount_names
+    )
+    selected_subaccount: str = subaccount_names[subaccount_index]
 
     # Increment counter for next request
     load_balance_url.counters[selected_model_name] += 1
@@ -507,18 +514,23 @@ def load_balance_url(selected_model_name: str) -> tuple:
         load_balance_url.counters[url_counter_key] = 0
 
     url_index = load_balance_url.counters[url_counter_key] % len(url_list)
-    selected_url = url_list[url_index]
+    selected_url: str = url_list[url_index]
 
     # Increment URL counter for next request
     load_balance_url.counters[url_counter_key] += 1
 
     # Get resource group for the selected subAccount
-    selected_resource_group = subaccount.resource_group
+    selected_resource_group: str = subaccount.resource_group
 
     logger.info(
         f"Selected subAccount '{selected_subaccount}' and URL '{selected_url}' for model '{selected_model_name}'"
     )
-    return selected_url, selected_subaccount, selected_resource_group, selected_model_name
+    return (
+        selected_url,
+        selected_subaccount,
+        selected_resource_group,
+        selected_model_name,
+    )
 
 
 def handle_claude_request(payload, model="3.5-sonnet"):
@@ -631,7 +643,7 @@ def handle_default_request(payload, model=DEFAULT_GPT_MODEL):
         # Remove unsupported parameters for o3-mini
         modified_payload = payload.copy()
         if "temperature" in modified_payload:
-            logger.info(f"Removing 'temperature' parameter for o3-mini model.")
+            logger.info("Removing 'temperature' parameter for o3-mini model.")
             del modified_payload["temperature"]
         # Add checks for other potentially unsupported parameters if needed
     else:
@@ -842,10 +854,15 @@ def proxy_claude_request():
     except ValueError as e:
         logger.error(f"Model validation failed: {e}")
 
-        return jsonify({
-            "type": "error",
-            "error": {"type": "invalid_request_error", "message": f"Model '{request_model}' not available"}
-        }), 400
+        return jsonify(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": f"Model '{request_model}' not available",
+                },
+            }
+        ), 400
 
     # Check if this is an Anthropic model that should use the SDK
     if not Detector.is_claude_model(model):
@@ -862,10 +879,14 @@ def proxy_claude_request():
 
     try:
         # Use cached SAP AI SDK client for the model
-        logger.info(f"Obtaining SAP AI SDK client for model: {model}")
+        logger.info(
+            f"Obtaining SAP AI SDK client for model[{model}] for subaccount[{subaccount_name}]"
+        )
         bedrock_client: ClientWrapper = get_bedrock_client(
+            sub_account_config=proxy_config.get_subaccount(subaccount_name),
             model_name=model,
-            deployment_id=extract_deployment_id(selected_url))
+            deployment_id=extract_deployment_id(selected_url),
+        )
         logger.info("SAP AI SDK client ready (cached)")
 
         # Get the conversation messages
@@ -887,13 +908,13 @@ def proxy_claude_request():
                 items_to_remove = []
                 for i, item in enumerate(content):
                     if item.get("type") == "text" and (
-                            not item.get("text") or item.get("text") == ""
+                        not item.get("text") or item.get("text") == ""
                     ):
                         # Mark empty text items for removal
                         items_to_remove.append(i)
                     elif (
-                            item.get("type") == "image"
-                            and item.get("source", {}).get("type") == "base64"
+                        item.get("type") == "image"
+                        and item.get("source", {}).get("type") == "base64"
                     ):
                         # Compress image data if available (would need ImageCompressor utility)
                         image_data = item.get("source", {}).get("data")
@@ -1397,9 +1418,7 @@ def parse_sse_response_to_claude_json(response_text):
                     stop_reason = data["messageStop"].get("stopReason", "end_turn")
 
             except (json.JSONDecodeError, ValueError, SyntaxError) as e:
-                logger.warning(
-                    f"Failed to parse SSE data line: {data_str}, error: {e}"
-                )
+                logger.warning(f"Failed to parse SSE data line: {data_str}, error: {e}")
                 continue
 
     # Build Claude response format
@@ -1458,7 +1477,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         try:
             # For Claude models, check if response is SSE format (backend may send SSE even for non-streaming)
             if Detector.is_claude_model(model) and response.text.strip().startswith(
-                    "data: "
+                "data: "
             ):
                 logger.info(
                     "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
@@ -1513,16 +1532,16 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
 
             # Handle HTTP 429 (Too Many Requests) specifically
             if status_code == 429:
-                return handle_http_429_error(http_err, f"non-streaming request for {model}")
+                return handle_http_429_error(
+                    http_err, f"non-streaming request for {model}"
+                )
 
             logger.error(f"Error response status: {response.status_code}")
             logger.error(f"Error response headers: {dict(response.headers)}")
             logger.error(f"Error response body: {response.text}")
             try:
                 error_data = http_err.response.json()
-                logger.error(
-                    f"Error response JSON: {json.dumps(error_data, indent=2)}"
-                )
+                logger.error(f"Error response JSON: {json.dumps(error_data, indent=2)}")
                 return jsonify(error_data), http_err.response.status_code
             except json.JSONDecodeError:
                 return jsonify({"error": http_err.response.text}), status_code
@@ -1534,7 +1553,9 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name):
         return jsonify({"error": str(err)}), 500
 
 
-def generate_streaming_response(url, headers, payload, model: str, subaccount_name: str):
+def generate_streaming_response(
+    url, headers, payload, model: str, subaccount_name: str
+):
     """Generate streaming response from backend API.
 
     Args:
@@ -1564,7 +1585,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
 
     # Make streaming request to backend
     with requests.post(
-            url, headers=headers, json=payload, stream=True, timeout=600
+        url, headers=headers, json=payload, stream=True, timeout=600
     ) as response:
         try:
             response.raise_for_status()
@@ -1632,7 +1653,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                         {
                                             "index": 0,
                                             "delta": {
-                                                "content": f"[PROXY ERROR: Failed to process upstream data]"
+                                                "content": "[PROXY ERROR: Failed to process upstream data]"
                                             },
                                             "finish_reason": "stop",
                                         }
@@ -1716,9 +1737,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                     )
                                     yield openai_sse_chunk_str
                                 else:
-                                    logger.info(
-                                        f"Gemini chunk conversion returned None"
-                                    )
+                                    logger.info("Gemini chunk conversion returned None")
 
                                 # Extract token usage from usageMetadata if available
                                 if "usageMetadata" in gemini_chunk:
@@ -1761,7 +1780,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                         {
                                             "index": 0,
                                             "delta": {
-                                                "content": f"[PROXY ERROR: Failed to process upstream data]"
+                                                "content": "[PROXY ERROR: Failed to process upstream data]"
                                             },
                                             "finish_reason": "stop",
                                         }
@@ -1815,7 +1834,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                     start = buffer.index("data: ") + len("data: ")
                                     end = buffer.index("\n\n", start)
                                     json_chunk_str = buffer[start:end].strip()
-                                    buffer = buffer[end + 2:]
+                                    buffer = buffer[end + 2 :]
 
                                     # Convert Claude chunk to OpenAI format
                                     openai_sse_chunk_str = (
@@ -1836,7 +1855,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                                 "usage"
                                             ].get("output_tokens", 0)
                                             total_tokens = (
-                                                    prompt_tokens + completion_tokens
+                                                prompt_tokens + completion_tokens
                                             )
                                     except json.JSONDecodeError:
                                         pass
@@ -1857,8 +1876,8 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
                                     if '"finish_reason":' in chunk_text:
                                         for line in chunk_text.strip().split("\n"):
                                             if (
-                                                    line.startswith("data: ")
-                                                    and line[6:].strip() != "[DONE]"
+                                                line.startswith("data: ")
+                                                and line[6:].strip() != "[DONE]"
                                             ):
                                                 try:
                                                     data = json.loads(line[6:])
@@ -1880,7 +1899,7 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
             # Log token usage at the end of the stream (only for non-Claude 3.7/4 models)
             # Claude 3.7/4 models already log their token usage after sending the final usage chunk
             if not (
-                    Detector.is_claude_model(model) and Detector.is_claude_37_or_4(model)
+                Detector.is_claude_model(model) and Detector.is_claude_37_or_4(model)
             ):
                 user_id = request.headers.get("Authorization", "unknown")
                 if user_id and len(user_id) > 20:
@@ -1912,7 +1931,9 @@ def generate_streaming_response(url, headers, payload, model: str, subaccount_na
 
                 # Handle HTTP 429 (Too Many Requests) specifically
                 if status_code == 429:
-                    return handle_http_429_error(http_err, f"streaming request for {model}")
+                    return handle_http_429_error(
+                        http_err, f"streaming request for {model}"
+                    )
 
                 logger.error(f"Error response status: {response.status_code}")
                 logger.error(f"Error response headers: {dict(response.headers)}")
@@ -1991,7 +2012,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
         )
         try:
             with requests.post(
-                    url, headers=headers, json=payload, stream=True, timeout=600
+                url, headers=headers, json=payload, stream=True, timeout=600
             ) as response:
                 response.raise_for_status()
                 logger.debug(f"Claude backend response status: {response.status_code}")
@@ -2164,7 +2185,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
 
     try:
         with requests.post(
-                url, headers=headers, json=payload, stream=True, timeout=600
+            url, headers=headers, json=payload, stream=True, timeout=600
         ) as response:
             response.raise_for_status()
             logger.debug(f"Backend response status: {response.status_code}")
@@ -2194,7 +2215,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
 
                     claude_delta = None
                     if Detector.is_gemini_model(model):
-                        logger.debug(f"Converting Gemini chunk to Claude delta")
+                        logger.debug("Converting Gemini chunk to Claude delta")
                         claude_delta = Converters.convert_gemini_chunk_to_claude_delta(
                             backend_chunk
                         )
@@ -2207,7 +2228,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                                     f"Extracted stop reason from Gemini: {stop_reason}"
                                 )
                     else:  # Assume OpenAI-compatible
-                        logger.debug(f"Converting OpenAI chunk to Claude delta")
+                        logger.debug("Converting OpenAI chunk to Claude delta")
                         claude_delta = Converters.convert_openai_chunk_to_claude_delta(
                             backend_chunk
                         )
@@ -2301,10 +2322,9 @@ if __name__ == "__main__":
     logger.info(f"SAP AI Core LLM Proxy Server - Version: {version_info}")
 
     logger.info(f"Loading configuration from: {args.config}")
-    config = load_proxy_config(args.config)
 
-    # Check if this is the new format with subAccounts
-    proxy_config = config
+    # Load the proxy config
+    proxy_config = load_proxy_config(args.config)
 
     # Get server configuration
     host = proxy_config.host
@@ -2313,16 +2333,14 @@ if __name__ == "__main__":
     logger.info(
         f"Loaded multi-subAccount configuration with {len(proxy_config.subaccounts)} subAccounts"
     )
-    logger.info(
-        f"Available subAccounts: {', '.join(proxy_config.subaccounts.keys())}"
-    )
+    logger.info(f"Available subAccounts: {', '.join(proxy_config.subaccounts.keys())}")
     logger.info(
         f"Available models: {', '.join(proxy_config.model_to_subaccounts.keys())}"
     )
 
     logger.info(f"Starting proxy server on host {host} and port {port}...")
     logger.info(f"API Host: http://{host}:{port}/v1")
-    logger.info(f"Available endpoints:")
+    logger.info("Available endpoints:")
     logger.info(f"  - OpenAI Compatible API: http://{host}:{port}/v1/chat/completions")
     logger.info(f"  - Anthropic Claude API: http://{host}:{port}/v1/messages")
     logger.info(f"  - Models Listing: http://{host}:{port}/v1/models")
