@@ -2326,6 +2326,7 @@ def main() -> None:
     logger.info(f"Loading configuration from: {args.config}")
 
     # Load the proxy config
+    global proxy_config
     proxy_config = load_proxy_config(args.config)
 
     # Get server configuration
