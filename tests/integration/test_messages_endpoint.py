@@ -4,8 +4,8 @@ Integration tests for /v1/messages endpoint (Claude Messages API).
 Tests the Claude-specific Messages API endpoint against a running proxy server.
 """
 
-import json
 import pytest
+
 from .validators import ResponseValidator
 
 
@@ -30,10 +30,13 @@ class TestMessagesEndpoint:
                 "model": model,
                 "messages": [{"role": "user", "content": "Hello Claude"}],
                 "max_tokens": max_tokens,
+                "stream": False,
             },
         )
 
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.text}"
+        )
         data = response.json()
 
         # Validate Claude format
@@ -42,7 +45,9 @@ class TestMessagesEndpoint:
 
         # Check content
         assert len(data["content"]) > 0, "Content is empty"
-        assert data["content"][0]["type"] == "text", "First content block should be text"
+        assert data["content"][0]["type"] == "text", (
+            "First content block should be text"
+        )
         assert len(data["content"][0]["text"]) > 0, "Text content is empty"
 
     def test_messages_streaming(self, proxy_client, proxy_url, model, max_tokens):
@@ -75,6 +80,7 @@ class TestMessagesEndpoint:
                 "model": model,
                 "messages": [{"role": "user", "content": "Test"}],
                 "max_tokens": max_tokens,
+                "stream": False,
             },
         )
 
@@ -85,8 +91,12 @@ class TestMessagesEndpoint:
         validator.validate_claude_format(data)
 
         # Check specific Claude fields
-        assert data["type"] == "message", f"Expected type='message', got '{data['type']}'"
-        assert data["role"] == "assistant", f"Expected role='assistant', got '{data['role']}'"
+        assert data["type"] == "message", (
+            f"Expected type='message', got '{data['type']}'"
+        )
+        assert data["role"] == "assistant", (
+            f"Expected role='assistant', got '{data['role']}'"
+        )
         assert "stop_reason" in data, "Missing stop_reason"
         assert "usage" in data, "Missing usage"
 
@@ -98,6 +108,7 @@ class TestMessagesEndpoint:
                 "model": model,
                 "messages": [{"role": "user", "content": "Count to 5"}],
                 "max_tokens": max_tokens,
+                "stream": False,
             },
         )
 
@@ -113,7 +124,9 @@ class TestMessagesEndpoint:
         assert usage["input_tokens"] > 0, "input_tokens should be > 0"
         assert usage["output_tokens"] > 0, "output_tokens should be > 0"
 
-    def test_messages_streaming_sse_format(self, proxy_client, proxy_url, model, max_tokens):
+    def test_messages_streaming_sse_format(
+        self, proxy_client, proxy_url, model, max_tokens
+    ):
         """Validate SSE format for Claude streaming."""
         response = proxy_client.post(
             f"{proxy_url}/v1/messages",
@@ -126,20 +139,11 @@ class TestMessagesEndpoint:
             stream=True,
         )
 
-        assert response.status_code == 200
+        ResponseValidator.validate_sse_response(model, response)
 
-        validator = ResponseValidator()
-        event_count = 0
-
-        for line in response.iter_lines():
-            if line:
-                # Validate SSE format
-                validator.validate_sse_chunk(line)
-                event_count += 1
-
-        assert event_count > 0, f"No events received for model {model}"
-
-    def test_messages_with_system_prompt(self, proxy_client, proxy_url, model, max_tokens):
+    def test_messages_with_system_prompt(
+        self, proxy_client, proxy_url, model, max_tokens
+    ):
         """Test Messages API with system prompt."""
         response = proxy_client.post(
             f"{proxy_url}/v1/messages",
@@ -148,6 +152,7 @@ class TestMessagesEndpoint:
                 "system": "You are a helpful assistant.",
                 "messages": [{"role": "user", "content": "Who are you?"}],
                 "max_tokens": max_tokens,
+                "stream": False,
             },
         )
 
@@ -169,6 +174,7 @@ class TestMessagesEndpoint:
                     {"role": "user", "content": "What is 3+3?"},
                 ],
                 "max_tokens": max_tokens,
+                "stream": False,
             },
         )
 
@@ -187,10 +193,13 @@ class TestMessagesEndpoint:
                 "model": model,
                 "messages": [{"role": "user", "content": "Hi"}],
                 "max_tokens": max_tokens,
+                "stream": False,
             },
         )
 
-        assert response.status_code == 200, f"Messages smoke test failed for {model}: {response.text}"
+        assert response.status_code == 200, (
+            f"Messages smoke test failed for {model}: {response.text}"
+        )
         data = response.json()
         assert "content" in data
         assert len(data["content"]) > 0
@@ -204,15 +213,29 @@ class TestMessagesEndpointFallback:
     """Test Messages endpoint with non-Claude models (should fallback or error)."""
 
     @pytest.mark.parametrize("model", ["gpt-4.1", "gpt-5", "gemini-2.5-pro"])
-    def test_non_claude_model_handling(self, proxy_client, proxy_url, model, max_tokens):
+    def test_non_claude_model_handling(
+        self, proxy_client, proxy_url, model, max_tokens
+    ):
         """Test how Messages endpoint handles non-Claude models."""
-        response = proxy_client.post(
-            f"{proxy_url}/v1/messages",
-            json={
+        if model == "gpt-5":
+            json_data = {
+                "model": model,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_completion_tokens": 1024,
+                "reasoning_effort": "low",
+                "stream": False,
+            }
+        else:
+            json_data = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Hello"}],
                 "max_tokens": max_tokens,
-            },
+                "stream": False,
+            }
+
+        response = proxy_client.post(
+            f"{proxy_url}/v1/messages",
+            json=json_data,
         )
 
         # The endpoint might:

@@ -1380,7 +1380,7 @@ def proxy_claude_request_original():
                     "/converse" if Detector.is_claude_37_or_4(model) else "/invoke"
                 )
         else:  # Assume OpenAI-compatible
-            backend_payload = Detector.convert_claude_request_to_openai(payload)
+            backend_payload = Converters.convert_claude_request_to_openai(payload)
             api_version = (
                 API_VERSION_2024_12_01_PREVIEW
                 if any(m in model for m in ["o3", "o4-mini", "o3-mini"])

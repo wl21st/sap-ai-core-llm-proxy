@@ -6,8 +6,11 @@ against a running proxy server.
 """
 
 import json
+
 import pytest
-from .validators import ResponseValidator
+import requests
+
+from tests.integration.validators import ResponseValidator
 
 
 @pytest.mark.integration
@@ -34,7 +37,7 @@ class TestChatCompletionsNonStreaming:
                 "messages": [{"role": "user", "content": "Hello, how are you?"}],
                 "max_completion_tokens": 1000,
                 "stream": False,
-                "reasoning_effort": "low"
+                "reasoning_effort": "low",
             }
         elif model == "sonnet-4.5":
             request_data = {
@@ -50,20 +53,21 @@ class TestChatCompletionsNonStreaming:
                 "max_tokens": max_tokens,
                 "stream": False,
             }
-        
+
         response = proxy_client.post(
             f"{proxy_url}/v1/chat/completions",
             json=request_data,
             stream=True if model == "sonnet-4.5" else False,
         )
 
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.text}"
+        )
         data = response.json()
 
         # Validate response format
-        validator = ResponseValidator()
-        validator.validate_openai_format(data)
-        validator.validate_common_attributes(data)
+        ResponseValidator.validate_openai_format(data)
+        ResponseValidator.validate_common_attributes(data)
 
         # Check content is not empty
         content = data["choices"][0]["message"]["content"]
@@ -86,13 +90,18 @@ class TestChatCompletionsNonStreaming:
         data = response.json()
 
         # Validate token usage
-        validator = ResponseValidator()
-        validator.validate_token_usage(data)
+        ResponseValidator.validate_token_usage(data)
 
         # Check token counts are positive
-        assert data["usage"]["prompt_tokens"] > 0, f"prompt_tokens should be > 0 for model {model}"
-        assert data["usage"]["completion_tokens"] > 0, f"completion_tokens should be > 0 for model {model}"
-        assert data["usage"]["total_tokens"] > 0, f"total_tokens should be > 0 for model {model}"
+        assert data["usage"]["prompt_tokens"] > 0, (
+            f"prompt_tokens should be > 0 for model {model}"
+        )
+        assert data["usage"]["completion_tokens"] > 0, (
+            f"completion_tokens should be > 0 for model {model}"
+        )
+        assert data["usage"]["total_tokens"] > 0, (
+            f"total_tokens should be > 0 for model {model}"
+        )
 
     def test_response_format(self, proxy_client, proxy_url, model, max_tokens):
         """Validate OpenAI response format."""
@@ -109,8 +118,7 @@ class TestChatCompletionsNonStreaming:
         assert response.status_code == 200
         data = response.json()
 
-        validator = ResponseValidator()
-        validator.validate_openai_format(data)
+        ResponseValidator.validate_openai_format(data)
 
     def test_common_attributes(self, proxy_client, proxy_url, model, max_tokens):
         """Check id, object, created, model, choices."""
@@ -127,11 +135,12 @@ class TestChatCompletionsNonStreaming:
         assert response.status_code == 200
         data = response.json()
 
-        validator = ResponseValidator()
-        validator.validate_common_attributes(data)
+        ResponseValidator.validate_common_attributes(data)
 
         # Verify model name matches
-        assert data["model"].startswith(model), f"Expected model='{model}', got '{data['model']}'"
+        assert data["model"].startswith(model), (
+            f"Expected model='{model}', got '{data['model']}'"
+        )
 
     def test_multiple_messages(self, proxy_client, proxy_url, model, max_tokens):
         """Test with multiple messages in conversation."""
@@ -152,9 +161,8 @@ class TestChatCompletionsNonStreaming:
         assert response.status_code == 200
         data = response.json()
 
-        validator = ResponseValidator()
-        validator.validate_openai_format(data)
-        validator.validate_token_usage(data)
+        ResponseValidator.validate_openai_format(data)
+        ResponseValidator.validate_token_usage(data)
 
 
 @pytest.mark.integration
@@ -182,7 +190,7 @@ class TestChatCompletionsStreaming:
                 "messages": [{"role": "user", "content": "Hi"}],
                 "max_completion_tokens": max_tokens,
                 "reasoning_effort": "low",
-                "stream": False
+                "stream": False,
             }
             use_streaming = True
         elif model == "sonnet-4.5":
@@ -201,7 +209,7 @@ class TestChatCompletionsStreaming:
                 "stream": True,
             }
             use_streaming = True
-        
+
         response = proxy_client.post(
             f"{proxy_url}/v1/chat/completions",
             json=request_data,
@@ -219,7 +227,7 @@ class TestChatCompletionsStreaming:
 
     def test_sse_format(self, proxy_client, proxy_url, model, max_tokens):
         """Validate SSE message format."""
-        response = proxy_client.post(
+        response: requests.Response = proxy_client.post(
             f"{proxy_url}/v1/chat/completions",
             json={
                 "model": model,
@@ -230,50 +238,75 @@ class TestChatCompletionsStreaming:
             stream=True,
         )
 
-        assert response.status_code == 200
-
-        validator = ResponseValidator()
-        chunk_count = 0
-
-        for line in response.iter_lines():
-            if line:
-                # Validate SSE format
-                validator.validate_sse_chunk(line)
-                chunk_count += 1
-
-        assert chunk_count > 0, f"No chunks received for model {model}"
+        ResponseValidator.validate_sse_response(model, response)
 
     def test_streaming_chunks_format(self, proxy_client, proxy_url, model, max_tokens):
         """Validate chunk structure."""
-        response = proxy_client.post(
-            f"{proxy_url}/v1/chat/completions",
-            json={
+        if model == "gpt-5":
+            request_body_json = {
+                "model": model,
+                "messages": [{"role": "user", "content": "Say hello"}],
+                "reasoning_effort": "low",
+                "max_completion_tokens": 1024,
+                "stream": True,
+            }
+        else:
+            request_body_json = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Say hello"}],
                 "max_tokens": max_tokens,
                 "stream": True,
-            },
+            }
+
+        response: requests.Response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json=request_body_json,
             stream=True,
         )
 
-        assert response.status_code == 200
+        # TODO: Gemini-2.5-pro's wire format is different and not yet supported
+        # data: {
+        #   candidates: [
+        #     {
+        #       content: {
+        #         parts: [
+        #           {
+        #             text: ...
+        #           }
+        #         ],
+        #         role: model
+        #       },
+        #       finishReason: MAX_TOKENS,
+        #       index: 0
+        #     }
+        #   ],
+        #   usageMetadata: {
+        #     promptTokenCount: 50,
+        #     candidatesTokenCount: 1024,
+        #     totalTokenCount: 1074
+        #   }
+        # }
+        event_chunk_count, event_chunk_list, data_chunk_count, data_chunk_list = (
+            ResponseValidator.validate_sse_response(model, response)
+        )
 
-        validator = ResponseValidator()
         parsed_chunks = []
 
-        for line in response.iter_lines():
-            if line:
-                data_str = line[6:].decode("utf-8").strip()
-                if data_str != "[DONE]":
-                    chunk_data = json.loads(data_str)
-                    validator.validate_streaming_chunk(chunk_data)
-                    parsed_chunks.append(chunk_data)
+        for data_str in data_chunk_list:
+            data_str = data_str[6:]
+            if data_str != "[DONE]":
+                chunk_data = json.loads(data_str)
+                parsed_chunks.append(chunk_data)
 
-        assert len(parsed_chunks) > 0, f"No valid chunks parsed for model {model}"
+        assert len(parsed_chunks) > 0, (
+            f"No valid chunks parsed for model {model}, got {data_chunk_list} and {event_chunk_list}"
+        )
 
         # Extract content
-        content = validator.extract_streaming_content(parsed_chunks)
-        assert len(content) > 0, f"No content extracted from streaming chunks for model {model}"
+        content = ResponseValidator.extract_streaming_content(parsed_chunks)
+        assert len(content) > 0, (
+            f"No content extracted from streaming chunks for model {model}, got {parsed_chunks}, {data_chunk_list} and {event_chunk_list}"
+        )
 
     def test_streaming_token_usage(self, proxy_client, proxy_url, model, max_tokens):
         """Check token usage in final chunk."""
@@ -301,11 +334,13 @@ class TestChatCompletionsStreaming:
                     parsed_chunks.append(chunk_data)
 
         # Get final chunk with usage
-        final_chunk = validator.get_final_chunk_with_usage(parsed_chunks)
-        assert final_chunk is not None, f"No chunk with usage information found for model {model}"
+        final_chunk = ResponseValidator.get_final_chunk_with_usage(parsed_chunks)
+        assert final_chunk is not None, (
+            f"No chunk with usage information found for model {model}"
+        )
 
         # Validate token usage
-        validator.validate_token_usage(final_chunk)
+        ResponseValidator.validate_token_usage(final_chunk)
 
     def test_done_signal(self, proxy_client, proxy_url, model, max_tokens):
         """Verify [DONE] signal at end of stream."""
@@ -349,16 +384,17 @@ class TestChatCompletionsStreaming:
 class TestChatCompletionsSmoke:
     """Quick smoke tests for each model."""
 
-    def test_simple_prompt_smoke(self, proxy_client, proxy_url, model, prompt, max_tokens):
+    def test_simple_prompt_smoke(
+        self, proxy_client, proxy_url, model, prompt, max_tokens
+    ):
         """Quick smoke test with simple prompt."""
         # Use specific request format for different models
         if model == "gpt-5":
             request_data = {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_completion_tokens": 1000,
                 "stream": False,
-                "reasoning_effort": "low"
+                "reasoning_effort": "low",
             }
             use_streaming = False
         elif model == "sonnet-4.5":
@@ -368,7 +404,7 @@ class TestChatCompletionsSmoke:
                 "max_tokens": max_tokens,
                 "stream": False,  # Required for sonnet-4.5
             }
-            use_streaming = True
+            use_streaming = False
         else:
             request_data = {
                 "model": model,
@@ -377,39 +413,22 @@ class TestChatCompletionsSmoke:
                 "stream": False,
             }
             use_streaming = False
-        
+
         response = proxy_client.post(
             f"{proxy_url}/v1/chat/completions",
             json=request_data,
             stream=use_streaming,
         )
 
-        assert response.status_code == 200, f"Smoke test failed for {model}: {response.text}"
-        
-        # Handle streaming response for sonnet-4.5
-        if model == "sonnet-4.5":
-            # Process streaming response
-            content_found = False
-            for line in response.iter_lines():
-                if line:
-                    line = line.decode('utf-8')
-                    if line.startswith("data: ") and not line.startswith("data: [DONE]"):
-                        try:
-                            chunk_data = json.loads(line[6:])  # Remove "data: " prefix
-                            if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
-                                delta = chunk_data["choices"][0].get("delta", {})
-                                if delta.get("content"):
-                                    content_found = True
-                                    break
-                        except json.JSONDecodeError:
-                            continue
-            assert content_found, f"No content found in streaming response for {model}"
-        else:
-            # Handle non-streaming response
-            data = response.json()
-            assert "choices" in data
-            assert len(data["choices"]) > 0
-            assert data["choices"][0]["message"]["content"]
+        assert response.status_code == 200, (
+            f"Smoke test failed for {model}: {response.text}"
+        )
+
+        # Handle non-streaming response
+        data = response.json()
+        assert "choices" in data
+        assert len(data["choices"]) > 0
+        assert data["choices"][0]["message"]["content"]
 
     def test_streaming_smoke(self, proxy_client, proxy_url, model, prompt, max_tokens):
         """Quick smoke test for streaming."""
@@ -420,7 +439,7 @@ class TestChatCompletionsSmoke:
                 "messages": [{"role": "user", "content": prompt}],
                 "max_completion_tokens": 1000,
                 "stream": False,
-                "reasoning_effort": "low"
+                "reasoning_effort": "low",
             }
             use_streaming = False
         elif model == "sonnet-4.5":
@@ -439,7 +458,7 @@ class TestChatCompletionsSmoke:
                 "stream": True,
             }
             use_streaming = True
-        
+
         response = proxy_client.post(
             f"{proxy_url}/v1/chat/completions",
             json=request_data,

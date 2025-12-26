@@ -474,8 +474,9 @@ validator.validate_token_usage(response_data)
 - Verifies `total_tokens = prompt_tokens + completion_tokens`
 
 ### SSE Format
+
 ```python
-validator.validate_sse_chunk(chunk_bytes)
+validator.validate_sse_data_chunk(chunk_bytes)
 ```
 - Validates SSE message starts with ``
 - Checks for valid JSON or [DONE] signal
