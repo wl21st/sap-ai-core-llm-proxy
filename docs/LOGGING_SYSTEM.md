@@ -25,14 +25,14 @@ token_usage_logger = get_server_logger("token_usage")  # Usage metrics
 ### Client-Side Operations
 | Keyword | Direction | Purpose | Example |
 |---------|-----------|---------|---------|
-| `CLIENT_REQ` | → Client | Request received from client | `CLIENT_REQ: tid=abc123, url=/v1/chat/completions` |
-| `CLIENT_RSP` | ← Client | Response sent to client | `CLIENT_RSP: tid=abc123, status=200` |
+| `REQ` | → Client | Request received from client | `REQ: tid=abc123, url=/v1/chat/completions` |
+| `RSP` | ← Client | Response sent to client | `RSP: tid=abc123, status=200` |
 
 ### Vendor-Side Operations
 | Keyword | Direction | Purpose | Example |
 |---------|-----------|---------|---------|
-| `VENDOR_REQ` | → Vendor | Request sent to AI vendor | `VENDOR_REQ: tid=abc123, MODEL=claude-3-5-sonnet` |
-| `VENDOR_RSP` | ← Vendor | Response received from AI vendor | `VENDOR_RSP: tid=abc123, status=200` |
+| `OUT_REQ` | → Vendor | Request sent to AI vendor | `OUT_REQ: tid=abc123, MODEL=claude-3-5-sonnet` |
+| `OUT_RSP` | ← Vendor | Response received from AI vendor | `OUT_RSP: tid=abc123, status=200` |
 
 ### Streaming Operations
 | Keyword | Direction | Purpose | Example |
@@ -49,21 +49,21 @@ token_usage_logger = get_server_logger("token_usage")  # Usage metrics
 
 ### Chat Completions (`/v1/chat/completions`)
 ```
-CLIENT_REQ → VENDOR_REQ → VENDOR_RSP → CLIENT_RSP
+REQ → OUT_REQ → OUT_RSP → RSP
     ↓          ↓          ↓          ↓
   Client →  Bedrock  →  Bedrock  →  Client
 ```
 
 ### Messages API (`/v1/messages`)
 ```
-CLIENT_REQ → VENDOR_REQ → VENDOR_RSP → CLIENT_RSP
+REQ → OUT_REQ → OUT_RSP → RSP
     ↓          ↓          ↓          ↓
   Client →  Bedrock  →  Bedrock  →  Client
 ```
 
 ### Embeddings (`/v1/embeddings`)
 ```
-EMB_REQ → VENDOR_REQ → VENDOR_RSP
+REQ_EMB → OUT_REQ_EMBED → OUT_RSP_EMBED
    ↓          ↓          ↓
 Client →  Bedrock  →  Client
 ```
@@ -94,7 +94,7 @@ grep "transport_logger" proxy_server.log
 grep "CLIENT_" proxy_server.log
 
 # Vendor interactions
-grep "VENDOR_" proxy_server.log
+grep "OUT_" proxy_server.log
 
 # Streaming data
 grep "CHUNK\|DONE" proxy_server.log
@@ -109,10 +109,10 @@ grep "ERR" proxy_server.log
 grep "tid=12345678-1234-1234-1234-123456789abc" proxy_server.log
 
 # Chat completions only
-grep "CLIENT_REQ.*chat/completions" proxy_server.log
+grep "REQ.*chat/completions" proxy_server.log
 
 # Error responses
-grep "CLIENT_RSP.*status=[45]" proxy_server.log
+grep "RSP.*status=[45]" proxy_server.log
 
 # Streaming session
 grep "tid=TRACE_ID" proxy_server.log | grep "CHUNK\|DONE"
@@ -121,15 +121,15 @@ grep "tid=TRACE_ID" proxy_server.log | grep "CHUNK\|DONE"
 ## Monitoring and Debugging
 
 ### Health Checks
-1. **Request/Response Balance**: `CLIENT_REQ` count should match `CLIENT_RSP`
-2. **Vendor Communication**: Each `CLIENT_REQ` should have `VENDOR_REQ`/`VENDOR_RSP`
+1. **Request/Response Balance**: `REQ` count should match `RSP`
+2. **Vendor Communication**: Each `REQ` should have `OUT_REQ`/`OUT_RSP`
 3. **Streaming Integrity**: `DONE` should follow `CHUNK` sequences
 4. **Error Patterns**: Monitor `ERR` logs for failure points
 
 ### Performance Monitoring
 ```bash
 # Response time analysis (requires timestamp parsing)
-grep "CLIENT_RSP" proxy_server.log | head -20
+grep "RSP" proxy_server.log | head -20
 
 # Token usage tracking
 grep "token_usage" proxy_server.log
@@ -141,10 +141,10 @@ grep "429\|rate.limit" proxy_server.log
 ### Troubleshooting
 ```bash
 # Failed requests
-grep "CLIENT_RSP.*status=[5]" proxy_server.log
+grep "RSP.*status=[5]" proxy_server.log
 
 # Missing vendor responses
-grep "CLIENT_REQ" proxy_server.log | grep -v "VENDOR_REQ"
+grep "REQ" proxy_server.log | grep -v "OUT_REQ"
 
 # Streaming issues
 grep "CHUNK.*error\|DONE.*error" proxy_server.log
@@ -190,9 +190,9 @@ The logging system has evolved through several phases:
 
 1. **Phase 1**: Basic logging with inconsistent formats
 2. **Phase 2**: Structured logging with trace IDs
-3. **Phase 3**: Standardized keywords (`CLIENT_*`, `VENDOR_*`)
+3. **Phase 3**: Standardized keywords (`CLIENT_*`, `OUT_*`)
 4. **Phase 4**: Endpoint-specific prefixes (`EMB_*` for embeddings)
-5. **Phase 5**: Clear directional naming (`VENDOR_*` vs `BACKEND_*`)
+5. **Phase 5**: Clear directional naming (`OUT_*` vs `BACKEND_*`)
 
 ## Future Enhancements
 

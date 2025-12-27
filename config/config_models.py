@@ -75,6 +75,7 @@ class SubAccountConfig:
         # NOTE: Replace with pydantic code
         with open(self.service_key_json, "r") as service_key_file:
             service_key_json = json.load(service_key_file)
+
         self.service_key: ServiceKey = ServiceKey(
             client_id=service_key_json.get("clientid"),
             client_secret=service_key_json.get("clientsecret"),

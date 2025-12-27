@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from logging import Logger
+from typing import Dict, Any
 
 import requests
 from botocore.exceptions import ClientError
@@ -24,7 +25,7 @@ from tenacity import (
 from auth import RequestValidator, TokenManager
 
 # Import from new modular structure
-from config import ProxyConfig, load_proxy_config
+from config import ProxyConfig, load_proxy_config, ServiceKey
 from proxy_helpers import Converters, Detector
 from utils.error_handlers import handle_http_429_error
 from utils.logging_utils import get_server_logger, get_transport_logger, init_logging
@@ -140,12 +141,13 @@ app = Flask(__name__)
 
 @app.route("/v1/embeddings", methods=["POST"])
 def handle_embedding_request():
-    logger.info("Received request to /v1/embeddings")
-    tid = str(uuid.uuid4())
+    tid: str = str(uuid.uuid4())
 
     # Log raw request received from client
+    request_body_str: str = request.get_data(as_text=True)
+    logger.info(f"CLIENT_EMBED_REQ: tid={tid}, body={request_body_str}")
     transport_logger.info(
-        f"CLIENT_REQ: tid={tid}, url={request.url}, body={request.get_data(as_text=True)}"
+        f"CLIENT_EMBED_REQ: tid={tid}, url={request.url}, body={request_body_str}"
     )
 
     validator = RequestValidator(proxy_config.secret_authentication_tokens)
@@ -161,16 +163,17 @@ def handle_embedding_request():
         return jsonify({"error": "Input text is required"}), 400
 
     try:
-        endpoint_url, modified_payload, subaccount_name = handle_embedding_service_call(
-            input_text, model, encoding_format
+        vendor_endpoint_url, upstream_payload, subaccount_name = (
+            handle_embedding_service_call(input_text, model, encoding_format)
         )
+
         # Create a global token manager for sub accounts
         token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
         subaccount_token = token_manager.get_token()
         subaccount = proxy_config.subaccounts[subaccount_name]
         resource_group = subaccount.resource_group
-        service_key = subaccount.service_key
-        headers = {
+        service_key: ServiceKey = subaccount.service_key
+        headers: Dict[str, str] = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {subaccount_token}",
             "AI-Resource-Group": resource_group,
@@ -179,14 +182,16 @@ def handle_embedding_request():
 
         # Log request being sent to LLM service - no formatting
         transport_logger.info(
-            f"VENDOR_REQ: tid={tid}, url={endpoint_url}, body={modified_payload}"
+            f"OUT_REQ_EMBED: tid={tid}, url={vendor_endpoint_url}, body={upstream_payload}"
         )
 
-        response = requests.post(endpoint_url, headers=headers, json=modified_payload)
+        response = requests.post(
+            vendor_endpoint_url, headers=headers, json=upstream_payload
+        )
 
         # Log raw response from LLM service - no formatting
         transport_logger.info(
-            f"VENDOR_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
+            f"OUT_RSP_EMBED: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
         )
 
         response.raise_for_status()
@@ -692,18 +697,11 @@ def handle_default_request(payload, model=DEFAULT_GPT_MODEL):
 
 
 @app.route("/v1/models", methods=["GET", "OPTIONS"])
-def list_models():
+def list_models() -> tuple[Response, int]:
     """Lists all available models across all subAccounts."""
-    logger.info("Received request to /v1/models")
-    logger.info(f"Request headers: {request.headers}")
-    # logger.info(f"Request payload: {request.get_json()}")
+    logger.info("Received request to /v1/models, headers={request.headers}")
 
-    # if not verify_request_token(request):
-    #     logger.info("Unauthorized request to list models.")
-    #     return jsonify({"error": "Unauthorized"}), 401
-
-    # Collect all available models from all subAccounts
-    models = []
+    models: list[dict[str, Any]] = []
     timestamp = int(time.time())
 
     for model_name in proxy_config.model_to_subaccounts.keys():
@@ -741,7 +739,7 @@ def proxy_openai_stream():
 
     # Log raw request received from client
     transport_logger.info(
-        f"CLIENT_REQ: tid={tid}, url={request.url}, body={request.get_data(as_text=True)}"
+        f"REQ: tid={tid}, url={request.url}, body={request.get_data(as_text=True)}"
     )
 
     # Verify client authentication token
@@ -848,14 +846,12 @@ def proxy_openai_stream():
 @app.route("/v1/messages", methods=["POST"])
 def proxy_claude_request():
     """Handles requests that are compatible with the Anthropic Claude Messages API using SAP AI SDK."""
-    logger.info("Received request to /v1/messages")
-    tid = str(uuid.uuid4())
+    tid: str = str(uuid.uuid4())
 
     # Log raw request received from client
-    transport_logger.info(f"CLIENT_REQ: tid={tid}, URL={request.url}")
-    transport_logger.info(
-        f"CLIENT_REQ: tid={tid}, BODY={request.get_data(as_text=True)}"
-    )
+    request_body_str: str = request.get_data(as_text=True)
+    logger.info(f"REQ: tid={tid}, body={request_body_str}")
+    transport_logger.info(f"REQ: tid={tid}, url={request.url}, body={request_body_str}")
 
     # Validate API key using proxy config authentication
     api_key = request.headers.get("X-Api-Key", "")
@@ -875,10 +871,10 @@ def proxy_claude_request():
         ), 401
 
     # Get request body and extract model
-    request_json = request.get_json(cache=False)
+    request_body_json = request.get_json(cache=False)
 
     # Handle missing model by hardcoding to anthropic--claude-4.5-sonnet
-    request_model = request_json.get("model")
+    request_model = request_body_json.get("model")
     if (request_model is None) or (request_model == ""):
         # Hardcode to anthropic--claude-4.5-sonnet if no model specified
         request_model = DEFAULT_CLAUDE_MODEL
@@ -926,7 +922,7 @@ def proxy_claude_request():
     logger.info(f"Request from Claude API for model: {model}")
 
     # Extract streaming flag, default to True
-    stream = request_json.get("stream", True)
+    stream = request_body_json.get("stream", True)
 
     try:
         # Use cached SAP AI SDK client for the model
@@ -942,10 +938,10 @@ def proxy_claude_request():
         logger.info("SAP AI SDK client ready (cached)")
 
         # Get the conversation messages
-        conversation = request_json.get("messages", [])
+        conversation = request_body_json.get("messages", [])
         logger.debug(f"Original conversation: {conversation}")
 
-        thinking_cfg_preview = request_json.get("thinking")
+        thinking_cfg_preview = request_body_json.get("thinking")
         logger.info(
             "Claude request context: stream=%s, messages=%s, has_thinking=%s",
             stream,
@@ -980,7 +976,7 @@ def proxy_claude_request():
                     content.pop(i)
 
         # Prepare the request body for Bedrock
-        body = request_json.copy()
+        body = request_body_json.copy()
 
         # Log the original request body for debugging
         logger.info("Original request body keys: %s", list(body.keys()))
@@ -1091,8 +1087,9 @@ def proxy_claude_request():
         logger.info("Request body for Bedrock (pretty):\n%s", pretty_body_json)
 
         # Log request being sent to Bedrock/LLM service
-        transport_logger.info(f"VENDOR_REQ: tid={tid}, MODEL={model}")
-        transport_logger.info(f"VENDOR_REQ: tid={tid}, BODY={pretty_body_json}")
+        transport_logger.info(
+            f"OUT_REQ: tid={tid}, model={model}, body={pretty_body_json}"
+        )
 
         if stream:
             # Handle streaming response
@@ -1259,18 +1256,16 @@ def proxy_claude_request():
 
                     # Log response from Bedrock
                     transport_logger.info(
-                        f"VENDOR_RSP: tid={tid}, STATUS={response_status}"
+                        f"OUT_RSP: tid={tid}, STATUS={response_status}"
                     )
                     transport_logger.info(
-                        f"VENDOR_RSP: tid={tid}, BODY={json.dumps(final_response)}"
+                        f"OUT_RSP: tid={tid}, BODY={json.dumps(final_response)}"
                     )
 
                     # Log response being sent to client
+                    transport_logger.info(f"RSP: tid={tid}, STATUS={response_status}")
                     transport_logger.info(
-                        f"CLIENT_RSP: tid={tid}, STATUS={response_status}"
-                    )
-                    transport_logger.info(
-                        f"CLIENT_RSP: tid={tid}, BODY={json.dumps(final_response)}"
+                        f"RSP: tid={tid}, BODY={json.dumps(final_response)}"
                     )
 
                     # Use actual response status code
@@ -1394,7 +1389,9 @@ def proxy_claude_request_original():
 
         endpoint_url = f"{base_url.rstrip('/')}{endpoint_path}"
 
-        service_key = proxy_config.subaccounts[subaccount_name].service_key
+        service_key: ServiceKey | None = proxy_config.subaccounts[
+            subaccount_name
+        ].service_key
         headers = {
             "AI-Resource-Group": resource_group,
             "Content-Type": "application/json",
@@ -1567,7 +1564,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
     try:
         # Log request being sent to LLM service
         transport_logger.info(
-            f"VENDOR_REQ: tid={tid}, url={url}, body={json.dumps(payload)}"
+            f"OUT_REQ: tid={tid}, url={url}, body={json.dumps(payload)}"
         )
 
         # Make request to backend API
@@ -1575,7 +1572,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
 
         # Log raw response from LLM service
         transport_logger.info(
-            f"VENDOR_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
+            f"OUT_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
         )
 
         response.raise_for_status()
@@ -1644,7 +1641,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
 
         # Log response being sent to client
         transport_logger.info(
-            f"CLIENT_RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
+            f"RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
         )
 
         return jsonify(final_response), 200
@@ -1697,10 +1694,10 @@ def generate_streaming_response(
         SSE formatted response chunks
     """
     # Log the raw request body and payload being forwarded
-    logger.info(f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}")
+    payload_json_str: str = json.dumps(payload)
     # Log request being sent to LLM service
     transport_logger.info(
-        f"VENDOR_REQ: tid={tid}, url={url}], body={json.dumps(payload)}"
+        f"OUT_REQ_CHAT_ST: tid={tid}, url={url}], body={payload_json_str}"
     )
 
     buffer = ""
