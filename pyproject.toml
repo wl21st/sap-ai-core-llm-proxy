@@ -10,10 +10,12 @@ dependencies = [
     "botocore>=1.35.0",
     "flask>=3.1.2",
     "langchain-core>=0.3.80",
-    "litellm==1.80.10",
+    "litellm==1.80.11",
+    "numpy==2.4.0",
     "openai>=2.8.0",
     "protobuf>=6.33.1",
     "pydantic>=2.0.0",
+    "pyrefly>=0.46.1",
     "ruff>=0.14.10",
     "sap-ai-sdk-gen[all]>=5.10.0",
     "tenacity>=9.0.0",
@@ -46,8 +48,22 @@ dev = [
     "pytest-mock>=3.15.1",
     "ruff>=0.14.10",
     "safety>=3.7.0",
+    "ty>=0.0.7",
 ]
+
+[tool.uv]
+package = true
 
 [tool.setuptools]
 packages = ["auth", "config", "utils"]
 py-modules = ["proxy_server", "proxy_helpers"]
+
+[tool.ruff]
+select = ["ANN"]  # ANN001 args, ANN201 returns, etc.
+ignore = ["ANN101", "ANN102"]  # Skip stubs if needed
+line-length = 88
+
+[tool.pyrefly]
+strict = false  # Tune to avoid slowdowns initially
+skip-unannotated = false
+show-inlay-hints=true
