@@ -157,7 +157,7 @@ Transform Anthropic's event-driven blocks to OpenAI's simple `chat.completion.ch
 ## LiteLLM Examples
 
 ```bash
-$ curl --request POST \                                                                                                                                                                               2 ✘  3m 20s   3.38   31%   9.3G   10:50:22  
+$ curl --request POST \                                                                                                                                                                               
   --url http://localhost:4000/v1/chat/completions \
   --header 'authorization: Bearer 123' \
   --header 'content-type: application/json' \
@@ -179,7 +179,7 @@ data: {"id":"chatcmpl-CrPwFc2ACzWwjkheoXq3taG0MDDw6","created":1766847414,"model
 
 data: [DONE]
 
-$ curl --request POST \                                                                                                                                                                                           ✔  2.83   32%   8.17G   06:57:40  
+$ curl --request POST \                                                                                                                                                                                           
   --url http://localhost:4000/v1/chat/completions \
   --header 'authorization: Bearer 123' \
   --header 'content-type: application/json' \
@@ -251,7 +251,7 @@ data: {"id":"msg_bdrk_0143mcnqZEqs1WhfNin8MAwV","created":1766847474,"model":"an
 
 data: [DONE]
 
-$ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   ✔  15s   2.97   32%   8.15G   06:58:04  
+$ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
   --url http://localhost:4000/v1/messages \        
   --header 'authorization: Bearer 123' \
   --header 'content-type: application/json' \
@@ -362,7 +362,7 @@ data: {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage":
 event: message_stop
 data: {"type": "message_stop"}
 
-$ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   ✔  20s   2.97   32%   7.91G   06:59:40  
+$ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
   --url http://localhost:4000/v1/chat/completions \
   --header 'authorization: Bearer 123' \
   --header 'content-type: application/json' \
@@ -383,7 +383,7 @@ data: {"id":"chatcmpl-CrPwFc2ACzWwjkheoXq3taG0MDDw6","created":1766847990,"model
 
 data: [DONE]
 
- $ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ✔  2.72   32%   8.06G   07:06:31  
+ $ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
   --url http://localhost:4000/v1/chat/completions \
   --header 'authorization: Bearer 123' \
   --header 'content-type: application/json' \
@@ -410,7 +410,7 @@ data: {"id":"chatcmpl-CrQARj3xhguKeWRCaxMNCD3f8JQ6k","created":1766848007,"model
 
 data: [DONE]
 
-$ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   ✔  17s   2.98   32%   8.09G   07:06:56  
+$ curl --request POST \                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
   --url http://localhost:4000/v1/chat/completions \
   --header 'authorization: Bearer 123' \
   --header 'content-type: application/json' \
