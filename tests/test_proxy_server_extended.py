@@ -833,6 +833,118 @@ class TestGenerateStreamingResponse:
 
             assert result is not None
 
+    @patch("proxy_server.requests.post")
+    def test_generate_streaming_response_single_done_signal(
+        self, mock_post, client, setup_test_config
+    ):
+        """Test that streaming response has exactly ONE [DONE] signal when backend sends [DONE]."""
+        from proxy_server import generate_streaming_response
+        import types
+
+        # Mock streaming response where backend already sends [DONE]
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content = Mock(
+            return_value=[
+                b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4.1-2025-04-14","choices":[{"delta":{"role":"assistant"},"finish_reason":null,"index":0}]}\n\n',
+                b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4.1-2025-04-14","choices":[{"delta":{"content":"Hello"},"finish_reason":null,"index":0}]}\n\n',
+                b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4.1-2025-04-14","choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\n',
+                b"data: [DONE]\n\n",  # Backend sends [DONE]
+            ]
+        )
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        mock_post.return_value = mock_response
+
+        with client.application.test_request_context(
+            "/test",
+            json={"messages": [{"role": "user", "content": "test"}]},
+            headers={"Authorization": "Bearer test-token"},
+        ):
+            result = generate_streaming_response(
+                "https://test.com/api",
+                {"Authorization": "Bearer token"},
+                {"messages": [{"role": "user", "content": "test"}]},
+                "gpt-4.1",
+                "test-sub",
+                "test-tid-123",
+            )
+
+            # Collect all chunks from generator
+            assert isinstance(result, types.GeneratorType)
+            chunks = list(result)
+
+            # Count [DONE] occurrences
+            done_count = 0
+            for chunk in chunks:
+                chunk_str = (
+                    chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+                )
+                if "[DONE]" in chunk_str:
+                    done_count += 1
+
+            # Assert exactly one [DONE]
+            assert done_count == 1, (
+                f"Expected exactly 1 [DONE] signal, but found {done_count}. "
+                f"Chunks: {chunks}"
+            )
+
+    @patch("proxy_server.requests.post")
+    def test_generate_streaming_response_adds_done_when_missing(
+        self, mock_post, client, setup_test_config
+    ):
+        """Test that streaming response adds [DONE] signal when backend doesn't send it."""
+        from proxy_server import generate_streaming_response
+        import types
+
+        # Mock streaming response where backend does NOT send [DONE]
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content = Mock(
+            return_value=[
+                b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"delta":{"role":"assistant"},"finish_reason":null,"index":0}]}\n\n',
+                b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"delta":{"content":"Hello"},"finish_reason":null,"index":0}]}\n\n',
+                b'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\n',
+                # No [DONE] from backend
+            ]
+        )
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        mock_post.return_value = mock_response
+
+        with client.application.test_request_context(
+            "/test",
+            json={"messages": [{"role": "user", "content": "test"}]},
+            headers={"Authorization": "Bearer test-token"},
+        ):
+            result = generate_streaming_response(
+                "https://test.com/api",
+                {"Authorization": "Bearer token"},
+                {"messages": [{"role": "user", "content": "test"}]},
+                "gpt-4",
+                "test-sub",
+                "test-tid-123",
+            )
+
+            # Collect all chunks from generator
+            assert isinstance(result, types.GeneratorType)
+            chunks = list(result)
+
+            # Count [DONE] occurrences
+            done_count = 0
+            for chunk in chunks:
+                chunk_str = (
+                    chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+                )
+                if "[DONE]" in chunk_str:
+                    done_count += 1
+
+            # Assert exactly one [DONE] (added by proxy)
+            assert done_count == 1, (
+                f"Expected exactly 1 [DONE] signal, but found {done_count}. "
+                f"Chunks: {chunks}"
+            )
+
 
 class TestConfigurationLoading:
     """Test cases for configuration loading."""
@@ -1228,8 +1340,12 @@ class TestProxyOpenAIStreamEndpoint:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.headers = {}
-        mock_response.text = '{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
-        mock_response.content = b'{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
+        mock_response.text = (
+            '{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
+        )
+        mock_response.content = (
+            b'{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
+        )
         mock_post.return_value = mock_response
 
         response = client.post(

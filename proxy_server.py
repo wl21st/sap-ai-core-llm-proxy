@@ -12,6 +12,7 @@ import requests
 from botocore.exceptions import ClientError
 from flask import Flask, Response, jsonify, request, stream_with_context
 from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
+
 # SAP AI SDK imports
 from tenacity import (
     RetryError,
@@ -21,6 +22,7 @@ from tenacity import (
 )
 
 from auth import RequestValidator, TokenManager
+
 # Import from new modular structure
 from config import ProxyConfig, load_proxy_config
 from proxy_helpers import Converters, Detector
@@ -1701,6 +1703,7 @@ def generate_streaming_response(
     completion_tokens = 0
     claude_metadata = {}  # For Claude 3.7 metadata
     chunk = None  # Initialize chunk variable to avoid reference errors
+    done_sent = False  # Track if [DONE] was already sent by backend
 
     # Make streaming request to backend
     with requests.post(
@@ -1998,6 +2001,9 @@ def generate_streaming_response(
                                 # Try to extract token counts from final chunk
                                 if chunk:
                                     chunk_text = chunk.decode("utf-8")
+                                    # Check if [DONE] was sent by backend
+                                    if "[DONE]" in chunk_text:
+                                        done_sent = True
                                     if '"finish_reason":' in chunk_text:
                                         for line in chunk_text.strip().split("\n"):
                                             if (
@@ -2043,7 +2049,9 @@ def generate_streaming_response(
 
             # Standard stream end
             transport_logger.info(f"CHAT_STREAM_COMPLETE[{tid}] Streaming completed")
-            yield "data: [DONE]\n\n"
+            # Only send [DONE] if backend didn't already send it
+            if not done_sent:
+                yield "data: [DONE]\n\n"
 
         except requests.exceptions.HTTPError as http_err:
             logger.error(

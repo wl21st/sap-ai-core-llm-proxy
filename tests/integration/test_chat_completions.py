@@ -366,6 +366,40 @@ class TestChatCompletionsStreaming:
 
         assert found_done, f"[DONE] signal not found in stream for model {model}"
 
+    def test_single_done_signal(self, proxy_client, proxy_url, model, max_tokens):
+        """Verify exactly ONE [DONE] signal at end of stream (no duplicates)."""
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "Say hello"}],
+                "max_tokens": max_tokens,
+                "stream": True,
+            },
+            stream=True,
+        )
+
+        assert response.status_code == 200
+
+        done_count = 0
+        all_lines = []
+        for line in response.iter_lines():
+            if line:
+                line_str = line.decode("utf-8")
+                all_lines.append(line_str)
+                data_str = (
+                    line_str[6:].strip()
+                    if line_str.startswith("data: ")
+                    else line_str.strip()
+                )
+                if data_str == "[DONE]":
+                    done_count += 1
+
+        assert done_count == 1, (
+            f"Expected exactly 1 [DONE] signal for model {model}, but found {done_count}. "
+            f"Lines: {all_lines[-5:]}"  # Show last 5 lines for debugging
+        )
+
 
 @pytest.mark.integration
 @pytest.mark.real
