@@ -239,3 +239,4 @@ releases/
 
 # Build-time generated files
 _version.txt
+logs/
