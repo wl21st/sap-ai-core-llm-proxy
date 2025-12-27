@@ -729,6 +729,110 @@ class TestHandleNonStreamingRequest:
             assert response_data["error"] == "Empty response from backend API"
 
     @patch("proxy_server.requests.post")
+    def test_handle_non_streaming_request_sse_detection_data_prefix(
+        self, mock_post, client, setup_test_config
+    ):
+        """Test SSE detection when response starts with 'data:' for Claude models."""
+        from proxy_server import handle_non_streaming_request
+
+        sse_text = (
+            'data: {"contentBlockDelta": {"delta": {"text": "test"}}}\ndata: [DONE]\n'
+        )
+        mock_response = Mock()
+        mock_response.content = sse_text.encode()
+        mock_response.text = sse_text
+        mock_response.headers = {}
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        with client.application.test_request_context(
+            "/test",
+            json={"messages": [{"role": "user", "content": "test"}]},
+            headers={"Authorization": "Bearer test-token"},
+        ):
+            result = handle_non_streaming_request(
+                "https://test.com/api",
+                {"Authorization": "Bearer token"},
+                {"messages": [{"role": "user", "content": "test"}]},
+                "claude-3-5-sonnet-20241022",  # Claude model
+                "test-sub",
+                "test-tid-123",
+            )
+
+            # Should succeed and parse SSE response
+            assert result[1] == 200
+            response_data = result[0].get_json()
+            assert "choices" in response_data  # OpenAI format
+
+    @patch("proxy_server.requests.post")
+    def test_handle_non_streaming_request_sse_detection_event_prefix(
+        self, mock_post, client, setup_test_config
+    ):
+        """Test SSE detection when response starts with 'event:' for Claude models."""
+        from proxy_server import handle_non_streaming_request
+
+        sse_text = 'event: message\ndata: {"contentBlockDelta": {"delta": {"text": "test"}}}\ndata: [DONE]\n'
+        mock_response = Mock()
+        mock_response.content = sse_text.encode()
+        mock_response.text = sse_text
+        mock_response.headers = {}
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        with client.application.test_request_context(
+            "/test",
+            json={"messages": [{"role": "user", "content": "test"}]},
+            headers={"Authorization": "Bearer test-token"},
+        ):
+            result = handle_non_streaming_request(
+                "https://test.com/api",
+                {"Authorization": "Bearer token"},
+                {"messages": [{"role": "user", "content": "test"}]},
+                "claude-3-5-sonnet-20241022",  # Claude model
+                "test-sub",
+                "test-tid-123",
+            )
+
+            # Should succeed and parse SSE response
+            assert result[1] == 200
+            response_data = result[0].get_json()
+            assert "choices" in response_data  # OpenAI format
+
+    @patch("proxy_server.requests.post")
+    def test_handle_non_streaming_request_sse_detection_content_type(
+        self, mock_post, client, setup_test_config
+    ):
+        """Test SSE detection based on Content-Type header for Claude models."""
+        from proxy_server import handle_non_streaming_request
+
+        sse_text = 'data: {"contentBlockDelta": {"delta": {"text": "test"}}}\n'
+        mock_response = Mock()
+        mock_response.content = sse_text.encode()
+        mock_response.text = sse_text
+        mock_response.headers = {"content-type": "text/event-stream"}
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        with client.application.test_request_context(
+            "/test",
+            json={"messages": [{"role": "user", "content": "test"}]},
+            headers={"Authorization": "Bearer test-token"},
+        ):
+            result = handle_non_streaming_request(
+                "https://test.com/api",
+                {"Authorization": "Bearer token"},
+                {"messages": [{"role": "user", "content": "test"}]},
+                "claude-3-5-sonnet-20241022",  # Claude model
+                "test-sub",
+                "test-tid-123",
+            )
+
+            # Should succeed and parse SSE response
+            assert result[1] == 200
+            response_data = result[0].get_json()
+            assert "choices" in response_data  # OpenAI format
+
+    @patch("proxy_server.requests.post")
     def test_handle_non_streaming_request_http_error(
         self, mock_post, client, setup_test_config
     ):

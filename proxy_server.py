@@ -1590,9 +1590,15 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
         # Process response based on model type
         try:
             # For Claude models, check if response is SSE format (backend may send SSE even for non-streaming)
-            if Detector.is_claude_model(model) and response.text.strip().startswith(
-                "data: "
-            ):
+            is_sse_response = Detector.is_claude_model(model) and (
+                response.headers.get("content-type", "").startswith("text/event-stream")
+                or any(
+                    line.strip().startswith(("data: ", "event: ", "id: "))
+                    for line in response.text.split("\n")
+                )
+            )
+
+            if is_sse_response:
                 logger.info(
                     "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
                 )
@@ -2048,7 +2054,7 @@ def generate_streaming_response(
                 )
 
             # Standard stream end
-            transport_logger.info(f"CHAT_STREAM_COMPLETE[{tid}] Streaming completed")
+            transport_logger.info(f"CHAT_STREAM_COMPLETE] [{tid}Streaming completed")
             # Only send [DONE] if backend didn't already send it
             if not done_sent:
                 yield "data: [DONE]\n\n"

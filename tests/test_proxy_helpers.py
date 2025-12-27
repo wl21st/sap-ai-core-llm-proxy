@@ -145,7 +145,7 @@ class TestConvertersOpenAIToClaudeRequests:
 
         result = Converters.convert_openai_to_claude(payload)
 
-        assert result["max_tokens"] == 4096000
+        assert result["max_tokens"] == 200000
         assert result["temperature"] == 1.0
 
     def test_convert_openai_to_claude37_basic(self):

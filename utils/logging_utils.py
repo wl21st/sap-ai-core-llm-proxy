@@ -100,9 +100,9 @@ def init_logging(debug: bool = True) -> None:
                     f"Gzipped old log file {log_file} in archive (age: {file_age.days} days) to {dst}"
                 )
 
-        # Generate timestamp for log files (YYYYMMDD_hhmmss format)
+        # Generate timestamp for log files (YYYY-MM-DD_HH-MM-SS format)
         # Store it globally for lazy child logger initialization
-        _log_timestamp = datetime.now().strftime("%Y_%m%d_%H%M_%S")
+        _log_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
         # Set up parent logger
         parent_logger = logging.getLogger("app")
@@ -142,7 +142,7 @@ def _ensure_child_logger_initialized(logger_base_name: str) -> None:
         if _log_timestamp is None:
             raise RuntimeError("Logging not initialized. Call init_logging() first.")
 
-        log_file = f"{logger_base_name}-{_log_timestamp}.log"
+        log_file = f"{logger_base_name}_{_log_timestamp}.log"
         level = logging.getLogger("app").level
         _setup_child_logger(logger_name, log_file, level)
         _child_loggers_setup.add(logger_name)

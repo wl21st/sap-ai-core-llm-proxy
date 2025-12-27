@@ -169,6 +169,24 @@ Model type is detected using helper functions in `proxy_helpers.py`:
 - `is_claude_37_or_4()` - Detects Claude 3.7/4/4.5 variants
 - `is_gemini_model()` - Detects Gemini models (gemini-*)
 
+### API Endpoint Selection
+
+The proxy selects between AWS Bedrock API endpoints based on model detection:
+
+- **Claude models where `is_claude_37_or_4()` returns `True`** (3.7, 4, 4.5, and non-3.5 variants):
+  - Uses `/converse` or `/converse-stream` endpoint
+  - Response parsed with `convert_claude37_to_openai()` (expects Converse API format)
+
+- **Claude models where `is_claude_37_or_4()` returns `False`** (3.5 and older):
+  - Uses `/invoke` or `/invoke-with-response-stream` endpoint  
+  - Response parsed with `convert_claude_to_openai()` (expects InvokeModel format)
+
+- **Gemini models**:
+  - Uses `/generateContent` or streaming equivalent
+  - Response parsed with `convert_gemini_to_openai()`
+
+**Note**: All Claude 3 models officially support the Converse API per AWS Bedrock docs. The proxy's distinction is based on response format differences for conversion compatibility, not API availability.
+
 ### Configuration File
 
 The `config.json` uses multi-subaccount structure:

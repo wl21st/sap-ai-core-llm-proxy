@@ -12,17 +12,28 @@ class Detector:
     @staticmethod
     def is_claude_37_or_4(model):
         """
-        Check if the model is Claude 3.7 or Claude 4.
+        Check if the Claude model uses Converse API format (True) or InvokeModel format (False).
+
+        Determines API endpoint and response parsing:
+        - True: Uses /converse endpoint with Converse response format
+        - False: Uses /invoke endpoint with InvokeModel response format
 
         Args:
             model: The model name to check
 
         Returns:
-            bool: True if the model is Claude 3.7 or Claude 4, False otherwise
+            bool: True for models using Converse API (3.7+, 4+, non-3.5), False for InvokeModel (3.5, older)
         """
+        # Check for specific version patterns to avoid false positives with dates
+        model_lower = model.lower()
         return (
-            any(version in model for version in ["3.7", "4", "4.5"])
-            or "3.5" not in model
+            "claude-3.7" in model_lower
+            or "claude-4" in model_lower
+            or "claude-4.5" in model_lower
+            or (
+                "claude" in model_lower
+                and not any(v in model_lower for v in ["3-5", "3.5", "3-opus"])
+            )
         )
 
     @staticmethod
@@ -77,10 +88,12 @@ class Converters:
         messages = payload["messages"]
         if messages and messages[0]["role"] == "system":
             system_message = messages.pop(0)["content"]
+
         # Conversion logic from OpenAI to Claude API format
         claude_payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": payload.get("max_tokens", 4096000),
+            "max_tokens": payload.get("max_tokens")
+            or payload.get("max_completion_tokens", 200000),
             "temperature": payload.get("temperature", 1.0),
             "system": system_message,
             "messages": messages,
@@ -109,13 +122,23 @@ class Converters:
 
         # Extract inference configuration parameters
         inference_config = {}
-        if "max_tokens" in payload:
+        if "max_tokens" in payload or "max_completion_tokens" in payload:
+            max_tokens_value = payload.get("max_tokens") or payload.get(
+                "max_completion_tokens"
+            )
             # Ensure max_tokens is an integer
             try:
-                inference_config["maxTokens"] = int(payload["max_tokens"])
+                inference_config["maxTokens"] = int(max_tokens_value)
             except (ValueError, TypeError):
                 logger.warning(
-                    f"Invalid value for max_tokens: {payload['max_tokens']}. Using default or omitting."
+                    f"Invalid value for max_tokens: {max_tokens_value}. Using default or omitting."
+                )
+            # Ensure max_tokens is an integer
+            try:
+                inference_config["maxTokens"] = int(max_tokens_value)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid value for max_tokens: {max_tokens_value}. Using default or omitting."
                 )
         if "temperature" in payload:
             # Ensure temperature is a float

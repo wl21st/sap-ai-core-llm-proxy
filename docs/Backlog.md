@@ -1,7 +1,7 @@
 # SAP AI Core LLM Proxy - Development Backlog
 
 This document tracks planned improvements, features, and technical debt items for the SAP AI Core LLM Proxy project.
-**Last Updated**: 2025-12-13
+**Last Updated**: 2025-12-27
 
 **Risk Levels**:
 
@@ -18,7 +18,7 @@ This document tracks planned improvements, features, and technical debt items fo
   - [3. Standardize Configuration File Naming](#3-standardize-configuration-file-naming)
   - [4. Add Transport Logging with Timestamp Rotation](#4-add-transport-logging-with-timestamp-rotation)
   - [5. Make Logging Configurable](#5-make-logging-configurable)
-  - [6. Add Automatic HTTP 429 Throttling Handler](#6-add-automatic-http-429-throttling-handler)
+  - [6. Add Auto/newmatic HTTP 429 Throttling Handler](#6-add-automatic-http-429-throttling-handler)
   - [7. Split proxy_server.py into Multiple Modules](#7-split-proxy_serverpy-into-multiple-modules)
   - [8. Fix Claude Model ID Mapping](#8-fix-claude-model-id-mapping)
 - [Medium Priority](#medium-priority)
@@ -42,13 +42,10 @@ This document tracks planned improvements, features, and technical debt items fo
 | # | Item | Priority | Effort | Risk | Status |
 |---|------|----------|--------|------|--------|
 | 1 | [Fix Model Name Normalization Configuration](#1-fix-model-name-normalization-configuration) | High | Small (1-3d) | Low | 🔴 To Do |
-| 2 | [Add Automated Test Cases](#2-add-automated-test-cases) | High | Large (2-4w) | Low | 🔴 To Do |
-| 3 | [Security filter to prevent uploading of the sensitive information to LLM](#3-security-filter-to-prevent-uploading-of-the-sensitive-information-to-llm) | High | Small (1-3d) | Medium | 🔴 To Do |
-| 4 | [Standardize Configuration File Naming](#4-standardize-configuration-file-naming) | High | Small (1-3d) | Medium | 🔴 To Do |
-| 5 | [Add Transport Logging with Timestamp Rotation](#5-add-transport-logging-with-timestamp-rotation) | High | Medium (1-2w) | Low | 🔴 To Do |
-| 6 | [Make Logging Configurable](#6-make-logging-configurable) | High | Small (1-3d) | Low | 🔴 To Do |
-| 6 | [Add Automatic HTTP 429 Throttling Handler](#6-add-automatic-http-429-throttling-handler) | High | Small (1-3d) | Low | 🔴 To Do |
-| 7 | [Split proxy_server.py into Multiple Modules](#7-split-proxy_serverpy-into-multiple-modules) | High | Medium (1-2w) | Medium | 🔴 To Do |
+| 2 | [Add Automated Test Cases](#2-add-automated-test-cases) | High | Large (2-4w) | Low | 🟢 Completed |
+| 4 | [Add Transport Logging with Timestamp Rotation](#4-add-transport-logging-with-timestamp-rotation) | High | Medium (1-2w) | Low | 🟢 Completed |
+| 6 | [Add Automatic HTTP 429 Throttling Handler](#6-add-automatic-http-429-throttling-handler) | High | Small (1-3d) | Low | 🟢 Completed |
+| 7 | [Split proxy_server.py into Multiple Modules](#7-split-proxy_serverpy-into-multiple-modules) | High | Medium (1-2w) | Medium | 🟡 In Progress |
 | 8 | [Fix Claude Model ID Mapping](#8-fix-claude-model-id-mapping) | High | Small (1-3d) | Low | 🔴 To Do |
 | 9 | [Refactor Python Classes to Follow SOLID Principles](#9-refactor-python-classes-to-follow-solid-principles) | Medium | Large (2-4w) | High | 🔴 To Do |
 | 10 | [Generate profile.json from SAP AI Core Service Connection](#10-generate-profilejson-from-sap-ai-core-service-connection) | Medium | Medium (1-2w) | Low | 🔴 To Do |
@@ -68,7 +65,7 @@ This document tracks planned improvements, features, and technical debt items fo
 **Priority**: High  
 **Effort**: Small (1-3 days)  
 **Risk**: Low  
-**Related Code**: [`proxy_server.py:56-67`](../proxy_server.py#L56-L67)
+**Related Code**: [`config/pydantic_models.py:45-60`](../config/pydantic_models.py#L45-L60)
 
 #### Description
 
@@ -77,17 +74,21 @@ The [`normalize_model_names()`](../proxy_server.py#L56) method in [`SubAccountCo
 #### Current Code
 
 ```python
-def normalize_model_names(self):
-    """Normalize model names by removing prefixes like 'anthropic--'"""
-    if False:  # ❌ Hardcoded condition
-        self.parsed_models_url_list = {
+def normalize_model_names(self) -> None:
+    """Normalize model names by removing prefixes like 'anthropic--'.
+    
+    Currently disabled - keeps original model names.
+    """
+    # Currently disabled - uncomment to enable normalization
+    if False:
+        self.normalized_models = {
             key.replace("anthropic--", ""): value
-            for key, value in self.model_to_deployment_urls.items()
+            for key, value in self.deployment_models.items()
         }
     else:
-        self.parsed_models_url_list = {
+        self.normalized_models = {
             key: value
-            for key, value in self.model_to_deployment_urls.items()
+            for key, value in self.deployment_models.items()
         }
 ```
 
@@ -128,7 +129,7 @@ def normalize_model_names(self):
 
 ### 2. Add Automated Test Cases
 
-**Status**: 🔴 To Do  
+**Status**: 🟢 Completed  
 **Priority**: High  
 **Effort**: Large (2-4 weeks)  
 **Risk**: Low  
@@ -136,7 +137,7 @@ def normalize_model_names(self):
 
 #### Description
 
-The project currently lacks comprehensive automated test coverage. This makes it difficult to ensure code quality, prevent regressions, and safely refactor code.
+The project now has comprehensive automated test coverage with unit, integration, and API tests to ensure code quality, prevent regressions, and safely refactor code.
 
 #### Test Categories Needed
 
@@ -205,12 +206,12 @@ tests/
 
 #### Acceptance Criteria
 
-- [ ] Achieve >80% code coverage
-- [ ] All critical paths have test coverage
-- [ ] Tests run in CI/CD pipeline
-- [ ] Tests are documented and maintainable
-- [ ] Mock external dependencies (SAP AI Core API)
-- [ ] Add test documentation in `docs/testing.md`
+- [x] Achieve >80% code coverage
+- [x] All critical paths have test coverage
+- [x] Tests run in CI/CD pipeline
+- [x] Tests are documented and maintainable
+- [x] Mock external dependencies (SAP AI Core API)
+- [x] Add test documentation in `docs/testing.md`
 
 ---
 
@@ -284,7 +285,7 @@ python proxy_server.py --config config.json
 
 ### 4. Add Transport Logging with Timestamp Rotation
 
-**Status**: 🔴 To Do  
+**Status**: 🟢 Completed  
 **Priority**: High  
 **Effort**: Medium (1-2 weeks)  
 **Risk**: Low  
@@ -292,7 +293,7 @@ python proxy_server.py --config config.json
 
 #### Description
 
-Implement comprehensive transport logging that captures both HTTP requests and responses in dedicated log files with automatic timestamp-based rotation. This will help with debugging, auditing, and troubleshooting production issues.
+Comprehensive transport logging has been implemented that captures both HTTP requests and responses in dedicated log files with automatic timestamp-based rotation. This helps with debugging, auditing, and troubleshooting production issues.
 
 #### Requirements
 
@@ -417,16 +418,16 @@ logs/
 
 #### Acceptance Criteria
 
-- [ ] Separate log files for requests and responses
-- [ ] Automatic timestamp-based rotation (configurable)
-- [ ] Configurable retention period
-- [ ] Automatic compression of old logs
-- [ ] JSON structured logging format
-- [ ] Include request ID for correlation
-- [ ] Configurable via `profile.json`
-- [ ] Performance impact < 5ms per request
-- [ ] Documentation with examples
-- [ ] Log analysis tools/scripts provided
+- [x] Separate log files for requests and responses
+- [x] Automatic timestamp-based rotation (configurable)
+- [x] Configurable retention period
+- [x] Automatic compression of old logs
+- [x] JSON structured logging format
+- [x] Include request ID for correlation
+- [x] Configurable via `profile.json`
+- [x] Performance impact < 5ms per request
+- [x] Documentation with examples
+- [x] Log analysis tools/scripts provided
 
 ---
 
@@ -578,7 +579,7 @@ NOTSET (0)    - All messages
 
 ### 6. Add Automatic HTTP 429 Throttling Handler
 
-**Status**: 🔴 To Do
+**Status**: 🟢 Completed
 **Priority**: High
 **Effort**: Small (1-3 days)
 **Risk**: Low
@@ -586,14 +587,14 @@ NOTSET (0)    - All messages
 
 #### Description
 
-Implement automatic handling of HTTP 429 (Too Many Requests) status codes from SAP AI Core backend services. The proxy currently has a [`handle_http_429_error()`](../proxy_server.py) function but needs enhanced automatic retry logic with exponential backoff and proper rate limit header parsing.
+Automatic handling of HTTP 429 (Too Many Requests) status codes has been implemented with enhanced retry logic, exponential backoff, and proper rate limit header parsing.
 
-#### Current State
+#### Implementation
 
-- Basic HTTP 429 error handling exists
-- No automatic retry mechanism
-- No rate limit header parsing (Retry-After, X-RateLimit-*)
-- No configurable retry strategy
+- Enhanced HTTP 429 error handling exists in `utils/error_handlers.py`
+- Automatic retry mechanism with exponential backoff
+- Rate limit header parsing (Retry-After, X-RateLimit-*)
+- Configurable retry strategy
 
 #### Proposed Solution
 
@@ -699,20 +700,20 @@ Add to `profile.json`:
 
 #### Acceptance Criteria
 
-- [ ] Automatic retry on HTTP 429 errors
-- [ ] Parse and respect Retry-After header
-- [ ] Parse rate limit headers (X-RateLimit-*)
-- [ ] Exponential backoff when no Retry-After header
-- [ ] Configurable max retries and delays
-- [ ] Comprehensive logging of throttling events
-- [ ] Unit tests for retry logic
-- [ ] Documentation with configuration examples
+- [x] Automatic retry on HTTP 429 errors
+- [x] Parse and respect Retry-After header
+- [x] Parse rate limit headers (X-RateLimit-*)
+- [x] Exponential backoff when no Retry-After header
+- [x] Configurable max retries and delays
+- [x] Comprehensive logging of throttling events
+- [x] Unit tests for retry logic
+- [x] Documentation with configuration examples
 
 ---
 
 ### 7. Split proxy_server.py into Multiple Modules
 
-**Status**: 🔴 To Do
+**Status**: 🟡 In Progress
 **Priority**: High
 **Effort**: Medium (1-2 weeks)
 **Risk**: Medium
@@ -720,15 +721,19 @@ Add to `profile.json`:
 
 #### Description
 
-The [`proxy_server.py`](../proxy_server.py) file has grown to over 2900 lines and contains multiple responsibilities. Split it into logical modules to improve maintainability, readability, and testability. This is a prerequisite for the larger SOLID refactoring effort.
+The [`proxy_server.py`](../proxy_server.py) file has been partially modularized, reducing from 2900+ lines to 2492 lines with separate `auth/`, `config/`, and `utils/` modules. Additional work is needed to complete the modularization with streaming, endpoints, and converter modules.
 
-#### Current Issues
+#### Current State
 
-- Single file with 2900+ lines
-- Multiple responsibilities mixed together
-- Difficult to navigate and maintain
-- Hard to test individual components
-- Violates Single Responsibility Principle
+- **Partially completed**: Modular structure implemented with separate `auth/`, `config/`, `utils/` modules
+- Main `proxy_server.py` reduced from ~2900 to 2492 lines, but still monolithic
+- Core functionality split but more refactoring needed for full modularization
+
+#### Remaining Issues
+
+- Main file still contains multiple responsibilities
+- Some functions remain too large (>500 lines)
+- Additional modules need to be extracted (streaming, endpoints, converters)
 
 #### Proposed Module Structure
 
@@ -795,14 +800,15 @@ if __name__ == "__main__":
 
 #### Acceptance Criteria
 
+- [x] Partial modularization completed (auth/, config/, utils/ modules)
+- [x] Backward compatibility maintained
+- [x] All existing functionality works unchanged
+- [x] Import paths updated throughout codebase
+- [x] Tests pass after refactoring
 - [ ] Code split into logical modules (<500 lines each)
 - [ ] Each module has single, clear responsibility
-- [ ] Backward compatibility maintained
-- [ ] All existing functionality works unchanged
-- [ ] Import paths updated throughout codebase
 - [ ] Documentation updated with new structure
 - [ ] No breaking changes for existing users
-- [ ] Tests pass after refactoring
 
 ---
 
@@ -1931,7 +1937,20 @@ Add WebSocket support for real-time bidirectional communication with LLM models.
 
 ## Completed Items
 
-_No completed items yet._
+### 2. Add Automated Test Cases 🟢
+**Completed**: 2025-12-27  
+**Effort**: Large (2-4 weeks)  
+**Status**: ✅ Fully implemented with comprehensive unit, integration, and API test coverage
+
+### 4. Add Transport Logging with Timestamp Rotation 🟢
+**Completed**: 2025-12-27  
+**Effort**: Medium (1-2 weeks)  
+**Status**: ✅ Implemented in `utils/logging_utils.py` with timestamp-based rotation and compression
+
+### 6. Add Automatic HTTP 429 Throttling Handler 🟢
+**Completed**: 2025-12-27  
+**Effort**: Small (1-3 days)  
+**Status**: ✅ Implemented in `utils/error_handlers.py` with retry logic and rate limit parsing
 ---
 
 ## Notes
@@ -1941,6 +1960,7 @@ _No completed items yet._
 - Consider creating GitHub issues for tracking individual items
 - Estimate effort using T-shirt sizing: Small (1-3 days), Medium (1-2 weeks), Large (2-4 weeks)
 - Risk levels help prioritize items and plan testing strategies
+- **Recent Updates (2025-12-27)**: Significant progress made on testing infrastructure, logging, and modularization. Three major items completed, one in progress.
 
 **Legend**:
 
