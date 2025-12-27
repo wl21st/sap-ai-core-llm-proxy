@@ -145,7 +145,7 @@ def handle_embedding_request():
 
     # Log raw request received from client
     transport_logger.info(
-        f"EMBED_REQ[{tid}] url={request.url}, body={request.get_data(as_text=True)}"
+        f"CLIENT_REQ: tid={tid}, url={request.url}, body={request.get_data(as_text=True)}"
     )
 
     validator = RequestValidator(proxy_config.secret_authentication_tokens)
@@ -179,14 +179,14 @@ def handle_embedding_request():
 
         # Log request being sent to LLM service - no formatting
         transport_logger.info(
-            f"EMBED_REQ_LLM[{tid}] url={endpoint_url}, body={modified_payload}"
+            f"VENDOR_REQ: tid={tid}, url={endpoint_url}, body={modified_payload}"
         )
 
         response = requests.post(endpoint_url, headers=headers, json=modified_payload)
 
         # Log raw response from LLM service - no formatting
         transport_logger.info(
-            f"EMBED_RSP_LLM: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
+            f"VENDOR_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
         )
 
         response.raise_for_status()
@@ -741,7 +741,7 @@ def proxy_openai_stream():
 
     # Log raw request received from client
     transport_logger.info(
-        f"CHAT_REQ: tid={tid}, url={request.url}, body={request.get_data(as_text=True)}"
+        f"CLIENT_REQ: tid={tid}, url={request.url}, body={request.get_data(as_text=True)}"
     )
 
     # Verify client authentication token
@@ -852,9 +852,9 @@ def proxy_claude_request():
     tid = str(uuid.uuid4())
 
     # Log raw request received from client
-    transport_logger.info(f"MSG_CLIENT_REQ[{tid}] URL={request.url}")
+    transport_logger.info(f"CLIENT_REQ: tid={tid}, URL={request.url}")
     transport_logger.info(
-        f"MSG_CLIENT_REQ[{tid}] BODY={request.get_data(as_text=True)}"
+        f"CLIENT_REQ: tid={tid}, BODY={request.get_data(as_text=True)}"
     )
 
     # Validate API key using proxy config authentication
@@ -1091,8 +1091,8 @@ def proxy_claude_request():
         logger.info("Request body for Bedrock (pretty):\n%s", pretty_body_json)
 
         # Log request being sent to Bedrock/LLM service
-        transport_logger.info(f"MSG_BEDROCK_REQ[{tid}] MODEL={model}")
-        transport_logger.info(f"MSG_BEDROCK_REQ[{tid}] BODY={pretty_body_json}")
+        transport_logger.info(f"VENDOR_REQ: tid={tid}, MODEL={model}")
+        transport_logger.info(f"VENDOR_REQ: tid={tid}, BODY={pretty_body_json}")
 
         if stream:
             # Handle streaming response
@@ -1162,7 +1162,7 @@ def proxy_claude_request():
 
                         # Log raw chunk from Bedrock
                         transport_logger.info(
-                            f"MSG_BEDROCK_RSP_CHUNK[{tid}] {json.dumps(chunk)[:200]}"
+                            f"CHUNK: tid={tid}, {json.dumps(chunk)[:200]}"
                         )
 
                         chunk_type = chunk.get("type")
@@ -1171,41 +1171,41 @@ def proxy_claude_request():
                         if chunk_type == "message_start":
                             response_line = f"event: message_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             transport_logger.info(
-                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                                f"CHUNK: tid={tid}, {response_line[:200]}"
                             )
                             yield response_line
                         elif chunk_type == "content_block_start":
                             response_line = f"event: content_block_start\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             transport_logger.info(
-                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                                f"CHUNK: tid={tid}, {response_line[:200]}"
                             )
                             yield response_line
                         elif chunk_type == "content_block_delta":
                             response_line = f"event: content_block_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             transport_logger.info(
-                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                                f"CHUNK: tid={tid}, {response_line[:200]}"
                             )
                             yield response_line
                         elif chunk_type == "content_block_stop":
                             response_line = f"event: content_block_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             transport_logger.info(
-                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                                f"CHUNK: tid={tid}, {response_line[:200]}"
                             )
                             yield response_line
                         elif chunk_type == "message_delta":
                             response_line = f"event: message_delta\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             transport_logger.info(
-                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                                f"CHUNK: tid={tid}, {response_line[:200]}"
                             )
                             yield response_line
                         elif chunk_type == "message_stop":
                             response_line = f"event: message_stop\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             transport_logger.info(
-                                f"MSG_CLIENT_RSP_CHUNK[{tid}] {response_line[:200]}"
+                                f"CHUNK: tid={tid}, {response_line[:200]}"
                             )
                             yield response_line
                             transport_logger.info(
-                                f"MSG_STREAM_COMPLETE[{tid}] Stream finished successfully"
+                                f"DONE: tid={tid}, Stream finished successfully"
                             )
                             yield "data: [DONE]\n\n"
                             break
@@ -1213,7 +1213,7 @@ def proxy_claude_request():
                             # Handle error chunks in the stream
                             response_line = f"event: error\ndata: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                             transport_logger.info(
-                                f"MSG_CLIENT_RSP_ERROR[{tid}] {response_line[:200]}"
+                                f"ERR: tid={tid}, {response_line[:200]}"
                             )
                             yield response_line
                             break
@@ -1259,18 +1259,18 @@ def proxy_claude_request():
 
                     # Log response from Bedrock
                     transport_logger.info(
-                        f"MSG_BEDROCK_RSP[{tid}] STATUS={response_status}"
+                        f"VENDOR_RSP: tid={tid}, STATUS={response_status}"
                     )
                     transport_logger.info(
-                        f"MSG_BEDROCK_RSP[{tid}] BODY={json.dumps(final_response)}"
+                        f"VENDOR_RSP: tid={tid}, BODY={json.dumps(final_response)}"
                     )
 
                     # Log response being sent to client
                     transport_logger.info(
-                        f"MSG_CLIENT_RSP[{tid}] STATUS={response_status}"
+                        f"CLIENT_RSP: tid={tid}, STATUS={response_status}"
                     )
                     transport_logger.info(
-                        f"MSG_CLIENT_RSP[{tid}] BODY={json.dumps(final_response)}"
+                        f"CLIENT_RSP: tid={tid}, BODY={json.dumps(final_response)}"
                     )
 
                     # Use actual response status code
@@ -1567,7 +1567,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
     try:
         # Log request being sent to LLM service
         transport_logger.info(
-            f"CHAT_REQ_LLM: tid={tid}, url={url}, body={json.dumps(payload)}"
+            f"VENDOR_REQ: tid={tid}, url={url}, body={json.dumps(payload)}"
         )
 
         # Make request to backend API
@@ -1575,7 +1575,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
 
         # Log raw response from LLM service
         transport_logger.info(
-            f"CHAT_RSP_LLM: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
+            f"VENDOR_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
         )
 
         response.raise_for_status()
@@ -1644,7 +1644,7 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
 
         # Log response being sent to client
         transport_logger.info(
-            f"CHAT_RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
+            f"CLIENT_RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
         )
 
         return jsonify(final_response), 200
@@ -1700,7 +1700,7 @@ def generate_streaming_response(
     logger.info(f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}")
     # Log request being sent to LLM service
     transport_logger.info(
-        f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}"
+        f"VENDOR_REQ: tid={tid}, url={url}], body={json.dumps(payload)}"
     )
 
     buffer = ""
@@ -1766,10 +1766,10 @@ def generate_streaming_response(
                                 if openai_sse_chunk_str:
                                     # Log client chunk sent
                                     logger.info(
-                                        f"CHAT_RSP_ST_CHUNK: tid={tid}, {openai_sse_chunk_str[:200]}"
+                                        f"CHUNK: tid={tid}, {openai_sse_chunk_str[:200]}"
                                     )
                                     transport_logger.info(
-                                        f"CHAT_RSP_ST_CHUNK: tid={tid}, {openai_sse_chunk_str}"
+                                        f"CHUNK: tid={tid}, {openai_sse_chunk_str}"
                                     )
                                     yield openai_sse_chunk_str
                             except Exception as e:
@@ -2054,7 +2054,7 @@ def generate_streaming_response(
                 )
 
             # Standard stream end
-            transport_logger.info(f"CHAT_STREAM_COMPLETE] [{tid}Streaming completed")
+            transport_logger.info(f"DONE: tid={tid}, Streaming completed")
             # Only send [DONE] if backend didn't already send it
             if not done_sent:
                 yield "data: [DONE]\n\n"
