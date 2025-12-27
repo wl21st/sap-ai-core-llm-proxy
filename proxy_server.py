@@ -191,7 +191,7 @@ def handle_embedding_request():
 
         # Log raw response from LLM service - no formatting
         transport_logger.info(
-            f"OUT_RSP_EMBED: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
+            f"OUT_EMBED_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
         )
 
         response.raise_for_status()

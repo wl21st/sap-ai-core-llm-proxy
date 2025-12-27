@@ -63,7 +63,7 @@ REQ → OUT_REQ → OUT_RSP → RSP
 
 ### Embeddings (`/v1/embeddings`)
 ```
-REQ_EMB → OUT_REQ_EMBED → OUT_RSP_EMBED
+REQ_EMB → OUT_REQ_EMBED → OUT_EMBED_RSP
    ↓          ↓          ↓
 Client →  Bedrock  →  Client
 ```

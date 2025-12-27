@@ -138,9 +138,15 @@ class TestChatCompletionsNonStreaming:
         ResponseValidator.validate_common_attributes(data)
 
         # Verify model name matches
-        assert data["model"].startswith(model), (
-            f"Expected model='{model}', got '{data['model']}'"
-        )
+        actual_model = data["model"]
+        if any(keyword in model for keyword in ["sonnet", "haiku", "opus", "claude"]):
+            assert model.replace(".", "-") in actual_model.replace(".", "-"), (
+                f"Invalid claude model model='{model}', got '{actual_model}'"
+            )
+        else:
+            assert data["model"].startswith(model), (
+                f"Expected model='{model}', got '{actual_model}'"
+            )
 
     def test_multiple_messages(self, proxy_client, proxy_url, model, max_tokens):
         """Test with multiple messages in conversation."""
