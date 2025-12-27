@@ -463,7 +463,7 @@ The following pytest markers are available:
 
 ## Validation
 
-The tests use [`ResponseValidator`](validators.py) class to validate:
+The tests use [`ResponseValidator`](test_validators.py) class to validate:
 
 ### Token Usage
 ```python
@@ -739,7 +739,7 @@ class TestNewFeature:
 
 ### 3. Add New Validator
 
-Add to [`validators.py`](validators.py):
+Add to [`validators.py`](test_validators.py):
 
 ```python
 @staticmethod
@@ -753,7 +753,7 @@ def validate_new_format(response_data: Dict[str, Any]) -> None:
 
 1. **Use descriptive test names** that explain what is being tested
 2. **Use pytest markers** to categorize tests (`@pytest.mark.smoke`, etc.)
-3. **Validate responses thoroughly** using [`ResponseValidator`](validators.py)
+3. **Validate responses thoroughly** using [`ResponseValidator`](test_validators.py)
 4. **Test both success and error cases**
 5. **Use parametrize** for testing multiple models with same logic
 6. **Keep tests independent** - each test should work standalone

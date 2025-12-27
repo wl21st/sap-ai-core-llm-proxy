@@ -10,7 +10,7 @@ import json
 import pytest
 import requests
 
-from tests.integration.validators import ResponseValidator
+from tests.integration.test_validators import ResponseValidator
 
 
 @pytest.mark.integration
@@ -323,7 +323,6 @@ class TestChatCompletionsStreaming:
 
         assert response.status_code == 200
 
-        validator = ResponseValidator()
         parsed_chunks = []
 
         for line in response.iter_lines():

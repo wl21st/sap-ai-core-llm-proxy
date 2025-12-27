@@ -9,15 +9,13 @@ Features:
 """
 
 import base64
-import logging
-from logging import Logger
 import threading
 import time
+from logging import Logger
 
 import requests
 
 from config import SubAccountConfig
-
 from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
@@ -30,9 +28,10 @@ class TokenManager:
     - Thread-safe token caching
     - Automatic token refresh
     - Per-subaccount token management
+    TODO: Create instance with the SubAccountConfig as it is 1-1 mapping relationship
     """
 
-    def __init__(self, subaccount: SubAccountConfig):
+    def __init__(self, subaccount: SubAccountConfig) -> None:
         """Initialize token manager for a subaccount.
 
         Args:
@@ -53,7 +52,8 @@ class TokenManager:
         """
         with self._lock:
             if self._is_token_valid():
-                token: str = self.subaccount.token_info.token
+                token: str | None = self.subaccount.token_info.token
+
                 if token is not None:
                     return token
 
@@ -73,7 +73,9 @@ class TokenManager:
 
         service_key = self.subaccount.service_key
         if not service_key:
-            raise ValueError(f"Service key not loaded for subaccount '{self.subaccount.name}'")
+            raise ValueError(
+                f"Service key not loaded for subaccount '{self.subaccount.name}'"
+            )
 
         auth_string = f"{service_key.client_id}:{service_key.client_secret}"
         encoded_auth = base64.b64encode(auth_string.encode()).decode()
@@ -88,13 +90,13 @@ class TokenManager:
 
             # Populate access tokens
             token_response = response.json()
-            access_token = token_response.get('access_token')
+            access_token = token_response.get("access_token")
 
             if not access_token:
                 raise ValueError("Fetched token is empty")
 
             # Cache token with 5-minute buffer
-            expires_in = int(token_response.get('expires_in', 14400))
+            expires_in = int(token_response.get("expires_in", 14400))
             self.subaccount.token_info.token = access_token
             self.subaccount.token_info.expiry = time.time() + expires_in - 300
 

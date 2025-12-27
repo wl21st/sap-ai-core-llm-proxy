@@ -5,30 +5,27 @@ import random
 import subprocess
 import sys
 import time
+import uuid
 from logging import Logger
-from typing import Optional
 
 import requests
-import uuid
 from botocore.exceptions import ClientError
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, Response, jsonify, request, stream_with_context
 from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
-
 # SAP AI SDK imports
 from tenacity import (
+    RetryError,
     retry,
     stop_after_attempt,
     wait_exponential,
-    RetryError,
 )
 
-from auth import TokenManager, RequestValidator
-
+from auth import RequestValidator, TokenManager
 # Import from new modular structure
 from config import ProxyConfig, load_proxy_config
-from proxy_helpers import Detector, Converters
+from proxy_helpers import Converters, Detector
 from utils.error_handlers import handle_http_429_error
-from utils.logging_utils import get_server_logger, init_logging, get_transport_logger
+from utils.logging_utils import get_server_logger, get_transport_logger, init_logging
 from utils.sdk_utils import extract_deployment_id
 
 # Initialize token logger (will be configured on first use)
@@ -36,7 +33,7 @@ logger: Logger = get_server_logger(__name__)
 transport_logger: Logger = get_transport_logger(__name__)
 token_usage_logger: Logger = get_server_logger("token_usage")
 
-from utils.sdk_pool import get_bedrock_client
+from utils.sdk_pool import get_bedrock_client  # noqa: E402
 
 API_VERSION_2023_05_15 = "2023-05-15"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
@@ -134,12 +131,9 @@ def read_response_body_stream(response_body) -> str:
 
 
 # Global configuration
-proxy_config: Optional[ProxyConfig] = None
+proxy_config: ProxyConfig = ProxyConfig()
 
 app = Flask(__name__)
-
-
-# handle_http_429_error is now imported from utils.error_handlers
 
 
 @app.route("/v1/embeddings", methods=["POST"])
@@ -197,7 +191,9 @@ def handle_embedding_request():
         return response.json(), 200
         # return jsonify(format_embedding_response(response.json(), model)), 200
     except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error in embedding request({model}): {http_err}", exc_info=True)
+        logger.error(
+            f"HTTP error in embedding request({model}): {http_err}", exc_info=True
+        )
 
         if http_err.response is not None:
             response = http_err.response
@@ -209,7 +205,7 @@ def handle_embedding_request():
 
             logger.error(
                 f"EMBED_ERR: tid={tid}, status={status_code}, headers={dict(response.headers)}, body={response.text}",
-                exc_info=True
+                exc_info=True,
             )
             transport_logger.error(
                 f"EMBED_ERR: tid={tid}, status={status_code}, headers={dict(response.headers)}, body={response.text}"
@@ -219,20 +215,24 @@ def handle_embedding_request():
                 error_json = http_err.response.json()
                 logger.error(
                     f"EMBED_ERR: tid={tid}, response={json.dumps(error_json, indent=2)}",
-                    exc_info=True
+                    exc_info=True,
                 )
                 return jsonify(error_json), status_code
             except json.JSONDecodeError:
-                logger.error(f"EMBED_ERR: tid={tid}, response={response.text}", exc_info=True)
+                logger.error(
+                    f"EMBED_ERR: tid={tid}, response={response.text}", exc_info=True
+                )
                 return jsonify({"error": response.text}), status_code
         else:
             logger.error(
                 f"EMBED_ERR: tid={tid}, reason=no_response, error={str(http_err)}",
-                exc_info=True
+                exc_info=True,
             )
             return jsonify({"error": str(http_err)}), 500
     except Exception as e:
-        logger.error(f"EMBED_ERR: tid={tid}, reason=no_response, error={str(e)}", exc_info=True)
+        logger.error(
+            f"EMBED_ERR: tid={tid}, reason=no_response, error={str(e)}", exc_info=True
+        )
         return jsonify({"error": str(e)}), 500
 
 
@@ -575,7 +575,9 @@ def handle_claude_request(payload, model="3.5-sonnet"):
     try:
         selected_url, subaccount_name, _, model = load_balance_url(model)
     except ValueError as e:
-        logger.error(f"Failed to load balance URL for model '{model}': {e}", exc_info=True)
+        logger.error(
+            f"Failed to load balance URL for model '{model}': {e}", exc_info=True
+        )
         raise ValueError(f"No valid Claude model found for '{model}' in any subAccount")
 
     # Determine the endpoint path based on model and streaming settings
@@ -623,7 +625,9 @@ def handle_gemini_request(payload, model="gemini-2.5-pro"):
     try:
         selected_url, subaccount_name, _, model = load_balance_url(model)
     except ValueError as e:
-        logger.error(f"Failed to load balance URL for model '{model}': {e}", exc_info=True)
+        logger.error(
+            f"Failed to load balance URL for model '{model}': {e}", exc_info=True
+        )
         raise ValueError(f"No valid Gemini model found for '{model}' in any subAccount")
 
     # Extract the model name for the endpoint (e.g., "gemini-2.5-pro" from the model)
@@ -835,9 +839,7 @@ def proxy_openai_stream():
         return jsonify({"error": str(err)}), 400
 
     except Exception as err:
-        logger.error(
-            f"CHAT: Unexpected error, tid={tid}, {str(err)}", exc_info=True
-        )
+        logger.error(f"CHAT: Unexpected error, tid={tid}, {str(err)}", exc_info=True)
         return jsonify({"error": str(err)}), 500
 
 
@@ -1455,7 +1457,9 @@ def proxy_claude_request_original():
             )
 
     except ValueError as err:
-        logger.error(f"Value error during Claude request handling: {err}", exc_info=True)
+        logger.error(
+            f"Value error during Claude request handling: {err}", exc_info=True
+        )
         return jsonify(
             {
                 "type": "error",
@@ -1466,7 +1470,7 @@ def proxy_claude_request_original():
         logger.error(f"HTTP error in Claude request({model}): {err}", exc_info=True)
         try:
             return jsonify(err.response.json()), err.response.status_code
-        except:
+        except Exception as json_err:
             return jsonify(
                 {"error": str(err)}
             ), err.response.status_code if err.response else 500
@@ -1544,9 +1548,7 @@ def parse_sse_response_to_claude_json(response_text):
     return response_data
 
 
-def handle_non_streaming_request(
-    url, headers, payload, model, subaccount_name, tid
-):
+def handle_non_streaming_request(url, headers, payload, model, subaccount_name, tid):
     """Handle non-streaming request to backend API.
 
     Args:
@@ -1598,7 +1600,7 @@ def handle_non_streaming_request(
         except (json.JSONDecodeError, ValueError) as e:
             logger.error(
                 f"CHAT: JSON_PARSE_ERR, tid={tid}, response={response.text}, headers={dict(response.headers)}, err={str(e)}",
-                exc_info=True
+                exc_info=True,
             )
             return jsonify(
                 {
@@ -1652,7 +1654,7 @@ def handle_non_streaming_request(
 
             logger.error(
                 f"CHAT: HTTP_ERR, tid={tid}, status={status_code}, headers={dict(response.headers)}, response={response.text}",
-                exc_info=True
+                exc_info=True,
             )
             try:
                 error_data = http_err.response.json()
@@ -1660,7 +1662,9 @@ def handle_non_streaming_request(
             except json.JSONDecodeError:
                 return jsonify({"error": http_err.response.text}), status_code
         else:
-            logger.error(f"CHAT: HTTP_ERR, tid={tid}, err={str(http_err)}", exc_info=True)
+            logger.error(
+                f"CHAT: HTTP_ERR, tid={tid}, err={str(http_err)}", exc_info=True
+            )
             return jsonify({"error": str(http_err)}), 500
 
     except Exception as err:
@@ -1685,9 +1689,7 @@ def generate_streaming_response(
         SSE formatted response chunks
     """
     # Log the raw request body and payload being forwarded
-    logger.info(
-        f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}"
-    )
+    logger.info(f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}")
     # Log request being sent to LLM service
     transport_logger.info(
         f"CHAT_REQ_ST_LLM: tid={tid}, url={url}], body={json.dumps(payload)}"
@@ -1728,9 +1730,7 @@ def generate_streaming_response(
                                     claude_metadata = claude_dict_chunk.get(
                                         "metadata", {}
                                     )
-                                    logger.info(
-                                        f"CHAT_RSP_ST_META: {claude_metadata}"
-                                    )
+                                    logger.info(f"CHAT_RSP_ST_META: {claude_metadata}")
                                     # Extract token counts immediately
                                     if isinstance(claude_metadata.get("usage"), dict):
                                         total_tokens = claude_metadata["usage"].get(
@@ -1882,7 +1882,7 @@ def generate_streaming_response(
                             except json.JSONDecodeError as e:
                                 logger.error(
                                     f"Error parsing Gemini chunk from '{subaccount_name}': {e}",
-                                    exc_info=True
+                                    exc_info=True,
                                 )
                                 logger.error(
                                     f"Problematic line content: {line_content}"
@@ -2042,13 +2042,13 @@ def generate_streaming_response(
                 )
 
             # Standard stream end
-            transport_logger.info(
-                f"CHAT_STREAM_COMPLETE[{tid}] Streaming completed"
-            )
+            transport_logger.info(f"CHAT_STREAM_COMPLETE[{tid}] Streaming completed")
             yield "data: [DONE]\n\n"
 
         except requests.exceptions.HTTPError as http_err:
-            logger.error(f"HTTP Error in streaming response:({model}): {http_err}", exc_info=True)
+            logger.error(
+                f"HTTP Error in streaming response:({model}): {http_err}", exc_info=True
+            )
 
             error_content: str = ""
 
@@ -2076,7 +2076,9 @@ def generate_streaming_response(
                     except json.JSONDecodeError:
                         pass
                 except Exception as e:
-                    logger.error(f"Could not read error response content: {e}", exc_info=True)
+                    logger.error(
+                        f"Could not read error response content: {e}", exc_info=True
+                    )
             else:
                 status_code = 500
                 error_content = str(http_err)

@@ -125,53 +125,61 @@ def check_server_running(test_config, proxy_url):
 
 class LoggingSession(requests.Session):
     """Session that logs requests and responses with enhanced visibility."""
-    
+
     def request(self, method, url, *args, **kwargs):
         """Override request to add enhanced logging."""
         # Prepare headers with masking
         headers_dict = dict(self.headers)
         masked_headers = {}
         for key, value in headers_dict.items():
-            if isinstance(key, str) and isinstance(value, str) and key.lower() in ['authorization', 'x-api-key']:
-                masked_headers[key] = f"{value[:10]}...[REDACTED]" if len(value) > 10 else "***"
+            if (
+                isinstance(key, str)
+                and isinstance(value, str)
+                and key.lower() in ["authorization", "x-api-key"]
+            ):
+                masked_headers[key] = (
+                    f"{value[:10]}...[REDACTED]" if len(value) > 10 else "***"
+                )
             else:
                 masked_headers[key] = value
-        
+
         # Enhanced request logging with prominent formatting
-        logger.info(f"\n🔵🔵🔵 HTTP REQUEST START 🔵🔵🔵")
+        logger.info("\n🔵🔵🔵 HTTP REQUEST START 🔵🔵🔵")
         logger.info(f"📡 METHOD: {method}")
         logger.info(f"🌐 URL: {url}")
-        logger.info(f"📋 HEADERS:")
+        logger.info("📋 HEADERS:")
         for key, value in masked_headers.items():
             logger.info(f"   {key}: {value}")
-        
-        if 'json' in kwargs:
+
+        if "json" in kwargs:
             logger.info(f"📦 JSON BODY:\n{json.dumps(kwargs['json'], indent=2)}")
-        elif 'data' in kwargs:
+        elif "data" in kwargs:
             logger.info(f"📦 DATA BODY: {kwargs['data']}")
-        if 'params' in kwargs:
+        if "params" in kwargs:
             logger.info(f"🔤 PARAMS: {kwargs['params']}")
-        
-        logger.info(f"🔵🔵🔵 HTTP REQUEST END 🔵🔵🔵\n")
-        
+
+        logger.info("🔵🔵🔵 HTTP REQUEST END 🔵🔵🔵\n")
+
         # Make request
         response = super().request(method, url, *args, **kwargs)
-        
+
         # Enhanced response logging
         response_headers = dict(response.headers)
-        
-        logger.info(f"\n🟢🟢🟢 HTTP RESPONSE START 🟢🟢🟢")
+
+        logger.info("\n🟢🟢🟢 HTTP RESPONSE START 🟢🟢🟢")
         logger.info(f"📊 STATUS: {response.status_code} {response.reason}")
         logger.info(f"⏱️  RESPONSE TIME: {response.elapsed.total_seconds():.3f}s")
-        logger.info(f"📋 RESPONSE HEADERS:")
+        logger.info("📋 RESPONSE HEADERS:")
         for key, value in response_headers.items():
             logger.info(f"   {key}: {value}")
-        
+
         # Log response body (handle streaming vs non-streaming)
-        if kwargs.get('stream'):
-            logger.info(f"📡 STREAMING: [Streaming response - chunks will be logged below]")
+        if kwargs.get("stream"):
+            logger.info(
+                "📡 STREAMING: [Streaming response - chunks will be logged below]"
+            )
         else:
-            logger.info(f"📦 RESPONSE BODY:")
+            logger.info("📦 RESPONSE BODY:")
             try:
                 response_json = response.json()
                 logger.info(f"{json.dumps(response_json, indent=2)}")
@@ -181,9 +189,9 @@ class LoggingSession(requests.Session):
                     logger.info(f"{response_text[:1000]}...[TRUNCATED]")
                 else:
                     logger.info(response_text)
-        
-        logger.info(f"🟢🟢🟢 HTTP RESPONSE END 🟢🟢🟢\n")
-        
+
+        logger.info("🟢🟢🟢 HTTP RESPONSE END 🟢🟢🟢\n")
+
         return response
 
 

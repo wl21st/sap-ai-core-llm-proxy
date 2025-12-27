@@ -7,21 +7,64 @@ Provides validators for:
 - OpenAI-compatible response format
 - Claude/Anthropic response format
 - Common response attributes
+
+event: message_start
+data: {"type": "message_start", "message": {"model": "claude-haiku-4-5-20251001", "id": "msg_bdrk_01df", "type": "message", "role": "assistant", "content": [], "stop_reason": null, "stop_sequence": null, "usage": {"input_tokens": 15, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}, "output_tokens": 1}}}
+
+event: content_block_start
+data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
+
+event: content_block_delta
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
+
+event: content_block_stop
+data: {"type": "content_block_stop", "index": 0}
+
+event: message_delta
+data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, "usage": {"output_tokens": 4}}
+
+event: message_stop
+data: {"type": "message_stop", "amazon-bedrock-invocationMetrics": {"inputTokenCount": 15, "outputTokenCount": 4, "invocationLatency": 732, "firstByteLatency": 648}}
+
+data: [DONE]
+
+--- OpenAI API Format ---
+Testing OpenAI format (Stream): haiku-4.5
+✓ Success: haiku-4.5 (Stream) (1364ms)
+data: {"id": "chatcmpl-claude37-19723", "object": "chat.completion.chunk", "created": 1766821881, "model": "haiku-4.5", "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": null}]}
+data: {"id": "chatcmpl-claude37-10672", "object": "chat.completion.chunk", "created": 1766821881, "model": "haiku-4.5", "choices": [{"index": 0, "delta": {"content": "Hello"}, "finish_reason": null}]}
+data: {"id": "chatcmpl-claude37-31205", "object": "chat.completion.chunk", "created": 1766821882, "model": "haiku-4.5", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+data: {"id": "chatcmpl-claude37-46575", "object": "chat.completion.chunk", "created": 1766821882, "model": "haiku-4.5", "choices": [{"index": 0, "delta": {}, "finish_reason": null}], "usage": {"prompt_tokens": 15, "completion_tokens": 4, "total_tokens": 19}}
+data: [DONE]
+
+Testing OpenAI format (Stream): gpt-4.1
+choices[0].delta.content
+
+✓ Success: gpt-4.1 (Stream) (947ms)
+data: {"choices":[{"delta":{"refusal":null,"role":"assistant"},"finish_reason":null,"index":0,"logprobs":null}],"created":1766821948,"id":"chatcmpl-CrJO8j7nBqeH557THNPz7KG0k4Jcu","model":"gpt-4.1-2025-04-14","obfuscation":"E52","object":"chat.completion.chunk","system_fingerprint":"fp_f99638a8d7"}
+data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null,"index":0,"logprobs":null}],"created":1766821948,"id":"chatcmpl-CrJO8j7nBqeH557THNPz7KG0k4Jcu","model":"gpt-4.1-2025-04-14","obfuscation":"","object":"chat.completion.chunk","system_fingerprint":"fp_f99638a8d7"}
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0,"logprobs":null}],"created":1766821948,"id":"chatcmpl-CrJO8j7nBqeH557THNPz7KG0k4Jcu","model":"gpt-4.1-2025-04-14","obfuscation":"rxmjmgN6wcUfRsp","object":"chat.completion.chunk","system_fingerprint":"fp_f99638a8d7"}
+data: [DONE]
+
+Testing OpenAI format (Stream): gpt-5
+✓ Success: gpt-5 (Stream) (1799ms)
+data: {"choices":[],"created":0,"id":"","model":"","object":"","prompt_filter_results":[{"prompt_index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}}}]}
+data: {"choices":[{"content_filter_results":{},"delta":{"content":"","refusal":null,"role":"assistant"},"finish_reason":null,"index":0,"logprobs":null}],"created":1766822043,"id":"chatcmpl-CrJPfescRCu97FKfyqeeA4nmE4YjX","model":"gpt-5-2025-08-07","obfuscation":"","object":"chat.completion.chunk","system_fingerprint":null}
+data: {"choices":[{"content_filter_results":{},"delta":{},"finish_reason":"length","index":0,"logprobs":null}],"created":1766822043,"id":"chatcmpl-CrJPfescRCu97FKfyqeeA4nmE4YjX","model":"gpt-5-2025-08-07","obfuscation":"eZuBe6b7jZ","object":"chat.completion.chunk","system_fingerprint":null}
+data: [DONE]
 """
 
 import json
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 import requests
-
-from auth import RequestValidator
 
 
 class ResponseValidator:
     """Validates API responses from the proxy server."""
 
     @staticmethod
-    def validate_token_usage(response_data: Dict[str, Any]) -> None:
+    def validate_token_usage(response_data: dict[str, Any]) -> None:
         """
         Validate token usage structure and values.
 
@@ -124,6 +167,10 @@ class ResponseValidator:
                 else:
                     raise AssertionError(f"Undefined SSE line: {line}!")
 
+        assert data_chunk_count + event_chunk_count > 0, (
+            f"No data or event chunk received for model {model}"
+        )
+
         assert data_chunk_count > 0, (
             f"No data chunk received for model {model}, got: events={event_chunk_list}"
         )
@@ -155,8 +202,8 @@ class ResponseValidator:
         if index != -1:
             event_type_str = chunk_str[index + 7 :]
 
-        # Check for [DONE] signal
-        if event_type_str in [
+        # Check the event type is valid
+        if event_type_str not in [
             "message_start",
             "content_block_start",
             "content_block_delta",
@@ -165,8 +212,6 @@ class ResponseValidator:
             "message_stop",
             "error",
         ]:
-            return
-        else:
             raise AssertionError(f"SSE event type={event_type_str} is undefined!")
 
     @staticmethod
@@ -180,7 +225,7 @@ class ResponseValidator:
         Raises:
             AssertionError: If validation fails
         """
-        # SSE messages should start with "event:
+        # SSE messages should start with "event: "
         assert chunk.startswith(b"data: "), (
             f"SSE data chunk must start with data:, got: {chunk[:30]}"
         )
@@ -206,7 +251,7 @@ class ResponseValidator:
             raise AssertionError(f"SSE chunk contains invalid JSON: {e}")
 
     @staticmethod
-    def validate_openai_format(response_data: Dict[str, Any]) -> None:
+    def validate_openai_format(response_data: dict[str, Any]) -> None:
         """
         Validate OpenAI-compatible response format.
 
@@ -241,7 +286,7 @@ class ResponseValidator:
         )
 
     @staticmethod
-    def validate_claude_format(response_data: Dict[str, Any]) -> None:
+    def validate_claude_format(response_data: dict[str, Any]) -> None:
         """
         Validate Claude/Anthropic response format.
 
@@ -293,7 +338,7 @@ class ResponseValidator:
         assert len(response_data["model"]) > 0, "model must not be empty"
 
     @staticmethod
-    def validate_streaming_chunk(chunk_data: Dict[str, Any]) -> None:
+    def validate_streaming_chunk(chunk_data: dict[str, Any]) -> None:
         """
         Validate streaming chunk format.
 
@@ -340,8 +385,8 @@ class ResponseValidator:
 
     @staticmethod
     def get_final_chunk_with_usage(
-        chunks: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
+        chunks: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
         """
         Get the final chunk that contains usage information.
 

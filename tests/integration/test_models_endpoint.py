@@ -5,7 +5,7 @@ Tests the model listing endpoint against a running proxy server.
 """
 
 import pytest
-from .validators import ResponseValidator
+from .test_validators import ResponseValidator
 
 
 @pytest.mark.integration
