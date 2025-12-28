@@ -243,7 +243,7 @@ class TestTokenInfo:
     def test_token_info_default_values(self):
         """Test TokenInfo has correct default values."""
         token_info = TokenInfo()
-        assert token_info.token is None
+        assert token_info.token == ""
         assert token_info.expiry == 0
         assert isinstance(token_info.lock, threading.Lock)
 

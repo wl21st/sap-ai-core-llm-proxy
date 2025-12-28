@@ -63,9 +63,8 @@ This document tracks planned improvements, features, and technical debt items fo
 
 **Status**: 🔴 To Do  
 **Priority**: High  
-**Effort**: Small (1-3 days)  
-**Risk**: Low  
-**Related Code**: [`config/pydantic_models.py:45-60`](../config/pydantic_models.py#L45-L60)
+**Effort**: Small (1-3 days)
+**Risk**: Low
 
 #### Description
 
