@@ -8,7 +8,6 @@ and payload conversion between different AI provider formats.
 import json
 import pytest
 from unittest.mock import patch
-import proxy_helpers
 from proxy_helpers import Detector, Converters
 
 

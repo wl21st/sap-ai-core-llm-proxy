@@ -3,7 +3,7 @@ Unit tests for RequestValidator class.
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from flask import Request
 from auth import RequestValidator
 

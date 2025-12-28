@@ -4,13 +4,11 @@ Configuration dataclasses for SAP AI Core LLM Proxy.
 This module defines the core configuration structures used throughout the proxy.
 """
 
-import json
 import threading
 from dataclasses import dataclass, field
 from logging import Logger
 
 from utils.logging_utils import get_server_logger
-from utils.sdk_utils import extract_deployment_id
 
 logger: Logger = get_server_logger(__name__)
 

@@ -4,8 +4,8 @@ Unit tests for TokenManager class.
 
 import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock
-from config import SubAccountConfig, ServiceKey, TokenInfo
+from unittest.mock import Mock, patch
+from config import SubAccountConfig, ServiceKey
 from auth import TokenManager
 
 

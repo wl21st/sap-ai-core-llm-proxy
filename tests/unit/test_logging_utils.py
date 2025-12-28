@@ -7,7 +7,7 @@ import os
 import tempfile
 import time
 from typing import Generator
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 from datetime import datetime, timedelta
 from utils import logging_utils
 

@@ -7,9 +7,8 @@ import json
 import base64
 import random
 import os
-from datetime import datetime
 import argparse
-from typing import Optional, Dict, Any, Generator, List, Tuple
+from typing import Optional, Dict, Any, Generator, Tuple
 
 # Import Litellm (used only for Azure/OpenAI/Gemini models now)
 import litellm
