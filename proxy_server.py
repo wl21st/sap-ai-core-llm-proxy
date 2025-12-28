@@ -22,7 +22,8 @@ from tenacity import (
     wait_exponential,
 )
 
-from auth import RequestValidator, TokenManager
+from auth import RequestValidator
+from auth.token_manager import TokenManager
 
 # Import from new modular structure
 from config import ProxyConfig, load_proxy_config, ServiceKey, ProxyGlobalContext
@@ -35,6 +36,8 @@ from utils.sdk_utils import extract_deployment_id
 logger: Logger = get_server_logger(__name__)
 transport_logger: Logger = get_transport_logger(__name__)
 token_usage_logger: Logger = get_server_logger("token_usage")
+
+ctx: ProxyGlobalContext
 
 from utils.sdk_pool import get_bedrock_client  # noqa: E402
 

@@ -133,13 +133,6 @@ class Converters:
                 logger.warning(
                     f"Invalid value for max_tokens: {max_tokens_value}. Using default or omitting."
                 )
-            # Ensure max_tokens is an integer
-            try:
-                inference_config["maxTokens"] = int(max_tokens_value)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"Invalid value for max_tokens: {max_tokens_value}. Using default or omitting."
-                )
         if "temperature" in payload:
             # Ensure temperature is a float
             try:
@@ -690,9 +683,6 @@ class Converters:
     @staticmethod
     def convert_claude_chunk_to_openai(chunk, model):
         try:
-            # Log the raw chunk received
-            # Log the raw chunk received only if it's a 3.7 model
-            logger.info(f"{model} Raw Claude chunk received: {chunk}")
             # Parse the Claude chunk
             data = json.loads(chunk.replace("data: ", "").strip())
 
@@ -753,16 +743,10 @@ class Converters:
                 # "system_fingerprint": None # Not typically sent in chunks
             }
 
-            # Determine chunk type based on the first key in the dictionary
-            # claude_chunk is string, so need to parse it
+            # Parse chunk if it's a string
             if isinstance(claude_chunk, str):
                 try:
-                    # claude_chunk = json.dumps(claude_chunk.replace("data: ", "").strip())
-                    logger.info(f"Parsed Claude chunk: {claude_chunk}")
                     claude_chunk = json.loads(claude_chunk)
-                    logger.info(
-                        f"Decoded Claude chunk: {json.dumps(claude_chunk, indent=2)}"
-                    )
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON decode error: {e}")
                     return None
