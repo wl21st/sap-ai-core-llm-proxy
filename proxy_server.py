@@ -25,7 +25,7 @@ from tenacity import (
 from auth import RequestValidator, TokenManager
 
 # Import from new modular structure
-from config import ProxyConfig, load_proxy_config, ServiceKey
+from config import ProxyConfig, load_proxy_config, ServiceKey, ProxyGlobalContext
 from proxy_helpers import Converters, Detector
 from utils.error_handlers import handle_http_429_error
 from utils.logging_utils import get_server_logger, get_transport_logger, init_logging
@@ -167,8 +167,8 @@ def handle_embedding_request():
             handle_embedding_service_call(input_text, model, encoding_format)
         )
 
-        # Create a global token manager for sub accounts
-        token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
+        # Get token manager from global context
+        token_manager = ctx.get_token_manager(subaccount_name)
         subaccount_token = token_manager.get_token()
         subaccount = proxy_config.subaccounts[subaccount_name]
         resource_group = subaccount.resource_group
@@ -786,9 +786,8 @@ def proxy_openai_stream():
             )
 
         # Get token for the selected subAccount
-        # TODO: Put TokenManager to module level instead of creating a new one for each request
         subaccount = proxy_config.subaccounts[subaccount_name]
-        subaccount_token = TokenManager(subaccount).get_token()
+        subaccount_token = ctx.get_token_manager(subaccount_name).get_token()
 
         # Get resource group for the selected subAccount
         resource_group = subaccount.resource_group
@@ -1355,7 +1354,7 @@ def proxy_claude_request_original():
 
     try:
         base_url, subaccount_name, resource_group, model = load_balance_url(model)
-        token_manager = TokenManager(proxy_config.subaccounts[subaccount_name])
+        token_manager = ctx.get_token_manager(subaccount_name)
         subaccount_token = token_manager.get_token()
 
         # Convert incoming Claude payload to the format expected by the backend model
@@ -2465,9 +2464,13 @@ def main() -> None:
 
     logger.info(f"Loading configuration from: {args.config}")
 
-    # Load the proxy config
+    # Load the proxy config and initialize global context
+    global ctx
+    ctx = ProxyGlobalContext()
+    ctx.initialize(load_proxy_config(args.config))
+
     global proxy_config
-    proxy_config = load_proxy_config(args.config)
+    proxy_config = ctx.config
 
     # Get server configuration
     host = proxy_config.host

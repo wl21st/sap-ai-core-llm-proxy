@@ -9,11 +9,13 @@ This package handles:
 
 from .config_models import ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig
 from .config_parser import load_proxy_config
+from .global_context import ProxyGlobalContext
 
 __all__ = [
-    'ServiceKey',
-    'TokenInfo',
-    'SubAccountConfig',
-    'ProxyConfig',
-    'load_proxy_config',
+    "ServiceKey",
+    "TokenInfo",
+    "SubAccountConfig",
+    "ProxyConfig",
+    "load_proxy_config",
+    "ProxyGlobalContext",
 ]

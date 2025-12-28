@@ -194,15 +194,22 @@ def flask_client():
 @pytest.fixture
 def reset_proxy_config():
     """Reset global proxy_config before each test."""
+    from config import ProxyGlobalContext
+
     # Store original state
+    original_ctx = getattr(proxy_server, "ctx", None)
     original_config = proxy_server.proxy_config
 
     # Reset to clean state
-    proxy_server.proxy_config = ProxyConfig()
+    proxy_server.ctx = ProxyGlobalContext()
+    proxy_server.ctx.initialize(ProxyConfig())
+    proxy_server.proxy_config = proxy_server.ctx.config
 
     yield
 
     # Restore original state
+    if original_ctx is not None:
+        proxy_server.ctx = original_ctx
     proxy_server.proxy_config = original_config
 
 
@@ -265,6 +272,8 @@ class TestSubAccountConfig:
 
     def test_load_service_key(self, sample_service_key_raw, tmp_path):
         """Test loading service key from file."""
+        from config.config_parser import _load_service_key_for_subaccount
+
         # Create temp key file
         key_file = tmp_path / "test_key.json"
         key_file.write_text(json.dumps(sample_service_key_raw))
@@ -276,7 +285,7 @@ class TestSubAccountConfig:
             model_to_deployment_urls={},
         )
 
-        config.load_service_key()
+        _load_service_key_for_subaccount(config)
 
         assert config.service_key is not None
         assert config.service_key.client_id == sample_service_key_raw["clientid"]
@@ -286,6 +295,8 @@ class TestSubAccountConfig:
 
     def test_normalize_model_names(self):
         """Test model name normalization."""
+        from config.config_parser import _build_mapping_for_subaccount
+
         config = SubAccountConfig(
             name="test",
             resource_group="default",
@@ -298,7 +309,7 @@ class TestSubAccountConfig:
             },
         )
 
-        config.build_mapping()
+        _build_mapping_for_subaccount(config)
 
         # Check that build_mapping populates model_to_deployment_ids
         assert "anthropic--claude-3.5-sonnet" in config.model_to_deployment_ids
@@ -319,42 +330,44 @@ class TestProxyConfig:
 
     def test_build_model_mapping(self, sample_service_key_raw, tmp_path):
         """Test building model to subaccounts mapping."""
+        from config.config_parser import load_proxy_config
+
         # Create temp key files
         key1_file = tmp_path / "key1.json"
         key1_file.write_text(json.dumps(sample_service_key_raw))
         key2_file = tmp_path / "key2.json"
         key2_file.write_text(json.dumps(sample_service_key_raw))
 
-        config = ProxyConfig()
+        # Create a temp config file
+        config_data = {
+            "subAccounts": {
+                "sub1": {
+                    "resource_group": "default",
+                    "service_key_json": str(key1_file),
+                    "deployment_models": {
+                        "gpt-4": [
+                            "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d1"
+                        ],
+                        "claude": [
+                            "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d2"
+                        ],
+                    },
+                },
+                "sub2": {
+                    "resource_group": "default",
+                    "service_key_json": str(key2_file),
+                    "deployment_models": {
+                        "gpt-4": [
+                            "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d3"
+                        ]
+                    },
+                },
+            }
+        }
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps(config_data))
 
-        # Add subaccounts with models
-        sub1 = SubAccountConfig(
-            name="sub1",
-            resource_group="default",
-            service_key_json=str(key1_file),
-            model_to_deployment_urls={
-                "gpt-4": [
-                    "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d1"
-                ],
-                "claude": [
-                    "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d2"
-                ],
-            },
-        )
-
-        sub2 = SubAccountConfig(
-            name="sub2",
-            resource_group="default",
-            service_key_json=str(key2_file),
-            model_to_deployment_urls={
-                "gpt-4": [
-                    "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d3"
-                ]
-            },
-        )
-
-        config.subaccounts = {"sub1": sub1, "sub2": sub2}
-        config.parse()
+        config = load_proxy_config(str(config_file))
 
         # gpt-4 should be in both subaccounts
         assert "gpt-4" in config.model_to_subaccounts
@@ -837,7 +850,9 @@ class TestFlaskEndpoints:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.headers = {}
-        mock_response.text = '{"object": "list", "data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]}'
+        mock_response.text = (
+            '{"object": "list", "data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]}'
+        )
         mock_post.return_value = mock_response
 
         # Setup subaccount
@@ -966,7 +981,9 @@ class TestIntegration:
                 mock_response.raise_for_status = Mock()
                 mock_response.status_code = 200
                 mock_response.headers = {}
-                mock_response.text = '{"id": "chatcmpl-123", "object": "chat.completion"}'
+                mock_response.text = (
+                    '{"id": "chatcmpl-123", "object": "chat.completion"}'
+                )
                 mock_response.content = b'{"id": "chatcmpl-123"}'
                 return mock_response
 

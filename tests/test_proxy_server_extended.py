@@ -34,7 +34,9 @@ def client():
 @pytest.fixture
 def setup_test_config():
     """Setup test configuration."""
-    # Initialize proxy_config if it doesn't exist
+    from config import ProxyGlobalContext
+
+    # Initialize proxy_config and ctx if they don't exist
     if proxy_server.proxy_config is None:
         from config import ProxyConfig
 
@@ -45,6 +47,11 @@ def setup_test_config():
             model_to_subaccounts={},
             secret_authentication_tokens=[],
         )
+
+    # Initialize ctx
+    original_ctx = getattr(proxy_server, "ctx", None)
+    proxy_server.ctx = ProxyGlobalContext()
+    proxy_server.ctx.initialize(proxy_server.proxy_config)
 
     # Save original config
     original_subaccounts = proxy_server.proxy_config.subaccounts.copy()
@@ -90,6 +97,8 @@ def setup_test_config():
     yield
 
     # Restore original config
+    if original_ctx is not None:
+        proxy_server.ctx = original_ctx
     proxy_server.proxy_config.subaccounts = original_subaccounts
     proxy_server.proxy_config.model_to_subaccounts = original_model_mapping
     proxy_server.proxy_config.secret_authentication_tokens = original_tokens
@@ -109,10 +118,9 @@ class TestEmbeddingEndpoint:
         assert "error" in response.json
 
     @patch("proxy_server.handle_embedding_service_call")
-    @patch("proxy_server.TokenManager")
     @patch("proxy_server.requests.post")
     def test_embedding_endpoint_success(
-        self, mock_post, mock_token_manager, mock_handle_call, client, setup_test_config
+        self, mock_post, mock_handle_call, client, setup_test_config
     ):
         """Test successful embedding request."""
         mock_handle_call.return_value = (
@@ -121,9 +129,10 @@ class TestEmbeddingEndpoint:
             "test-sub",
         )
 
+        # Mock the token manager in ctx
         mock_token = Mock()
         mock_token.get_token.return_value = "test-access-token"
-        mock_token_manager.return_value = mock_token
+        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
 
         mock_response = Mock()
         mock_response.json.return_value = {"embedding": [0.1, 0.2, 0.3]}
@@ -1217,10 +1226,9 @@ class TestEmbeddingEndpointEdgeCases:
     """Additional edge cases for embedding endpoint."""
 
     @patch("proxy_server.handle_embedding_service_call")
-    @patch("proxy_server.TokenManager")
     @patch("proxy_server.requests.post")
     def test_embedding_endpoint_array_input(
-        self, mock_post, mock_token_manager, mock_handle_call, client, setup_test_config
+        self, mock_post, mock_handle_call, client, setup_test_config
     ):
         """Test embedding endpoint with array input."""
         mock_handle_call.return_value = (
@@ -1231,7 +1239,7 @@ class TestEmbeddingEndpointEdgeCases:
 
         mock_token = Mock()
         mock_token.get_token.return_value = "test-token"
-        mock_token_manager.return_value = mock_token
+        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
 
         mock_response = Mock()
         mock_response.json.return_value = {"embeddings": [[0.1, 0.2], [0.3, 0.4]]}
@@ -1382,17 +1390,16 @@ class TestProxyOpenAIStreamEndpoint:
     """Test cases for proxy_openai_stream endpoint."""
 
     @patch("proxy_server.RequestValidator.validate")
-    @patch("proxy_server.TokenManager")
     @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_claude_model_success(
-        self, mock_post, mock_token_manager, mock_validate, client, setup_test_config
+        self, mock_post, mock_validate, client, setup_test_config
     ):
         """Test successful Claude model request via proxy_openai_stream."""
         mock_validate.return_value = True
 
         mock_token = Mock()
         mock_token.get_token.return_value = "test-token"
-        mock_token_manager.return_value = mock_token
+        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
 
         mock_response = Mock()
         mock_response.json.return_value = {
@@ -1424,17 +1431,16 @@ class TestProxyOpenAIStreamEndpoint:
         assert "choices" in data
 
     @patch("proxy_server.RequestValidator.validate")
-    @patch("proxy_server.TokenManager")
     @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_gemini_model_success(
-        self, mock_post, mock_token_manager, mock_validate, client, setup_test_config
+        self, mock_post, mock_validate, client, setup_test_config
     ):
         """Test successful Gemini model request via proxy_openai_stream."""
         mock_validate.return_value = True
 
         mock_token = Mock()
         mock_token.get_token.return_value = "test-token"
-        mock_token_manager.return_value = mock_token
+        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
 
         mock_response = Mock()
         mock_response.json.return_value = {
@@ -1533,17 +1539,16 @@ class TestProxyOpenAIStreamEndpoint:
         assert response.status_code == 404
 
     @patch("proxy_server.RequestValidator.validate")
-    @patch("proxy_server.TokenManager")
     @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_streaming_response(
-        self, mock_post, mock_token_manager, mock_validate, client, setup_test_config
+        self, mock_post, mock_validate, client, setup_test_config
     ):
         """Test streaming response from proxy_openai_stream."""
         mock_validate.return_value = True
 
         mock_token = Mock()
         mock_token.get_token.return_value = "test-token"
-        mock_token_manager.return_value = mock_token
+        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
 
         # Mock streaming response with context manager support
         mock_response = Mock()
@@ -1573,17 +1578,16 @@ class TestProxyClaudeRequestOriginal:
     """Test cases for proxy_claude_request_original fallback function."""
 
     @patch("proxy_server.RequestValidator.validate")
-    @patch("proxy_server.TokenManager")
     @patch("proxy_server.requests.post")
     def test_proxy_claude_request_original_success(
-        self, mock_post, mock_token_manager, mock_validate, client, setup_test_config
+        self, mock_post, mock_validate, client, setup_test_config
     ):
         """Test successful fallback Claude request."""
         mock_validate.return_value = True
 
         mock_token = Mock()
         mock_token.get_token.return_value = "test-token"
-        mock_token_manager.return_value = mock_token
+        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
 
         mock_response = Mock()
         mock_response.json.return_value = {
