@@ -1852,7 +1852,7 @@ def generate_streaming_response(
 
                         if line_content and line_content != "[DONE]":
                             try:
-                                gemini_chunk = json.loads(line_content)
+                                gemini_chunk: dict[str, Any] = json.loads(line_content)
                                 logger.info(
                                     f"Gemini parsed chunk: {json.dumps(gemini_chunk, indent=2)}"
                                 )
@@ -1902,7 +1902,7 @@ def generate_streaming_response(
                                     exc_info=True,
                                 )
                                 logger.error(
-                                    f"Problematic chunk: {gemini_chunk if 'gemini_chunk' in locals() else 'Failed to parse'}"
+                                    f"Problematic chunk: {gemini_chunk} if 'gemini_chunk' in locals() else 'Failed to parse'"
                                 )
                                 error_payload = {
                                     "id": f"chatcmpl-error-{random.randint(10000, 99999)}",

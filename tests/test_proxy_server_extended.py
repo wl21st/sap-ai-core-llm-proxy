@@ -594,6 +594,8 @@ class TestProxyClaudeRequestEndpoint:
         assert response.json["type"] == "error"
         assert "authentication_error" in response.json["error"]["type"]
 
+    @patch("proxy_server.ctx")
+    @patch("proxy_server.requests.post")
     @patch("proxy_server.RequestValidator")
     @patch("proxy_server.load_balance_url")
     @patch("proxy_server.Detector.is_claude_model")
@@ -602,6 +604,8 @@ class TestProxyClaudeRequestEndpoint:
         mock_is_claude,
         mock_load_balance,
         mock_validator,
+        mock_post,
+        mock_ctx,
         client,
         setup_test_config,
     ):
@@ -618,16 +622,38 @@ class TestProxyClaudeRequestEndpoint:
         )
         mock_is_claude.return_value = False
 
+        # Mock token manager
+        mock_token_manager = Mock()
+        mock_token_manager.get_token.return_value = "test-token-xyz"
+        mock_ctx.get_token_manager.return_value = mock_token_manager
+
+        # Mock the HTTP response for the fallback implementation
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Hello"},
+                    "index": 0,
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
         # This should trigger fallback to proxy_claude_request_original
-        # which will likely fail without more mocking, but we're testing the path
         response = client.post(
             "/v1/messages",
             json={"model": "gpt-4", "messages": [{"role": "user", "content": "test"}]},
             headers={"Authorization": "Bearer test-token-123"},
         )
 
-        # The fallback might return various status codes depending on implementation
-        assert response.status_code in [200, 400, 401, 404, 500]
+        # Should successfully return 200 with the mocked response
+        assert response.status_code == 200
 
 
 class TestHandleNonStreamingRequest:
