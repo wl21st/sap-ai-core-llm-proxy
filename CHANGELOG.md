@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2025-12-29
+
+### Added
+- **ProxyGlobalContext**: Introduced singleton global context (similar to Spring Boot's ApplicationContext) for centralized configuration and service management
+- **SSE Implementation Analysis**: Added comprehensive documentation analyzing SSE payload conversion compliance (`docs/SSE_Implementation_Analysis.md`)
+- **Enhanced Testing**: Improved test coverage for non-Claude model fallback scenarios with better mocking
+
+### Changed
+- **Architecture Refactoring**: Major refactoring of configuration management:
+  - Introduced `ProxyGlobalContext` in `config/global_context.py` for thread-safe singleton service management
+  - Refactored `config_parser.py` with enhanced configuration loading (82+ new lines)
+  - Simplified `config_models.py` by removing 70+ lines of redundant code
+  - Updated proxy server to use centralized context for token managers and services
+- **Code Quality**: Cleaned up unused imports across 8+ files including tests and utilities
+- **Type Annotations**: Fixed type annotations in proxy server for better type safety
+- **Test Improvements**: Updated 87+ lines in test files to match new architecture patterns
+
+### Removed
+- **Pydantic Configuration System**: Removed unused Pydantic-based configuration system (~1,016 lines):
+  - Deleted `config/pydantic_loader.py` (190 lines)
+  - Deleted `config/pydantic_models.py` (121 lines)
+  - Deleted `config/README_PYDANTIC.md` (247 lines)
+  - Deleted `test_pydantic_config.py` (248 lines)
+  - Deleted `PYDANTIC_CONFIG_SUMMARY.md` (206 lines)
+- **Dead Code**: Removed unused imports and simplified proxy helper methods (18 lines reduced)
+
+### Fixed
+- Improved token manager initialization through global context for better thread safety
+- Fixed type annotations in streaming SSE conversion functions
+
+### Documentation
+- Updated `docs/Backlog.md` to reflect completed refactoring tasks
+- Added detailed SSE implementation analysis documenting compliance gaps and improvement areas
+
+### Technical Details
+- **Lines Changed**: 447 insertions, 1,189 deletions (net reduction of 742 lines)
+- **Files Modified**: 24 files across config, tests, and core modules
+- **Architecture**: Moved toward centralized service management pattern with ProxyGlobalContext
+- **Thread Safety**: Enhanced thread-safe access to token managers via singleton context with locks
+
 ## [1.2.3] - 2025-12-25
 
 ### Fixed
@@ -58,6 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version Comparison
 
+**v1.2.6 vs v1.2.5**: Major refactoring release with ProxyGlobalContext, removed Pydantic config system (net -742 lines), enhanced architecture
 **v1.2.3 vs v1.2.2**: Bug fix for global configuration loading issue
 **v1.2.2 vs v1.2.1**: Major feature release with uvx support, comprehensive documentation, transport logging, and modern type hints
 
