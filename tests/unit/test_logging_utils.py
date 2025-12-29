@@ -20,7 +20,7 @@ class TestLoggingUtils:
         """Create temporary directories for testing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             logs_dir = os.path.join(temp_dir, "logs")
-            archive_dir = os.path.join(logs_dir, "archive")
+            archive_dir = os.path.join(logs_dir, "archives")
             os.makedirs(logs_dir)
             os.makedirs(archive_dir)
 
@@ -78,8 +78,6 @@ class TestLoggingUtils:
 
         with (
             patch("utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
-            patch("utils.logging_utils.os.path.exists", return_value=True),
-            patch("utils.logging_utils.os.makedirs"),
             patch("logging.basicConfig"),
             patch("logging.getLogger"),
         ):
@@ -111,8 +109,6 @@ class TestLoggingUtils:
 
         with (
             patch("utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
-            patch("utils.logging_utils.os.path.exists", return_value=True),
-            patch("utils.logging_utils.os.makedirs"),
             patch("logging.basicConfig"),
             patch("logging.getLogger"),
         ):
@@ -141,8 +137,6 @@ class TestLoggingUtils:
 
         with (
             patch("utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
-            patch("utils.logging_utils.os.path.exists", return_value=True),
-            patch("utils.logging_utils.os.makedirs"),
             patch("logging.basicConfig"),
             patch("logging.getLogger"),
             patch("utils.logging_utils.datetime") as mock_datetime,
@@ -195,8 +189,6 @@ class TestLoggingUtils:
     def test_init_logging_idempotent(self) -> None:
         """Test that init_logging is idempotent."""
         with (
-            patch("utils.logging_utils.os.path.exists", return_value=True),
-            patch("utils.logging_utils.os.makedirs"),
             patch("logging.basicConfig"),
             patch("logging.getLogger"),
         ):

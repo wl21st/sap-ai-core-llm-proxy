@@ -66,7 +66,7 @@ def init_logging(debug: bool = True) -> None:
         if not os.path.exists(DEFAULT_LOG_FOLDER):
             os.makedirs(DEFAULT_LOG_FOLDER)
 
-        archive_folder = os.path.join(DEFAULT_LOG_FOLDER, "archive")
+        archive_folder = os.path.join(DEFAULT_LOG_FOLDER, "archives")
         if not os.path.exists(archive_folder):
             os.makedirs(archive_folder)
 

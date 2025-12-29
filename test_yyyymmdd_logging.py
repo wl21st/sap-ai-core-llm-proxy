@@ -45,10 +45,10 @@ def test_yyyymmdd_logging():
             print(f"- logs/{log_file}")
     
     print("\nArchived log files:")
-    archive_dir = 'logs/archive'
+    archive_dir = 'logs/archives'
     if os.path.exists(archive_dir):
         archive_files = [f for f in os.listdir(archive_dir) if f.endswith('.log')]
-        print(f"- {len(archive_files)} files in logs/archive/")
+        print(f"- {len(archive_files)} files in logs/archives/")
     
     print("\nAll messages should also appear in console output above.")
     print("New log files should follow format: [type]_YYYYMMDD_hhmmss.log")
