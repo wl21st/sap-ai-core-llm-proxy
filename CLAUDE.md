@@ -115,8 +115,8 @@ uv run pylint proxy_server.py proxy_helpers.py
 ### Core Structure
 
 The codebase consists of:
-- **`proxy_server.py`** (2348 lines) - Main Flask application with endpoints, token management, load balancing
-- **`proxy_helpers.py`** (1193 lines) - Model detection and format conversion utilities
+- **`proxy_server.py`** (2501 lines) - Main Flask application with endpoints, token management, load balancing
+- **`proxy_helpers.py`** (1414 lines) - Model detection and format conversion utilities
 - **`config/`** - Configuration management using Pydantic models
 - **`auth/`** - Authentication and token management (modular structure)
 - **`utils/`** - Logging, error handlers, SDK utilities
@@ -287,7 +287,7 @@ make test-integration
 ## Known Issues & Technical Debt
 
 ### High Priority
-1. **Monolithic Architecture** - `proxy_server.py` is 2348 lines (see `docs/ARCHITECTURE.md`)
+1. **Monolithic Architecture** - `proxy_server.py` is 2501 lines (see `docs/ARCHITECTURE.md`)
 2. **Hardcoded Model Normalization** - `normalize_model_names()` has `if False:` at line 56
 3. **Limited Logging Configuration** - Logging levels are hardcoded
 
@@ -328,8 +328,8 @@ See `docs/ARCHITECTURE.md` for complete technical debt analysis.
 
 ## Important Files
 
-- `proxy_server.py` - Main Flask application (2348 lines)
-- `proxy_helpers.py` - Model detection and format conversion (1193 lines)
+- `proxy_server.py` - Main Flask application (2501 lines)
+- `proxy_helpers.py` - Model detection and format conversion (1414 lines)
 - `config/` - Configuration management with Pydantic
 - `auth/` - Authentication and token management
 - `utils/` - Logging, error handling, SDK utilities
