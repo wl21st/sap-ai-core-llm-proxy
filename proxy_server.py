@@ -1539,7 +1539,7 @@ def parse_sse_response_to_claude_json(response_text):
 
     # Build Claude response format
     response_data = {
-        "id": f"msg_{random.randint(10000, 99999)}",
+        "id": f"msg_{random.randint(10000000, 99999999)}",
         "type": "message",
         "role": "assistant",
         "content": [{"type": "text", "text": content}],
@@ -1729,7 +1729,13 @@ def generate_streaming_response(
                     f"Using Claude 3.7/4 streaming for subAccount '{subaccount_name}'"
                 )
                 stop_reason_received = None  # Track the stop reason from messageStop
-                
+                # Initialize stream_id with fallback, will be replaced if messageStart has an ID
+                stream_id = f"chatcmpl-claude-{random.randint(10000000, 99999999)}"
+                # Initialize token counters (will be updated if metadata chunk is received)
+                total_tokens = 0
+                prompt_tokens = 0
+                completion_tokens = 0
+
                 for line_bytes in response.iter_lines():
                     if line_bytes:
                         line = line_bytes.decode("utf-8")
@@ -1741,10 +1747,32 @@ def generate_streaming_response(
                                 line_content = json.dumps(line_content)
                                 claude_dict_chunk = json.loads(line_content)
 
+                                # Extract ID from messageStart chunk to replace fallback ID
+                                if "messageStart" in claude_dict_chunk:
+                                    message_id = (
+                                        claude_dict_chunk.get("messageStart", {})
+                                        .get("message", {})
+                                        .get("id", "")
+                                    )
+                                    if message_id:
+                                        # Replace fallback ID with the actual message ID from Claude
+                                        stream_id = f"chatcmpl-claude-{message_id}"
+                                        logger.info(
+                                            f"Extracted stream ID from messageStart: {stream_id}"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"messageStart has no ID, continuing with fallback: {stream_id}"
+                                        )
+
                                 # Check if this is a messageStop chunk - capture stop reason but don't send yet
                                 if "messageStop" in claude_dict_chunk:
-                                    stop_reason_received = claude_dict_chunk.get("messageStop", {}).get("stopReason", "end_turn")
-                                    logger.info(f"Received messageStop with stopReason: {stop_reason_received}")
+                                    stop_reason_received = claude_dict_chunk.get(
+                                        "messageStop", {}
+                                    ).get("stopReason", "end_turn")
+                                    logger.info(
+                                        f"Received messageStop with stopReason: {stop_reason_received}"
+                                    )
                                     # Don't send this chunk yet - wait for metadata to combine with usage
                                     continue
 
@@ -1771,12 +1799,13 @@ def generate_streaming_response(
                                     # Don't process this chunk further, just continue to next
                                     continue
 
-                                # Convert chunk to OpenAI format
+                                # Convert chunk to OpenAI format, passing the consistent stream_id
                                 openai_sse_chunk_str = (
                                     Converters.convert_claude37_chunk_to_openai(
-                                        claude_dict_chunk, model
+                                        claude_dict_chunk, model, stream_id
                                     )
                                 )
+
                                 if openai_sse_chunk_str:
                                     # Log client chunk sent
                                     logger.info(
@@ -1792,7 +1821,7 @@ def generate_streaming_response(
                                     exc_info=True,
                                 )
                                 error_payload = {
-                                    "id": f"chatcmpl-error-{random.randint(10000, 99999)}",
+                                    "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
                                     "object": "chat.completion.chunk",
                                     "created": int(time.time()),
                                     "model": model,
@@ -1818,13 +1847,16 @@ def generate_streaming_response(
                         "tool_use": "tool_calls",
                     }
                     finish_reason = stop_reason_map.get(stop_reason_received, "stop")
-                    
+
+                    # Use the same stream_id for the final usage chunk
                     final_usage_chunk = {
-                        "id": f"chatcmpl-claude37-{random.randint(10000, 99999)}",
+                        "id": stream_id,
                         "object": "chat.completion.chunk",
                         "created": int(time.time()),
                         "model": model,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                        "choices": [
+                            {"index": 0, "delta": {}, "finish_reason": finish_reason}
+                        ],
                         "usage": {
                             "prompt_tokens": prompt_tokens,
                             "completion_tokens": completion_tokens,
@@ -1929,7 +1961,7 @@ def generate_streaming_response(
                                     f"Problematic chunk: {gemini_chunk} if 'gemini_chunk' in locals() else 'Failed to parse'"
                                 )
                                 error_payload = {
-                                    "id": f"chatcmpl-error-{random.randint(10000, 99999)}",
+                                    "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
                                     "object": "chat.completion.chunk",
                                     "created": int(time.time()),
                                     "model": model,
@@ -1948,7 +1980,7 @@ def generate_streaming_response(
                 # Send final chunk with usage information before [DONE] for Gemini
                 if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
                     final_usage_chunk = {
-                        "id": f"chatcmpl-gemini-{random.randint(10000, 99999)}",
+                        "id": f"chatcmpl-gemini-{random.randint(10000000, 99999999)}",
                         "object": "chat.completion.chunk",
                         "created": int(time.time()),
                         "model": model,
@@ -2121,7 +2153,7 @@ def generate_streaming_response(
                 error_content = str(http_err)
 
             error_payload = {
-                "id": f"error-{random.randint(10000, 99999)}",
+                "id": f"error-{random.randint(10000000, 99999999)}",
                 "object": "error",
                 "created": int(time.time()),
                 "model": model,
@@ -2141,7 +2173,7 @@ def generate_streaming_response(
                 exc_info=True,
             )
             error_payload = {
-                "id": f"error-{random.randint(10000, 99999)}",
+                "id": f"error-{random.randint(10000000, 99999999)}",
                 "object": "error",
                 "created": int(time.time()),
                 "model": model,
@@ -2188,7 +2220,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
                 message_start_data = {
                     "type": "message_start",
                     "message": {
-                        "id": f"msg_{random.randint(10000, 99999)}",
+                        "id": f"msg_{random.randint(10000000, 99999999)}",
                         "type": "message",
                         "role": "assistant",
                         "content": [],
@@ -2318,7 +2350,7 @@ def generate_claude_streaming_response(url, headers, payload, model, subaccount_
     message_start_data = {
         "type": "message_start",
         "message": {
-            "id": f"msg_{random.randint(10000, 99999)}",
+            "id": f"msg_{random.randint(10000000, 99999999)}",
             "type": "message",
             "role": "assistant",
             "content": [],
@@ -2503,7 +2535,9 @@ def main() -> None:
     host = proxy_config.host
     if args.port is not None:
         port = args.port
-        logger.info(f"Port override: Using CLI argument --port {port} (config file specifies {proxy_config.port})")
+        logger.info(
+            f"Port override: Using CLI argument --port {port} (config file specifies {proxy_config.port})"
+        )
     else:
         port = proxy_config.port
 

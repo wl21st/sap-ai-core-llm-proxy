@@ -10,7 +10,7 @@ logger: Logger = get_server_logger(__name__)
 
 class Detector:
     @staticmethod
-    def is_claude_37_or_4(model):
+    def is_claude_37_or_4(model: str):
         """
         Check if the Claude model uses Converse API format (True) or InvokeModel format (False).
 
@@ -25,16 +25,17 @@ class Detector:
             bool: True for models using Converse API (3.7+, 4+, non-3.5), False for InvokeModel (3.5, older)
         """
         # Check for specific version patterns to avoid false positives with dates
-        model_lower = model.lower()
+        # Normalize dots to hyphens to handle both "claude-4.5" and "claude-4-5" variants
+        model_lower: str = model.lower().replace(".", "-")
         return (
-            "claude-3.7" in model_lower
+            "claude-3-7" in model_lower
             or "claude-4" in model_lower
-            or "claude-4.5" in model_lower
             or "sonnet-4" in model_lower  # Detect sonnet-4.x models
-            or "haiku-4" in model_lower    # Detect haiku-4.x models
+            or "haiku-4" in model_lower  # Detect haiku-4.x models
+            or "opus-4" in model_lower  # Detect opus-4.x models
             or (
                 "claude" in model_lower
-                and not any(v in model_lower for v in ["3-5", "3.5", "3-opus"])
+                and not any(v in model_lower for v in ["3-5", "3-opus"])
             )
         )
 
@@ -633,7 +634,7 @@ class Converters:
                     }
                 ],
                 "created": int(time.time()),
-                "id": f"chatcmpl-claude37-{random.randint(10000, 99999)}",  # More specific ID prefix
+                "id": f"chatcmpl-claude-{random.randint(10000000, 99999999)}",  # More specific ID prefix
                 "model": model_name,  # Use the provided model name
                 "object": "chat.completion",
                 "usage": {
@@ -677,7 +678,7 @@ class Converters:
                 # Optionally include parts of the OpenAI structure if needed by the client
                 # "choices": [],
                 # "created": int(time.time()),
-                # "id": f"chatcmpl-error-{random.randint(10000, 99999)}",
+                # "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
                 # "model": model_name,
                 # "usage": {"completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0},
             }
@@ -716,17 +717,21 @@ class Converters:
             return f'data: {{"error": "Error processing chunk"}}\n\n'
 
     @staticmethod
-    def convert_claude37_chunk_to_openai(claude_chunk, model_name):
+    def convert_claude37_chunk_to_openai(claude_chunk, model_name, stream_id=None):
         """
         Converts a single parsed Claude 3.7/4/4.5 /converse-stream chunk (dictionary)
         into an OpenAI-compatible Server-Sent Event (SSE) string.
         Returns None if the chunk doesn't map to an OpenAI event (e.g., metadata).
+
+        Args:
+            claude_chunk: The Claude chunk to convert
+            model_name: The model name to use in the response
+            stream_id: Optional pre-generated stream ID for consistency across chunks
         """
         try:
-            # Generate a consistent-ish ID for the stream parts
-            # In a real scenario, this ID should be generated once per request stream
-            # and potentially passed down or managed in the calling context.
-            stream_id = f"chatcmpl-claude37-{random.randint(10000, 99999)}"
+            # Use provided stream_id or generate a new one (for backward compatibility)
+            if stream_id is None:
+                stream_id = f"chatcmpl-claude-{random.randint(10000000, 99999999)}"
             created_time = int(time.time())
 
             openai_chunk_payload = {
@@ -815,7 +820,12 @@ class Converters:
                     # Sending with finish_reason=null might be confusing. Let's ignore.
                     return None
 
-            elif chunk_type in ["contentBlockStart", "contentBlockStop", "metadata", "messageStop"]:
+            elif chunk_type in [
+                "contentBlockStart",
+                "contentBlockStop",
+                "metadata",
+                "messageStop",
+            ]:
                 # These Claude events don't have a direct OpenAI chunk equivalent
                 # containing message delta or finish reason. Ignore them for streaming output.
                 # Metadata chunk should be handled separately in the calling function (`generate`)
@@ -845,7 +855,7 @@ class Converters:
             )
             # Optionally return an error chunk in SSE format to the client
             error_payload = {
-                "id": f"chatcmpl-error-{random.randint(10000, 99999)}",
+                "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
                 "model": model_name,
@@ -1089,7 +1099,7 @@ class Converters:
                     }
                 ],
                 "created": int(time.time()),
-                "id": f"chatcmpl-gemini-{random.randint(10000, 99999)}",
+                "id": f"chatcmpl-gemini-{random.randint(10000000, 99999999)}",
                 "model": model_name,
                 "object": "chat.completion",
                 "usage": {
@@ -1167,7 +1177,7 @@ class Converters:
             completion_tokens = usage_metadata.get("candidatesTokenCount", 0)
 
             claude_response = {
-                "id": f"msg_gemini_{random.randint(10000, 99999)}",
+                "id": f"msg_gemini_{random.randint(10000000, 99999999)}",
                 "type": "message",
                 "role": "assistant",
                 "model": model_name,
@@ -1233,7 +1243,8 @@ class Converters:
                         claude_tool_use = {
                             "type": "tool_use",
                             "id": tool_call.get(
-                                "id", f"toolu_openai_{random.randint(10000, 99999)}"
+                                "id",
+                                f"toolu_openai_{random.randint(10000000, 99999999)}",
                             ),
                             "name": function.get("name"),
                             "input": json.loads(function.get("arguments", "{}")),
@@ -1263,7 +1274,9 @@ class Converters:
             completion_tokens = usage.get("completion_tokens", 0)
 
             claude_response = {
-                "id": response.get("id", f"msg_openai_{random.randint(10000, 99999)}"),
+                "id": response.get(
+                    "id", f"msg_openai_{random.randint(10000000, 99999999)}"
+                ),
                 "type": "message",
                 "role": "assistant",
                 "model": response.get("model", "unknown_openai_model"),
@@ -1330,7 +1343,7 @@ class Converters:
         """
         try:
             # Generate a consistent ID for the stream
-            stream_id = f"chatcmpl-gemini-{random.randint(10000, 99999)}"
+            stream_id = f"chatcmpl-gemini-{random.randint(10000000, 99999999)}"
             created_time = int(time.time())
 
             openai_chunk_payload = {
@@ -1400,7 +1413,7 @@ class Converters:
                 f"Error converting Gemini chunk to OpenAI format: {e}", exc_info=True
             )
             error_payload = {
-                "id": f"chatcmpl-error-{random.randint(10000, 99999)}",
+                "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
                 "model": model_name,
