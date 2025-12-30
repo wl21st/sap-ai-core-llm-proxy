@@ -395,6 +395,12 @@ def parse_arguments():
         help="Path to the configuration file",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port number to run the server on (overrides config file)",
+    )
     return parser.parse_args()
 
 
@@ -1722,6 +1728,8 @@ def generate_streaming_response(
                 logger.info(
                     f"Using Claude 3.7/4 streaming for subAccount '{subaccount_name}'"
                 )
+                stop_reason_received = None  # Track the stop reason from messageStop
+                
                 for line_bytes in response.iter_lines():
                     if line_bytes:
                         line = line_bytes.decode("utf-8")
@@ -1732,6 +1740,13 @@ def generate_streaming_response(
                                 line_content = ast.literal_eval(line_content)
                                 line_content = json.dumps(line_content)
                                 claude_dict_chunk = json.loads(line_content)
+
+                                # Check if this is a messageStop chunk - capture stop reason but don't send yet
+                                if "messageStop" in claude_dict_chunk:
+                                    stop_reason_received = claude_dict_chunk.get("messageStop", {}).get("stopReason", "end_turn")
+                                    logger.info(f"Received messageStop with stopReason: {stop_reason_received}")
+                                    # Don't send this chunk yet - wait for metadata to combine with usage
+                                    continue
 
                                 # Check if this is a metadata chunk by looking for 'metadata' key directly
                                 if "metadata" in claude_dict_chunk:
@@ -1793,14 +1808,23 @@ def generate_streaming_response(
                                 }
                                 yield f"{json.dumps(error_payload)}\n\n"
 
-                # Send final chunk with usage information before [DONE]
+                # Send final chunk with BOTH finish_reason and usage information
                 if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
+                    # Map Claude stop reason to OpenAI finish_reason
+                    stop_reason_map = {
+                        "end_turn": "stop",
+                        "max_tokens": "length",
+                        "stop_sequence": "stop",
+                        "tool_use": "tool_calls",
+                    }
+                    finish_reason = stop_reason_map.get(stop_reason_received, "stop")
+                    
                     final_usage_chunk = {
                         "id": f"chatcmpl-claude37-{random.randint(10000, 99999)}",
                         "object": "chat.completion.chunk",
                         "created": int(time.time()),
                         "model": model,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
                         "usage": {
                             "prompt_tokens": prompt_tokens,
                             "completion_tokens": completion_tokens,
@@ -1809,11 +1833,11 @@ def generate_streaming_response(
                     }
                     final_usage_chunk_str = f"data: {json.dumps(final_usage_chunk)}\n\n"
                     logger.info(
-                        f"Sending final usage chunk with SSE format: {final_usage_chunk_str[:200]}..."
+                        f"Sending final chunk with finish_reason={finish_reason} and usage: {final_usage_chunk_str[:200]}..."
                     )
                     yield final_usage_chunk_str
                     logger.info(
-                        f"Sent final usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
+                        f"Sent final chunk: finish_reason={finish_reason}, prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
                     )
 
                     # Log token usage
@@ -2477,7 +2501,11 @@ def main() -> None:
 
     # Get server configuration
     host = proxy_config.host
-    port = proxy_config.port
+    if args.port is not None:
+        port = args.port
+        logger.info(f"Port override: Using CLI argument --port {port} (config file specifies {proxy_config.port})")
+    else:
+        port = proxy_config.port
 
     logger.info(
         f"Loaded multi-subAccount configuration with {len(proxy_config.subaccounts)} subAccounts"

@@ -30,6 +30,8 @@ class Detector:
             "claude-3.7" in model_lower
             or "claude-4" in model_lower
             or "claude-4.5" in model_lower
+            or "sonnet-4" in model_lower  # Detect sonnet-4.x models
+            or "haiku-4" in model_lower    # Detect haiku-4.x models
             or (
                 "claude" in model_lower
                 and not any(v in model_lower for v in ["3-5", "3.5", "3-opus"])
@@ -813,11 +815,12 @@ class Converters:
                     # Sending with finish_reason=null might be confusing. Let's ignore.
                     return None
 
-            elif chunk_type in ["contentBlockStart", "contentBlockStop", "metadata"]:
+            elif chunk_type in ["contentBlockStart", "contentBlockStop", "metadata", "messageStop"]:
                 # These Claude events don't have a direct OpenAI chunk equivalent
                 # containing message delta or finish reason. Ignore them for streaming output.
                 # Metadata chunk should be handled separately in the calling function (`generate`)
                 # to extract usage information.
+                # messageStop is handled in proxy_server.py to combine with usage data.
                 logger.debug(
                     f"Ignoring Claude chunk type for OpenAI stream: {chunk_type}"
                 )
