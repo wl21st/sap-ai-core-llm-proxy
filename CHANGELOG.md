@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.7] - 2025-12-30
+
+### Fixed
+- **Critical Streaming Bug**: Fixed stream_id initialization and token counter bugs in Claude 3.7/4 streaming (`proxy_helpers.py`, `proxy_server.py`)
+  - Initialize `stream_id` with fallback value before streaming loop to prevent race condition
+  - Initialize token counters (`total_tokens`, `prompt_tokens`, `completion_tokens`) before loop to prevent NameError
+  - Improved messageStart ID extraction to replace fallback instead of conditional initialization
+  - Expanded random ID ranges from 5 to 8 digits for better collision avoidance
+  - Fixes potential bugs where:
+    1. messageStart chunk could be skipped if converted before ID extraction
+    2. Token variables could cause NameError if metadata chunk never arrives
+    3. Final usage chunk could have null id if messageStart never arrives
+- **Token Usage Regression**: Fixed token usage regression introduced in v1.2.5 affecting Sonnet 4.5 streaming responses
+
+### Documentation
+- **Architecture Review**: Added comprehensive architecture review and improvement plan (`docs/plans/architecture_review_and_improvement_plan.md` - 861 lines)
+- **Bug Reports**: Added detailed bug report and fix documentation for Sonnet 4.5 token usage issue:
+  - `docs/BUG_REPORT_sonnet-4.5-token-usage-regression.md` (243 lines)
+  - `docs/FIX_sonnet-4.5-regression.md` (94 lines)
+  - `docs/sonnet-4.5-token-usage-issue.md` (160 lines)
+- **Agent Guidelines**: Updated `AGENTS.md` with comprehensive architecture overview:
+  - Corrected test count (50+ tests, 28% coverage)
+  - Added Architecture Overview with request flow diagram
+  - Expanded Code Style section with detailed PEP 8 naming conventions
+  - Added Critical Implementation Details (token management, load balancing, model detection, retry logic)
+  - Added Known Technical Debt section
+- **Code Documentation**: Updated `CLAUDE.md` with current line counts (proxy_server.py: 2501, proxy_helpers.py: 1414)
+
+### Changed
+- **Test Improvements**: Fixed logging utils tests with correct archive directory name ('archives') and patching strategy
+- **Code Quality**: Added clarifying comment for model detection normalization (dots to hyphens)
+
+### Technical Details
+- **Lines Changed**: 1,661 insertions, 67 deletions (net addition of 1,594 lines, primarily documentation)
+- **Files Modified**: 15 files across proxy core, documentation, and tests
+- **Bug Fixes**: 2 critical streaming and token usage bugs resolved
+- **Documentation**: Significant expansion of architecture and troubleshooting documentation
+
 ## [1.2.6] - 2025-12-29
 
 ### Added
@@ -98,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version Comparison
 
+**v1.2.7 vs v1.2.6**: Critical bug fix release for Claude 3.7/4 streaming issues (stream_id, token counters) and v1.2.5 token usage regression, with extensive architecture documentation
 **v1.2.6 vs v1.2.5**: Major refactoring release with ProxyGlobalContext, removed Pydantic config system (net -742 lines), enhanced architecture
 **v1.2.3 vs v1.2.2**: Bug fix for global configuration loading issue
 **v1.2.2 vs v1.2.1**: Major feature release with uvx support, comprehensive documentation, transport logging, and modern type hints
