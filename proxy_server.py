@@ -383,19 +383,22 @@ def parse_arguments():
         epilog=f"Version: {version_string}",
     )
     parser.add_argument(
+        "-v",
         "--version",
         action="version",
         version=f"%(prog)s {version_string}",
         help="Show version information and exit",
     )
     parser.add_argument(
+        "-c",
         "--config",
         type=str,
         default="config.json",
         help="Path to the configuration file",
     )
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode")
     parser.add_argument(
+        "-p",
         "--port",
         type=int,
         default=None,

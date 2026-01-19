@@ -23,28 +23,37 @@ Once the LLM model is deployed, obtain the URL and update it in the config.json 
 
 ## Quick Start
 
+### Command Line Options
+
+The proxy server supports the following command line options:
+
+- `-c, --config FILE`: Path to the configuration file (default: config.json)
+- `-p, --port PORT`: Port number to run the server on (overrides config file)
+- `-v, --version`: Show version information and exit
+- `-d, --debug`: Enable debug mode
+
 ### Using uvx (Recommended - No Installation Required)
 
 The fastest way to run the proxy server without installing dependencies:
 
 ```shell
 # Standard mode (local development)
-uvx --from . sap-ai-proxy --config config.json
+uvx --from . sap-ai-proxy -c config.json
 
 # Debug mode (local development)
-uvx --from . sap-ai-proxy --config config.json --debug
+uvx --from . sap-ai-proxy -c config.json -d
 
 # From GitHub repository (run without cloning)
-uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy --config config.json
+uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy -c config.json
 
 # After publishing to PyPI, run from anywhere:
-uvx sap-ai-proxy --config config.json
+uvx sap-ai-proxy -c config.json
 ```
 
 ### Using Python Directly
 
 ```shell
-python proxy_server.py --config config.json
+python proxy_server.py -c config.json
 ```
 
 ### Debug Mode
@@ -52,7 +61,7 @@ python proxy_server.py --config config.json
 For detailed logging and troubleshooting, you can enable debug mode:
 
 ```shell
-python proxy_server.py --config config.json --debug
+python proxy_server.py -c config.json -d
 ```
 
 After you run the proxy server, you will get
@@ -237,12 +246,12 @@ Start the proxy server using one of the following methods:
 
 **Using uvx (recommended):**
 ```sh
-uvx --from . sap-ai-proxy --config config.json
+uvx --from . sap-ai-proxy -c config.json
 ```
 
 **Using Python:**
 ```sh
-python proxy_server.py --config config.json
+python proxy_server.py -c config.json
 ```
 
 The server will run on `http://127.0.0.1:3001`.
@@ -589,7 +598,7 @@ The binary will be created in the `dist/` directory as `proxy` (or `.exe` on Win
 To run the binary:
 
 ```sh
-./dist/proxy --config config.json
+./dist/proxy -c config.json
 ```
 
 ### Release Workflow
