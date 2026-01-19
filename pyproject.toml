@@ -54,6 +54,10 @@ dev = [
 [tool.uv]
 package = true
 
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools]
 packages = ["auth", "config", "utils"]
 py-modules = ["proxy_server", "proxy_helpers"]
