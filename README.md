@@ -28,11 +28,14 @@ Once the LLM model is deployed, obtain the URL and update it in the config.json 
 The fastest way to run the proxy server without installing dependencies:
 
 ```shell
-# Standard mode
+# Standard mode (local development)
 uvx --from . sap-ai-proxy --config config.json
 
-# Debug mode
+# Debug mode (local development)
 uvx --from . sap-ai-proxy --config config.json --debug
+
+# From GitHub repository (run without cloning)
+uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy --config config.json
 
 # After publishing to PyPI, run from anywhere:
 uvx sap-ai-proxy --config config.json

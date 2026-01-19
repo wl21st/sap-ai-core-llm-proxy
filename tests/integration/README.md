@@ -140,10 +140,11 @@ tail -f logs/pytest.log
 **Method 4: Enable debug logging in proxy server**:
 When starting the proxy server for integration tests:
 ```bash
-# Start with debug flag
-python proxy_server.py --config config.json --debug
+# Start with debug flag (recommended)
+uvx --from . sap-ai-proxy --config config.json --debug
 
-# Or using uv
+# Alternative methods (legacy)
+python proxy_server.py --config config.json --debug
 uv run python proxy_server.py --config config.json --debug
 ```
 
@@ -160,7 +161,7 @@ The logging configuration in [`pytest.ini`](../../pytest.ini) includes:
 
 ```bash
 # Terminal 1: Start proxy server with debug logging
-python proxy_server.py --config config.json --debug
+uvx --from . sap-ai-proxy --config config.json --debug
 
 # Terminal 2: Run tests with debug console output
 pytest tests/integration/ --log-cli-level=DEBUG -v

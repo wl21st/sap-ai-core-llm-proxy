@@ -100,8 +100,9 @@ SAP AI Core LLM Proxy - transforms SAP AI Core APIs into OpenAI/Anthropic-compat
 ### Setup & Running
 ```bash
 uv sync                                  # Install dependencies (uses uv, not pip)
-uvx --from . sap-ai-proxy --config config.json  # Run server (recommended)
-python proxy_server.py --config config.json --debug  # Debug mode
+uvx --from . sap-ai-proxy --config config.json  # Run server (primary method - recommended)
+uvx --from . sap-ai-proxy --config config.json --debug  # Debug mode
+python proxy_server.py --config config.json  # Alternative method (legacy)
 ```
 
 ### Testing

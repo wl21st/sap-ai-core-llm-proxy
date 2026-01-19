@@ -46,6 +46,18 @@ uvx --from . sap-ai-proxy --config config.json
 
 The `--from .` flag tells `uvx` to use the local package in the current directory.
 
+### From GitHub Repository (without cloning)
+
+You can run the proxy directly from GitHub without cloning the repository:
+
+```bash
+# Run latest version from GitHub
+uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy --config config.json
+
+# Run with debug mode
+uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy --config config.json --debug
+```
+
 ### After Publishing to PyPI
 
 Once published to PyPI, you can run from anywhere:
