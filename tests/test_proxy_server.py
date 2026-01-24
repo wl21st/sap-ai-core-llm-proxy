@@ -774,27 +774,93 @@ class TestLoadBalancing:
             load_balance_url("nonexistent-model")
 
     def test_load_balance_url_claude_fallback(self, reset_proxy_config):
-        """Test Claude model fallback."""
-        # Setup with fallback model
+        """Test Claude model fallback respects opus/sonnet variant."""
+        # Setup with opus fallback model
         subaccount = SubAccountConfig(
             name="account1",
             resource_group="default",
             service_key_json="key.json",
             model_to_deployment_urls={
-                "anthropic--claude-4.5-sonnet": ["https://url1.com"]
+                "anthropic--claude-4.5-opus": ["https://url1.com"]
             },
         )
         subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
         proxy_server.proxy_config.subaccounts["account1"] = subaccount
         proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4.5-opus": ["account1"]
+        }
+
+        # Request non-existent opus model, should fallback to opus variant
+        url, subaccount_name, _, model = load_balance_url("claude-3-opus")
+
+        assert model == "anthropic--claude-4.5-opus"
+        assert subaccount_name == "account1"
+
+
+class TestResolveModelName:
+    """Tests for resolve_model_name function."""
+
+    def test_resolve_model_name_exact_match(self, reset_proxy_config):
+        """Test resolve_model_name returns exact match when model exists."""
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+
+        result = proxy_server.resolve_model_name("gpt-4")
+        assert result == "gpt-4"
+
+    def test_resolve_model_name_claude_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves Claude aliases to correct variant."""
+        # Setup with opus model
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4.5-opus": ["account1"]
+        }
+
+        # Test opus-4.5 alias resolves to opus fallback
+        result = proxy_server.resolve_model_name("opus-4.5")
+        assert result == "anthropic--claude-4.5-opus"
+
+    def test_resolve_model_name_claude_sonnet_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves sonnet aliases to sonnet fallback."""
+        # Setup with sonnet model
+        proxy_server.proxy_config.model_to_subaccounts = {
             "anthropic--claude-4.5-sonnet": ["account1"]
         }
 
-        # Request non-existent Claude model, should fallback
-        url, subaccount_name, _, model = load_balance_url("claude-3-opus")
+        # Test sonnet-4 alias resolves to sonnet fallback
+        result = proxy_server.resolve_model_name("sonnet-4")
+        assert result == "anthropic--claude-4.5-sonnet"
 
-        assert model == "anthropic--claude-4.5-sonnet"
-        assert subaccount_name == "account1"
+        # Test claude-4.5 (no variant) defaults to sonnet fallback
+        result = proxy_server.resolve_model_name("claude-4.5")
+        assert result == "anthropic--claude-4.5-sonnet"
+
+    def test_resolve_model_name_claude_haiku_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves haiku aliases to haiku fallback."""
+        # Setup with haiku model
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4-haiku": ["account1"]
+        }
+
+        # Test haiku alias resolves to haiku fallback
+        result = proxy_server.resolve_model_name("haiku-4")
+        assert result == "anthropic--claude-4-haiku"
+
+    def test_resolve_model_name_gemini_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves Gemini aliases to fallback."""
+        # Setup with only the fallback model
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "gemini-2.5-pro": ["account1"]
+        }
+
+        # Test gemini alias resolves to fallback
+        result = proxy_server.resolve_model_name("gemini-pro")
+        assert result == "gemini-2.5-pro"
+
+    def test_resolve_model_name_no_fallback_returns_none(self, reset_proxy_config):
+        """Test resolve_model_name returns None when no fallback available."""
+        proxy_server.proxy_config.model_to_subaccounts = {}
+
+        result = proxy_server.resolve_model_name("opus-4.5")
+        assert result is None
 
 
 # ============================================================================

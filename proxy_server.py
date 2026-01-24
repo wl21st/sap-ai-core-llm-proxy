@@ -436,6 +436,68 @@ def get_claude_stop_reason_from_openai_chunk(openai_chunk):
     return None
 
 
+def resolve_model_name(model_name: str) -> str | None:
+    """
+    Resolve a model name to an available model in the configuration.
+
+    Handles aliases like 'opus-4.5' -> 'anthropic--claude-4.5-opus'.
+    Returns the resolved model name or None if no fallback is found.
+
+    Args:
+        model_name: The requested model name (may be an alias)
+
+    Returns:
+        The resolved model name that exists in configuration, or None
+    """
+    # Check if model already exists in config
+    if model_name in proxy_config.model_to_subaccounts:
+        return model_name
+
+    model_lower = model_name.lower()
+
+    # Try fallback models based on model type
+    if Detector.is_claude_model(model_name):
+        # Build fallback list based on variant in requested model
+        fallback_models = []
+        if "opus" in model_lower:
+            fallback_models = [
+                "anthropic--claude-4.5-opus",
+                "anthropic--claude-4-opus",
+            ]
+        elif "haiku" in model_lower:
+            fallback_models = [
+                "anthropic--claude-4-haiku",
+                "anthropic--claude-3.5-haiku",
+            ]
+        else:
+            # Default to sonnet for unspecified or sonnet variants
+            fallback_models = [
+                "anthropic--claude-4.5-sonnet",
+                "anthropic--claude-4-sonnet",
+                "anthropic--claude-3.7-sonnet",
+            ]
+
+        for fallback in fallback_models:
+            if fallback in proxy_config.model_to_subaccounts:
+                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
+                return fallback
+    elif Detector.is_gemini_model(model_name):
+        fallback_models = [DEFAULT_GEMINI_MODEL]
+        for fallback in fallback_models:
+            if fallback in proxy_config.model_to_subaccounts:
+                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
+                return fallback
+    else:
+        # For other models, try GPT fallback
+        fallback_models = [DEFAULT_GPT_MODEL]
+        for fallback in fallback_models:
+            if fallback in proxy_config.model_to_subaccounts:
+                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
+                return fallback
+
+    return None
+
+
 def load_balance_url(selected_model_name: str) -> tuple[str, str, str, str]:
     """
     Load balance requests for a model across all subAccounts that have it deployed.
@@ -463,8 +525,25 @@ def load_balance_url(selected_model_name: str) -> tuple[str, str, str, str]:
             logger.info(
                 f"Claude model '{selected_model_name}' not found, trying fallback models"
             )
-            # Try common Claude model fallbacks
-            fallback_models = ["anthropic--claude-4.5-sonnet"]
+            # Build fallback list based on variant in requested model
+            model_lower = selected_model_name.lower()
+            if "opus" in model_lower:
+                fallback_models = [
+                    "anthropic--claude-4.5-opus",
+                    "anthropic--claude-4-opus",
+                ]
+            elif "haiku" in model_lower:
+                fallback_models = [
+                    "anthropic--claude-4-haiku",
+                    "anthropic--claude-3.5-haiku",
+                ]
+            else:
+                # Default to sonnet for unspecified or sonnet variants
+                fallback_models = [
+                    "anthropic--claude-4.5-sonnet",
+                    "anthropic--claude-4-sonnet",
+                    "anthropic--claude-3.7-sonnet",
+                ]
             for fallback in fallback_models:
                 if (
                     fallback in proxy_config.model_to_subaccounts
@@ -770,13 +849,16 @@ def proxy_openai_stream():
             f"No model specified in request, using fallback model {effective_model}"
         )
 
-    # Check if model is available in any subAccount
-    if effective_model not in proxy_config.model_to_subaccounts:
+    # Try to resolve model name using fallback logic
+    resolved_model = resolve_model_name(effective_model)
+    if resolved_model is None:
         error_message: str = f"Model {effective_model} is not supported."
         if effective_model != original_model:
             error_message = f"Models '{original_model}' and '{effective_model}'(fallback) are NOT defined in any subAccount"
 
         return jsonify({"error": error_message}), 404
+
+    effective_model = resolved_model
 
     # Check streaming mode
     is_stream = payload.get("stream", False)
