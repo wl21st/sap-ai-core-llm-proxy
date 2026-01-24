@@ -51,8 +51,10 @@ class Detector:
                 "sonnet",
                 "sonne",
                 "sonn",
+                "opus",
                 "CLAUDE",
                 "SONNET",
+                "OPUS",
             ]
         )
 

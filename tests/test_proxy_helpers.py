@@ -31,6 +31,14 @@ class TestDetector:
         assert Detector.is_claude_model("claude-3-haiku") is True
         assert Detector.is_claude_model("haiku-model") is True
 
+    def test_is_claude_model_with_opus_keyword(self):
+        """Test detection of Claude models with 'opus' keyword."""
+        assert Detector.is_claude_model("opus-4.5") is True
+        assert Detector.is_claude_model("claude-opus-4.5") is True
+        assert Detector.is_claude_model("anthropic--claude-4.5-opus") is True
+        assert Detector.is_claude_model("OPUS-4") is True
+        assert Detector.is_claude_model("claude-3-opus") is True
+
     def test_is_claude_model_with_partial_matches(self):
         """Test detection with partial keyword matches."""
         assert Detector.is_claude_model("clau") is True
@@ -54,6 +62,14 @@ class TestDetector:
         assert Detector.is_claude_37_or_4("claude-4-sonnet") is True
         assert Detector.is_claude_37_or_4("claude-4.0") is True
         assert Detector.is_claude_37_or_4("claude-4.5-opus") is True
+
+    def test_is_claude_37_or_4_with_opus_models(self):
+        """Test detection of Opus 4.x models."""
+        assert Detector.is_claude_37_or_4("opus-4.5") is True
+        assert Detector.is_claude_37_or_4("opus-4") is True
+        assert Detector.is_claude_37_or_4("anthropic--claude-4.5-opus") is True
+        # Opus 3.x should not match (only 4.x)
+        assert Detector.is_claude_37_or_4("claude-3-opus") is False
 
     def test_is_claude_37_or_4_excludes_35(self):
         """Test that Claude 3.5 models are excluded."""
