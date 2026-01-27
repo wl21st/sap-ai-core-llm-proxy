@@ -1,4 +1,3 @@
-import argparse
 import ast
 import json
 import random
@@ -279,36 +278,8 @@ def format_embedding_response(response, model):
 # Version utilities - extracted to version.py
 from version import get_version_info, get_version, get_git_hash, get_version_string
 
-
-def parse_arguments():
-    version_string = get_version_string()
-    parser = argparse.ArgumentParser(
-        description=f"Proxy server for AI models - {version_string}",
-        epilog=f"Version: {version_string}",
-    )
-    parser.add_argument(
-        "-v",
-        "--version",
-        action="version",
-        version=f"%(prog)s {version_string}",
-        help="Show version information and exit",
-    )
-    parser.add_argument(
-        "-c",
-        "--config",
-        type=str,
-        default="config.json",
-        help="Path to the configuration file",
-    )
-    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode")
-    parser.add_argument(
-        "-p",
-        "--port",
-        type=int,
-        default=None,
-        help="Port number to run the server on (overrides config file)",
-    )
-    return parser.parse_args()
+# CLI argument parsing - extracted to cli.py
+from cli import parse_arguments
 
 
 def get_claude_stop_reason_from_gemini_chunk(gemini_chunk):
