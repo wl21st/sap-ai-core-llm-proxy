@@ -232,8 +232,10 @@ def load_balance_url(model):
 
 # Streaming helpers - extracted to handlers/streaming_handler.py
 from handlers.streaming_handler import (
+    BackendRequestResult,
     get_claude_stop_reason_from_gemini_chunk,
     get_claude_stop_reason_from_openai_chunk,
+    make_backend_request,
     parse_sse_response_to_claude_json as _parse_sse_response_to_claude_json,
 )
 
@@ -1006,11 +1008,26 @@ def proxy_claude_request_original():
         )
 
         if not is_stream:
-            backend_response = requests.post(
-                endpoint_url, headers=headers, json=backend_payload, timeout=600
+            # Generate TID for logging (internal to this fallback function)
+            tid = str(uuid.uuid4())
+
+            result = make_backend_request(
+                endpoint_url,
+                headers=headers,
+                payload=backend_payload,
+                model=model,
+                tid=tid,
+                is_claude_model_fn=Detector.is_claude_model,
             )
-            backend_response.raise_for_status()
-            backend_json = backend_response.json()
+
+            if not result.success:
+                logger.error(f"Error in Claude request({model}): {result.error_message}")
+                if result.response_data:
+                    return jsonify(result.response_data), result.status_code
+                else:
+                    return jsonify({"error": result.error_message}), result.status_code
+
+            backend_json = result.response_data
 
             if Detector.is_gemini_model(model):
                 final_response = Converters.convert_gemini_response_to_claude(
@@ -1028,7 +1045,7 @@ def proxy_claude_request_original():
                 f"Final response to client: {json.dumps(final_response, indent=2)}"
             )
 
-            return jsonify(final_response), backend_response.status_code
+            return jsonify(final_response), result.status_code
         else:
             return Response(
                 stream_with_context(
@@ -1086,120 +1103,86 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
     Returns:
         Flask response with the API result
     """
-    try:
-        # Log request being sent to LLM service
-        transport_logger.info(
-            f"OUT_REQ: tid={tid}, url={url}, body={json.dumps(payload)}"
-        )
+    # Make request using shared backend request function
+    result = make_backend_request(
+        url=url,
+        headers=headers,
+        payload=payload,
+        model=model,
+        tid=tid,
+        is_claude_model_fn=Detector.is_claude_model,
+    )
 
-        # Make request to backend API
-        response = requests.post(url, headers=headers, json=payload, timeout=600)
+    # Handle failed requests
+    if not result.success:
+        # Check for 429 error (rate limiting)
+        if result.status_code == 429:
+            # Create a mock HTTPError for the 429 handler
+            class MockResponse:
+                def __init__(self, status_code, text, data, headers):
+                    self.status_code = status_code
+                    self.text = text
+                    self._data = data
+                    self.headers = headers if headers else {}
 
-        # Log raw response from LLM service
-        transport_logger.info(
-            f"OUT_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
-        )
+                def json(self):
+                    return self._data if self._data else {}
 
-        response.raise_for_status()
-        logger.info(f"CHAT: OK, tid={tid}, model={model}")
-
-        # Validate response has content before parsing
-        if not response.content:
-            logger.error(f"CHAT: EMPTY_RESPONSE, tid={tid}, model={model}")
-
-            return jsonify({"error": "Empty response from backend API"}), 500
-
-        # Process response based on model type
-        try:
-            # For Claude models, check if response is SSE format (backend may send SSE even for non-streaming)
-            is_sse_response = Detector.is_claude_model(model) and (
-                response.headers.get("content-type", "").startswith("text/event-stream")
-                or any(
-                    line.strip().startswith(("data: ", "event: ", "id: "))
-                    for line in response.text.split("\n")
-                )
+            mock_response = MockResponse(
+                429,
+                result.error_message or "",
+                result.response_data,
+                result.headers
             )
+            mock_error = requests.exceptions.HTTPError(response=mock_response)
+            return handle_http_429_error(mock_error, f"non-streaming request for {model}")
 
-            if is_sse_response:
-                logger.info(
-                    "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
-                )
-                response_data = parse_sse_response_to_claude_json(response.text)
-            else:
-                response_data = response.json()
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error(
-                f"CHAT: JSON_PARSE_ERR, tid={tid}, response={response.text}, headers={dict(response.headers)}, err={str(e)}",
-                exc_info=True,
-            )
-            return jsonify(
-                {
-                    "error": "Invalid JSON response from backend API",
-                    "details": str(e),
-                    "response_text": response.text,
-                }
-            ), 500
-
-        if Detector.is_claude_model(model):
-            final_response = Converters.convert_claude_to_openai(response_data, model)
-        elif Detector.is_gemini_model(model):
-            final_response = Converters.convert_gemini_to_openai(response_data, model)
+        # Return error response
+        if result.response_data:
+            return jsonify(result.response_data), result.status_code
         else:
-            final_response = response_data
+            return jsonify({"error": result.error_message or "Unknown error"}), result.status_code
 
-        # Extract token usage
-        total_tokens = final_response.get("usage", {}).get("total_tokens", 0)
-        prompt_tokens = final_response.get("usage", {}).get("prompt_tokens", 0)
-        completion_tokens = final_response.get("usage", {}).get("completion_tokens", 0)
+    # Process successful response
+    response_data = result.response_data
 
-        # Log token usage with subAccount information
-        user_id = request.headers.get("Authorization", "unknown")
-        if user_id and len(user_id) > 20:
-            user_id = f"{user_id[:20]}..."
-        ip_address = request.remote_addr or request.headers.get(
-            "X-Forwarded-For", "unknown_ip"
-        )
+    # Log SSE parsing if applicable
+    if result.is_sse_response:
         logger.info(
-            f"CHAT_RSP: tid={tid}, user={user_id}, ip={ip_address}, model={model}, sub_account={subaccount_name}, "
-            f"prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, total_tokens={total_tokens}"
+            "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
         )
 
-        # Log response being sent to client
-        transport_logger.info(
-            f"RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
-        )
+    # Convert response based on model type
+    if Detector.is_claude_model(model):
+        final_response = Converters.convert_claude_to_openai(response_data, model)
+    elif Detector.is_gemini_model(model):
+        final_response = Converters.convert_gemini_to_openai(response_data, model)
+    else:
+        final_response = response_data
 
-        return jsonify(final_response), 200
+    # Extract token usage
+    total_tokens = final_response.get("usage", {}).get("total_tokens", 0)
+    prompt_tokens = final_response.get("usage", {}).get("prompt_tokens", 0)
+    completion_tokens = final_response.get("usage", {}).get("completion_tokens", 0)
 
-    except requests.exceptions.HTTPError as http_err:
-        if http_err.response is not None:
-            response = http_err.response
-            status_code = response.status_code
+    # Log token usage with subAccount information
+    user_id = request.headers.get("Authorization", "unknown")
+    if user_id and len(user_id) > 20:
+        user_id = f"{user_id[:20]}..."
+    ip_address = request.remote_addr or request.headers.get(
+        "X-Forwarded-For", "unknown_ip"
+    )
+    logger.info(
+        f"CHAT_RSP: tid={tid}, user={user_id}, ip={ip_address}, model={model}, sub_account={subaccount_name}, "
+        f"prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, total_tokens={total_tokens}"
+    )
 
-            # Handle HTTP 429 (Too Many Requests) specifically
-            if status_code == 429:
-                return handle_http_429_error(
-                    http_err, f"non-streaming request for {model}"
-                )
+    # Log response being sent to client
+    transport_logger.info(
+        f"RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
+    )
 
-            logger.error(
-                f"CHAT: HTTP_ERR, tid={tid}, status={status_code}, headers={dict(response.headers)}, response={response.text}",
-                exc_info=True,
-            )
-            try:
-                error_data = http_err.response.json()
-                return jsonify(error_data), http_err.response.status_code
-            except json.JSONDecodeError:
-                return jsonify({"error": http_err.response.text}), status_code
-        else:
-            logger.error(
-                f"CHAT: HTTP_ERR, tid={tid}, err={str(http_err)}", exc_info=True
-            )
-            return jsonify({"error": str(http_err)}), 500
-
-    except Exception as err:
-        logger.error(f"CHAT: UNKNOWN_ERR, tid={tid}, err={str(err)}", exc_info=True)
-        return jsonify({"error": str(err)}), 500
+    return jsonify(final_response), 200
 
 
 def generate_streaming_response(

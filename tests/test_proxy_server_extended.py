@@ -615,7 +615,7 @@ class TestProxyClaudeRequestEndpoint:
         mock_validator.return_value = mock_validator_instance
 
         mock_load_balance.return_value = (
-            "https://test.com",
+            "https://test.com/chat/completions",
             "test-sub",
             "test-rg",
             "gpt-4",
@@ -630,6 +630,8 @@ class TestProxyClaudeRequestEndpoint:
         # Mock the HTTP response for the fallback implementation
         mock_response = Mock()
         mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.text = '{"id": "chatcmpl-123", "choices": [{"message": {"role": "assistant", "content": "Hello"}}]}'
         mock_response.json.return_value = {
             "id": "chatcmpl-123",
             "object": "chat.completion",
@@ -742,7 +744,9 @@ class TestHandleNonStreamingRequest:
         mock_response.content = b""  # Empty response content
         mock_response.text = ""
         mock_response.headers = {}
+        mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {}
         mock_post.return_value = mock_response
 
         with client.application.test_request_context(
@@ -776,7 +780,8 @@ class TestHandleNonStreamingRequest:
         mock_response = Mock()
         mock_response.content = sse_text.encode()
         mock_response.text = sse_text
-        mock_response.headers = {}
+        mock_response.headers = {"content-type": "text/event-stream"}
+        mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
@@ -810,7 +815,8 @@ class TestHandleNonStreamingRequest:
         mock_response = Mock()
         mock_response.content = sse_text.encode()
         mock_response.text = sse_text
-        mock_response.headers = {}
+        mock_response.headers = {"content-type": "text/event-stream"}
+        mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
@@ -1622,6 +1628,8 @@ class TestProxyClaudeRequestOriginal:
             "content": [{"text": "Hello from fallback"}],
         }
         mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.text = '{"id": "msg_123", "type": "message", "content": [{"text": "Hello from fallback"}]}'
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
