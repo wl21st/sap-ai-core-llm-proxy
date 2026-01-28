@@ -247,7 +247,7 @@ def handle_embedding_request():
 def handle_embedding_service_call(input_text, model, encoding_format):
     # Logic to prepare the request to SAP AI Core
     # TODO: Add default model for embedding
-    selected_url, subaccount_name, _, model = load_balance_url(model)
+    selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
 
     # Construct the URL based on the official SAP AI Core documentation
     # This is critical or it will return 404
@@ -281,6 +281,9 @@ from version import get_version_info, get_version, get_git_hash, get_version_str
 # CLI argument parsing - extracted to cli.py
 from cli import parse_arguments
 
+# Load balancing - extracted to load_balancer.py
+from load_balancer import resolve_model_name, load_balance_url
+
 
 def get_claude_stop_reason_from_gemini_chunk(gemini_chunk):
     """Extracts and maps the stop reason from a final Gemini chunk."""
@@ -311,226 +314,6 @@ def get_claude_stop_reason_from_openai_chunk(openai_chunk):
     return None
 
 
-def resolve_model_name(model_name: str) -> str | None:
-    """
-    Resolve a model name to an available model in the configuration.
-
-    Handles aliases like 'opus-4.5' -> 'anthropic--claude-4.5-opus'.
-    Returns the resolved model name or None if no fallback is found.
-
-    Args:
-        model_name: The requested model name (may be an alias)
-
-    Returns:
-        The resolved model name that exists in configuration, or None
-    """
-    # Check if model already exists in config
-    if model_name in proxy_config.model_to_subaccounts:
-        return model_name
-
-    model_lower = model_name.lower()
-
-    # Try fallback models based on model type
-    if Detector.is_claude_model(model_name):
-        # Build fallback list based on variant in requested model
-        fallback_models = []
-        if "opus" in model_lower:
-            fallback_models = [
-                "anthropic--claude-4.5-opus",
-                "anthropic--claude-4-opus",
-            ]
-        elif "haiku" in model_lower:
-            fallback_models = [
-                "anthropic--claude-4-haiku",
-                "anthropic--claude-3.5-haiku",
-            ]
-        else:
-            # Default to sonnet for unspecified or sonnet variants
-            fallback_models = [
-                "anthropic--claude-4.5-sonnet",
-                "anthropic--claude-4-sonnet",
-                "anthropic--claude-3.7-sonnet",
-            ]
-
-        for fallback in fallback_models:
-            if fallback in proxy_config.model_to_subaccounts:
-                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
-                return fallback
-    elif Detector.is_gemini_model(model_name):
-        fallback_models = [DEFAULT_GEMINI_MODEL]
-        for fallback in fallback_models:
-            if fallback in proxy_config.model_to_subaccounts:
-                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
-                return fallback
-    else:
-        # For other models, try GPT fallback
-        fallback_models = [DEFAULT_GPT_MODEL]
-        for fallback in fallback_models:
-            if fallback in proxy_config.model_to_subaccounts:
-                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
-                return fallback
-
-    return None
-
-
-def load_balance_url(selected_model_name: str) -> tuple[str, str, str, str]:
-    """
-    Load balance requests for a model across all subAccounts that have it deployed.
-
-    Args:
-        selected_model_name: Name of the model to load balance
-
-    Returns:
-        Tuple of (selected_url, subaccount_name, resource_group, final_model_name)
-
-    Raises:
-        ValueError: If no subAccounts have the requested model
-    """
-    # Initialize counters dictionary if it doesn't exist
-    if not hasattr(load_balance_url, "counters"):
-        load_balance_url.counters = {}
-
-    # Get list of subAccounts that have this model
-    if (
-        selected_model_name not in proxy_config.model_to_subaccounts
-        or not proxy_config.model_to_subaccounts[selected_model_name]
-    ):
-        # Check if it's a Claude or Gemini model and try fallback
-        if Detector.is_claude_model(selected_model_name):
-            logger.info(
-                f"Claude model '{selected_model_name}' not found, trying fallback models"
-            )
-            # Build fallback list based on variant in requested model
-            model_lower = selected_model_name.lower()
-            if "opus" in model_lower:
-                fallback_models = [
-                    "anthropic--claude-4.5-opus",
-                    "anthropic--claude-4-opus",
-                ]
-            elif "haiku" in model_lower:
-                fallback_models = [
-                    "anthropic--claude-4-haiku",
-                    "anthropic--claude-3.5-haiku",
-                ]
-            else:
-                # Default to sonnet for unspecified or sonnet variants
-                fallback_models = [
-                    "anthropic--claude-4.5-sonnet",
-                    "anthropic--claude-4-sonnet",
-                    "anthropic--claude-3.7-sonnet",
-                ]
-            for fallback in fallback_models:
-                if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
-                ):
-                    logger.info(
-                        f"Using fallback Claude model '{fallback}' for '{selected_model_name}'"
-                    )
-                    selected_model_name = fallback
-                    break
-            else:
-                logger.error("No Claude models available in any subAccount")
-                raise ValueError(
-                    f"Claude model '{selected_model_name}' and fallbacks not available in any subAccount"
-                )
-        elif Detector.is_gemini_model(selected_model_name):
-            logger.info(
-                f"Gemini model '{selected_model_name}' not found, trying fallback models"
-            )
-            # Try common Gemini model fallbacks
-            fallback_models = ["gemini-2.5-pro"]
-            for fallback in fallback_models:
-                if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
-                ):
-                    logger.info(
-                        f"Using fallback Gemini model '{fallback}' for '{selected_model_name}'"
-                    )
-                    selected_model_name = fallback
-                    break
-            else:
-                logger.error("No Gemini models available in any subAccount")
-                raise ValueError(
-                    f"Gemini model '{selected_model_name}' and fallbacks not available in any subAccount"
-                )
-        else:
-            # For other models, try common fallbacks
-            logger.warning(
-                f"Model '{selected_model_name}' not found, trying fallback models"
-            )
-            fallback_models = [DEFAULT_GPT_MODEL]
-            for fallback in fallback_models:
-                if (
-                    fallback in proxy_config.model_to_subaccounts
-                    and proxy_config.model_to_subaccounts[fallback]
-                ):
-                    logger.info(
-                        f"Using fallback model '{fallback}' for '{selected_model_name}'"
-                    )
-                    selected_model_name = fallback
-                    break
-            else:
-                logger.error(
-                    f"No subAccounts with model '{selected_model_name}' or fallbacks found"
-                )
-                raise ValueError(
-                    f"Model '{selected_model_name}' and fallbacks not available in any subAccount"
-                )
-
-    subaccount_names = proxy_config.model_to_subaccounts[selected_model_name]
-
-    # Create counter for this model if it doesn't exist
-    if selected_model_name not in load_balance_url.counters:
-        load_balance_url.counters[selected_model_name] = 0
-
-    # Select subAccount using round-robin
-    subaccount_index = load_balance_url.counters[selected_model_name] % len(
-        subaccount_names
-    )
-    selected_subaccount: str = subaccount_names[subaccount_index]
-
-    # Increment counter for next request
-    load_balance_url.counters[selected_model_name] += 1
-
-    # Get the model URL list from the selected subAccount
-    subaccount = proxy_config.subaccounts[selected_subaccount]
-    url_list = subaccount.model_to_deployment_urls.get(selected_model_name, [])
-
-    if not url_list:
-        logger.error(
-            f"Model '{selected_model_name}' listed for subAccount '{selected_subaccount}' but no URLs found"
-        )
-        raise ValueError(
-            f"Configuration error: No URLs for model '{selected_model_name}' in subAccount '{selected_subaccount}'"
-        )
-
-    # Select URL using round-robin within the subAccount
-    url_counter_key = f"{selected_subaccount}:{selected_model_name}"
-    if url_counter_key not in load_balance_url.counters:
-        load_balance_url.counters[url_counter_key] = 0
-
-    url_index = load_balance_url.counters[url_counter_key] % len(url_list)
-    selected_url: str = url_list[url_index]
-
-    # Increment URL counter for next request
-    load_balance_url.counters[url_counter_key] += 1
-
-    # Get resource group for the selected subAccount
-    selected_resource_group: str = subaccount.resource_group
-
-    logger.info(
-        f"Selected subAccount '{selected_subaccount}' and URL '{selected_url}' for model '{selected_model_name}'"
-    )
-    return (
-        selected_url,
-        selected_subaccount,
-        selected_resource_group,
-        selected_model_name,
-    )
-
-
 def handle_claude_request(payload, model="3.5-sonnet"):
     """Handle Claude model request with multi-subAccount support.
 
@@ -546,7 +329,7 @@ def handle_claude_request(payload, model="3.5-sonnet"):
 
     # Get the selected URL, subaccount and resource group using our load balancer
     try:
-        selected_url, subaccount_name, _, model = load_balance_url(model)
+        selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
     except ValueError as e:
         logger.error(
             f"Failed to load balance URL for model '{model}': {e}", exc_info=True
@@ -596,7 +379,7 @@ def handle_gemini_request(payload, model="gemini-2.5-pro"):
 
     # Get the selected URL, subaccount and resource group using our load balancer
     try:
-        selected_url, subaccount_name, _, model = load_balance_url(model)
+        selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
     except ValueError as e:
         logger.error(
             f"Failed to load balance URL for model '{model}': {e}", exc_info=True
@@ -637,7 +420,7 @@ def handle_default_request(payload, model=DEFAULT_GPT_MODEL):
         Tuple of (endpoint_url, modified_payload, subaccount_name)
     """
     # Get the selected URL, subaccount and resource group using our load balancer
-    selected_url, subaccount_name, _, model = load_balance_url(model)
+    selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
 
     # Determine API version based on model
     if any(m in model for m in ["o3", "o4-mini", "o3-mini", "gpt-5"]):
@@ -725,7 +508,7 @@ def proxy_openai_stream():
         )
 
     # Try to resolve model name using fallback logic
-    resolved_model = resolve_model_name(effective_model)
+    resolved_model = resolve_model_name(effective_model, proxy_config)
     if resolved_model is None:
         error_message: str = f"Model {effective_model} is not supported."
         if effective_model != original_model:
@@ -864,7 +647,7 @@ def proxy_claude_request():
     # Validate model availability
     try:
         selected_url, subaccount_name, resource_group, model = load_balance_url(
-            request_model
+            request_model, proxy_config
         )
     except ValueError as e:
         logger.error(f"Model validation failed: {e}", exc_info=True)
@@ -1322,7 +1105,7 @@ def proxy_claude_request_original():
     logger.info(f"Claude API request for model: {model}, Streaming: {is_stream}")
 
     try:
-        base_url, subaccount_name, resource_group, model = load_balance_url(model)
+        base_url, subaccount_name, resource_group, model = load_balance_url(model, proxy_config)
         token_manager = ctx.get_token_manager(subaccount_name)
         subaccount_token = token_manager.get_token()
 
