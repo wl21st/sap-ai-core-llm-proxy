@@ -175,7 +175,7 @@ def handle_embedding_request():
 def handle_embedding_service_call(input_text, model, encoding_format):
     # Logic to prepare the request to SAP AI Core
     # TODO: Add default model for embedding
-    selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
+    selected_url, subaccount_name, _, model = load_balance_url(model)
 
     # Construct the URL based on the official SAP AI Core documentation
     # This is critical or it will return 404
@@ -210,7 +210,24 @@ from version import get_version_info, get_version, get_git_hash, get_version_str
 from cli import parse_arguments
 
 # Load balancing - extracted to load_balancer.py
-from load_balancer import resolve_model_name, load_balance_url
+from load_balancer import (
+    resolve_model_name as _resolve_model_name,
+    load_balance_url as _load_balance_url,
+)
+
+
+def resolve_model_name(model_name):
+    """Resolve model name with backward-compatible wrapper."""
+    return _resolve_model_name(model_name, proxy_config)
+
+
+def load_balance_url(model):
+    """Load balance URL with backward-compatible wrapper.
+
+    This wrapper uses the global proxy_config.
+    For new code, import from load_balancer and pass proxy_config explicitly.
+    """
+    return _load_balance_url(model, proxy_config)
 
 
 def get_claude_stop_reason_from_gemini_chunk(gemini_chunk):
@@ -242,135 +259,39 @@ def get_claude_stop_reason_from_openai_chunk(openai_chunk):
     return None
 
 
+# Model handlers - extracted to handlers/model_handlers.py
+from handlers.model_handlers import (
+    handle_claude_request as _handle_claude_request,
+    handle_gemini_request as _handle_gemini_request,
+    handle_default_request as _handle_default_request,
+)
+
+
 def handle_claude_request(payload, model="3.5-sonnet"):
     """Handle Claude model request with multi-subAccount support.
 
-    Args:
-        payload: Request payload from client
-        model: The model name to use
-
-    Returns:
-        Tuple of (endpoint_url, modified_payload, subaccount_name)
+    This is a backward-compatible wrapper that uses the global proxy_config.
+    For new code, import from handlers.model_handlers and pass proxy_config explicitly.
     """
-    stream = payload.get("stream", True)
-    logger.info(f"handle_claude_request: model={model} stream={stream}")
-
-    # Get the selected URL, subaccount and resource group using our load balancer
-    try:
-        selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
-    except ValueError as e:
-        logger.error(
-            f"Failed to load balance URL for model '{model}': {e}", exc_info=True
-        )
-        raise ValueError(f"No valid Claude model found for '{model}' in any subAccount")
-
-    # Determine the endpoint path based on model and streaming settings
-    if stream:
-        # Check if the model is Claude 3.7 or 4 for streaming endpoint
-        if Detector.is_claude_37_or_4(model):
-            endpoint_path = "/converse-stream"
-        else:
-            endpoint_path = "/invoke-with-response-stream"
-    else:
-        # Check if the model is Claude 3.7 or 4
-        if Detector.is_claude_37_or_4(model):
-            endpoint_path = "/converse"
-        else:
-            endpoint_path = "/invoke"
-
-    endpoint_url = f"{selected_url.rstrip('/')}{endpoint_path}"
-
-    # Convert the payload to the right format
-    if Detector.is_claude_37_or_4(model):
-        modified_payload = Converters.convert_openai_to_claude37(payload)
-    else:
-        modified_payload = Converters.convert_openai_to_claude(payload)
-
-    logger.info(
-        f"handle_claude_request: {endpoint_url} (subAccount: {subaccount_name})"
-    )
-    return endpoint_url, modified_payload, subaccount_name
+    return _handle_claude_request(payload, model, proxy_config)
 
 
 def handle_gemini_request(payload, model="gemini-2.5-pro"):
     """Handle Gemini model request with multi-subAccount support.
 
-    Args:
-        payload: Request payload from client
-        model: The model name to use
-
-    Returns:
-        Tuple of (endpoint_url, modified_payload, subaccount_name)
+    This is a backward-compatible wrapper that uses the global proxy_config.
+    For new code, import from handlers.model_handlers and pass proxy_config explicitly.
     """
-    stream = payload.get("stream", True)  # Default to True if 'stream' is not provided
-    logger.info(f"handle_gemini_request: model={model} stream={stream}")
-
-    # Get the selected URL, subaccount and resource group using our load balancer
-    try:
-        selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
-    except ValueError as e:
-        logger.error(
-            f"Failed to load balance URL for model '{model}': {e}", exc_info=True
-        )
-        raise ValueError(f"No valid Gemini model found for '{model}' in any subAccount")
-
-    # Extract the model name for the endpoint (e.g., "gemini-2.5-pro" from the model)
-    # The endpoint format is: /models/{model}:generateContent
-    model_endpoint_name = model
-    if ":" in model:
-        model_endpoint_name = model.split(":")[0]
-
-    # Determine the endpoint path based on streaming settings
-    if stream:
-        endpoint_path = f"/models/{model_endpoint_name}:streamGenerateContent"
-    else:
-        endpoint_path = f"/models/{model_endpoint_name}:generateContent"
-
-    endpoint_url = f"{selected_url.rstrip('/')}{endpoint_path}"
-
-    # Convert the payload to Gemini format
-    modified_payload = Converters.convert_openai_to_gemini(payload)
-
-    logger.info(
-        f"handle_gemini_request: {endpoint_url} (subAccount: {subaccount_name})"
-    )
-    return endpoint_url, modified_payload, subaccount_name
+    return _handle_gemini_request(payload, model, proxy_config)
 
 
 def handle_default_request(payload, model=DEFAULT_GPT_MODEL):
     """Handle default (non-Claude, non-Gemini) model request with multi-subAccount support.
 
-    Args:
-        payload: Request payload from client
-        model: The model name to use
-
-    Returns:
-        Tuple of (endpoint_url, modified_payload, subaccount_name)
+    This is a backward-compatible wrapper that uses the global proxy_config.
+    For new code, import from handlers.model_handlers and pass proxy_config explicitly.
     """
-    # Get the selected URL, subaccount and resource group using our load balancer
-    selected_url, subaccount_name, _, model = load_balance_url(model, proxy_config)
-
-    # Determine API version based on model
-    if any(m in model for m in ["o3", "o4-mini", "o3-mini", "gpt-5"]):
-        api_version = API_VERSION_2024_12_01_PREVIEW
-        # Remove unsupported parameters for o3-mini
-        modified_payload = payload.copy()
-        if "temperature" in modified_payload:
-            logger.info("Removing 'temperature' parameter for o3-mini model.")
-            del modified_payload["temperature"]
-        # Add checks for other potentially unsupported parameters if needed
-    else:
-        api_version = API_VERSION_2023_05_15
-        modified_payload = payload
-
-    endpoint_url = (
-        f"{selected_url.rstrip('/')}/chat/completions?api-version={api_version}"
-    )
-
-    logger.info(
-        f"handle_default_request: {endpoint_url} (subAccount: {subaccount_name})"
-    )
-    return endpoint_url, modified_payload, subaccount_name
+    return _handle_default_request(payload, model, proxy_config)
 
 
 @app.route("/v1/models", methods=["GET", "OPTIONS"])
@@ -436,7 +357,7 @@ def proxy_openai_stream():
         )
 
     # Try to resolve model name using fallback logic
-    resolved_model = resolve_model_name(effective_model, proxy_config)
+    resolved_model = resolve_model_name(effective_model)
     if resolved_model is None:
         error_message: str = f"Model {effective_model} is not supported."
         if effective_model != original_model:
@@ -575,7 +496,7 @@ def proxy_claude_request():
     # Validate model availability
     try:
         selected_url, subaccount_name, resource_group, model = load_balance_url(
-            request_model, proxy_config
+            request_model
         )
     except ValueError as e:
         logger.error(f"Model validation failed: {e}", exc_info=True)
@@ -1033,9 +954,7 @@ def proxy_claude_request_original():
     logger.info(f"Claude API request for model: {model}, Streaming: {is_stream}")
 
     try:
-        base_url, subaccount_name, resource_group, model = load_balance_url(
-            model, proxy_config
-        )
+        base_url, subaccount_name, resource_group, model = load_balance_url(model)
         token_manager = ctx.get_token_manager(subaccount_name)
         subaccount_token = token_manager.get_token()
 
