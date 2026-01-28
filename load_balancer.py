@@ -242,7 +242,7 @@ def load_balance_url(selected_model_name: str, proxy_config) -> tuple[str, str, 
 def reset_counters():
     """Reset all load balancing counters. Useful for testing."""
     global _load_balance_counters
-    _load_balance_counters = {}
+    _load_balance_counters.clear()
 
 
 def get_counters() -> dict:

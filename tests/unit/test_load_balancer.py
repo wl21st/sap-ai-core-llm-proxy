@@ -277,8 +277,17 @@ class TestResetCounters:
         url, _, _, _ = load_balance_url("gpt-4", mock_proxy_config)
         assert url == "https://url1.com"
 
-    def test_reset_returns_empty_dict(self):
+    def test_reset_returns_empty_dict(self, mock_proxy_config, sample_subaccount):
         """Test that counters are empty after reset."""
+        # First populate counters by making a call
+        subaccount = sample_subaccount(
+            "account1", "default", {"gpt-4": ["https://url1.com"]}
+        )
+        mock_proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+        mock_proxy_config.subaccounts = {"account1": subaccount}
+        load_balance_url("gpt-4", mock_proxy_config)
+
+        # Now reset and verify empty
         reset_counters()
         assert _load_balance_counters == {}
 
