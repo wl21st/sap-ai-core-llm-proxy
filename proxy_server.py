@@ -668,7 +668,7 @@ def proxy_claude_request():
         body["anthropic_version"] = API_VERSION_BEDROCK_2023_05_31
 
         # Remove unsupported fields for Bedrock
-        unsupported_fields = ["context_management", "metadata"]
+        unsupported_fields = ["context_management", "metadata", "output_config"]
         for field in unsupported_fields:
             if field in body:
                 logger.info(
@@ -1033,7 +1033,9 @@ def proxy_claude_request_original():
     logger.info(f"Claude API request for model: {model}, Streaming: {is_stream}")
 
     try:
-        base_url, subaccount_name, resource_group, model = load_balance_url(model, proxy_config)
+        base_url, subaccount_name, resource_group, model = load_balance_url(
+            model, proxy_config
+        )
         token_manager = ctx.get_token_manager(subaccount_name)
         subaccount_token = token_manager.get_token()
 
