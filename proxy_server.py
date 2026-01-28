@@ -109,65 +109,57 @@ def handle_embedding_request():
             "AI-Tenant-Id": service_key.identity_zone_id,
         }
 
-        # Log request being sent to LLM service - no formatting
-        transport_logger.info(
-            f"OUT_REQ_EMBED: tid={tid}, url={vendor_endpoint_url}, body={upstream_payload}"
+        # Make backend request using shared function
+        result = make_backend_request(
+            url=vendor_endpoint_url,
+            headers=headers,
+            payload=upstream_payload,
+            model=model,
+            tid=tid,
+            is_claude_model_fn=Detector.is_claude_model,
         )
 
-        response = requests.post(
-            vendor_endpoint_url, headers=headers, json=upstream_payload
-        )
+        # Handle failed requests
+        if not result.success:
+            # Check for 429 error (rate limiting)
+            if result.status_code == 429:
+                # Create a mock HTTPError for the 429 handler
+                class MockResponse:
+                    def __init__(self, status_code, text, data, headers):
+                        self.status_code = status_code
+                        self.text = text
+                        self._data = data
+                        self.headers = headers if headers else {}
 
-        # Log raw response from LLM service - no formatting
-        transport_logger.info(
-            f"OUT_EMBED_RSP: tid={tid}, status={response.status_code}, headers={dict(response.headers)}, body={response.text}"
-        )
+                    def json(self):
+                        return self._data if self._data else {}
 
-        response.raise_for_status()
-        return response.json(), 200
-        # return jsonify(format_embedding_response(response.json(), model)), 200
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(
-            f"HTTP error in embedding request({model}): {http_err}", exc_info=True
-        )
-
-        if http_err.response is not None:
-            response = http_err.response
-            status_code = response.status_code
-
-            # Handle HTTP 429 (Too Many Requests) specifically
-            if status_code == 429:
-                return handle_http_429_error(http_err, f"embedding request for {model}")
-
-            logger.error(
-                f"EMBED_ERR: tid={tid}, status={status_code}, headers={dict(response.headers)}, body={response.text}",
-                exc_info=True,
-            )
-            transport_logger.error(
-                f"EMBED_ERR: tid={tid}, status={status_code}, headers={dict(response.headers)}, body={response.text}"
-            )
-
-            try:
-                error_json = http_err.response.json()
-                logger.error(
-                    f"EMBED_ERR: tid={tid}, response={json.dumps(error_json, indent=2)}",
-                    exc_info=True,
+                mock_response = MockResponse(
+                    429,
+                    result.error_message or "",
+                    result.response_data,
+                    result.headers,
                 )
-                return jsonify(error_json), status_code
-            except json.JSONDecodeError:
-                logger.error(
-                    f"EMBED_ERR: tid={tid}, response={response.text}", exc_info=True
+                mock_error = requests.exceptions.HTTPError(response=mock_response)
+                return handle_http_429_error(
+                    mock_error, f"embedding request for {model}"
                 )
-                return jsonify({"error": response.text}), status_code
-        else:
-            logger.error(
-                f"EMBED_ERR: tid={tid}, reason=no_response, error={str(http_err)}",
-                exc_info=True,
-            )
-            return jsonify({"error": str(http_err)}), 500
+
+            # Return error response
+            if result.response_data:
+                return jsonify(result.response_data), result.status_code
+            else:
+                return jsonify(
+                    {"error": result.error_message or "Unknown error"}
+                ), result.status_code
+
+        # Return successful response
+        return jsonify(result.response_data), result.status_code
+
     except Exception as e:
         logger.error(
-            f"EMBED_ERR: tid={tid}, reason=no_response, error={str(e)}", exc_info=True
+            f"EMBED_ERR: tid={tid}, reason=unexpected_error, error={str(e)}",
+            exc_info=True,
         )
         return jsonify({"error": str(e)}), 500
 
@@ -1021,7 +1013,9 @@ def proxy_claude_request_original():
             )
 
             if not result.success:
-                logger.error(f"Error in Claude request({model}): {result.error_message}")
+                logger.error(
+                    f"Error in Claude request({model}): {result.error_message}"
+                )
                 if result.response_data:
                     return jsonify(result.response_data), result.status_code
                 else:
@@ -1129,19 +1123,20 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
                     return self._data if self._data else {}
 
             mock_response = MockResponse(
-                429,
-                result.error_message or "",
-                result.response_data,
-                result.headers
+                429, result.error_message or "", result.response_data, result.headers
             )
             mock_error = requests.exceptions.HTTPError(response=mock_response)
-            return handle_http_429_error(mock_error, f"non-streaming request for {model}")
+            return handle_http_429_error(
+                mock_error, f"non-streaming request for {model}"
+            )
 
         # Return error response
         if result.response_data:
             return jsonify(result.response_data), result.status_code
         else:
-            return jsonify({"error": result.error_message or "Unknown error"}), result.status_code
+            return jsonify(
+                {"error": result.error_message or "Unknown error"}
+            ), result.status_code
 
     # Process successful response
     response_data = result.response_data
