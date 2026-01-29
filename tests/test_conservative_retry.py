@@ -2,10 +2,11 @@
 """
 Test script to verify the retry logic with 4 attempts using mixed strategy (2 regular + 2 exponential).
 """
+
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, wait_chain
 from botocore.exceptions import ClientError
-from proxy_server import retry_on_rate_limit
+from blueprints.messages import retry_on_rate_limit
 
 # Create a mixed retry strategy: 2 fixed wait attempts + 2 exponential wait attempts
 # This gives us: 0.1s (fixed) + 0.2s (fixed) + 0.3s (exp) + 0.6s (exp) = 1.2s total max
@@ -14,7 +15,9 @@ bedrock_retry = retry(
     wait=wait_chain(
         wait_fixed(0.1),  # First retry: 0.1s fixed wait
         wait_fixed(0.2),  # Second retry: 0.2s fixed wait
-        wait_exponential(multiplier=0.1, min=0.3, max=0.6)  # Remaining retries: exponential
+        wait_exponential(
+            multiplier=0.1, min=0.3, max=0.6
+        ),  # Remaining retries: exponential
     ),
     retry=retry_on_rate_limit,
     before_sleep=lambda retry_state: print(
@@ -22,10 +25,13 @@ bedrock_retry = retry(
         f"(attempt {retry_state.attempt_number}/5): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
     ),
 )
+
+
 class MockBedrockClient:
     def __init__(self, fail_count=3):
         self.call_count = 0
         self.fail_count = fail_count
+
     @bedrock_retry
     def invoke_model(self, body=None):
         self.call_count += 1
@@ -42,13 +48,17 @@ class MockBedrockClient:
                 operation_name="InvokeModel",
             )
         return {"body": ["success"], "ResponseMetadata": {"HTTPStatusCode": 200}}
+
+
 def test_conservative_retry():
     print(
         "Testing retry logic with mixed strategy (4 retries: 2 fixed + 2 exponential)..."
     )
     # Test with 3 failures, should succeed on 4th attempt
     print("\n1. Testing with 3 failures (should succeed on 4th attempt):")
-    print("Expected wait pattern: 0.1s (fixed) + 0.2s (fixed) + 0.3s (exp) = 0.6s total")
+    print(
+        "Expected wait pattern: 0.1s (fixed) + 0.2s (fixed) + 0.3s (exp) = 0.6s total"
+    )
     client = MockBedrockClient(fail_count=3)
     start_time = time.time()
     try:
@@ -74,5 +84,7 @@ def test_conservative_retry():
             f"✅ Correctly failed after {elapsed:.2f} seconds with {client2.call_count} attempts"
         )
         print(f"Error: {type(e).__name__}")
+
+
 if __name__ == "__main__":
     test_conservative_retry()

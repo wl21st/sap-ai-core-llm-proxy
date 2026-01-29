@@ -184,6 +184,33 @@ def mock_service_key_file(sample_service_key, tmp_path):
 @pytest.fixture
 def flask_client():
     """Flask test client."""
+    from config import ProxyGlobalContext
+
+    # Initialize global context with empty config
+    ctx = ProxyGlobalContext()
+    ctx.initialize(ProxyConfig())
+
+    # Set proxy_server globals
+    proxy_server.ctx = ctx
+    proxy_server.proxy_config = ctx.config
+
+    # Register blueprints only if not already registered
+    if "chat_completions" not in app.blueprints:
+        proxy_server.register_blueprints(app, ctx.config, ctx)
+    else:
+        # Re-initialize blueprints with current config
+        from blueprints import (
+            init_chat_completions_blueprint,
+            init_messages_blueprint,
+            init_embeddings_blueprint,
+            init_models_blueprint,
+        )
+
+        init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+        init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+        init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+        init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+
     app.config["TESTING"] = True
     with app.test_client() as client:
         yield client
@@ -203,12 +230,30 @@ def reset_proxy_config():
     proxy_server.ctx.initialize(ProxyConfig())
     proxy_server.proxy_config = proxy_server.ctx.config
 
+    # Re-initialize blueprints with new config
+    from blueprints import (
+        init_chat_completions_blueprint,
+        init_messages_blueprint,
+        init_embeddings_blueprint,
+        init_models_blueprint,
+    )
+
+    init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+
     yield
 
     # Restore original state
     if original_ctx is not None:
         proxy_server.ctx = original_ctx
     proxy_server.proxy_config = original_config
+    # Re-initialize blueprints with restored config
+    init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
 
 
 # ============================================================================
@@ -717,7 +762,9 @@ class TestLoadBalancing:
         proxy_server.proxy_config.subaccounts["account1"] = subaccount
         proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
 
-        url, subaccount_name, resource_group, model = load_balance_url("gpt-4", proxy_server.proxy_config)
+        url, subaccount_name, resource_group, model = load_balance_url(
+            "gpt-4", proxy_server.proxy_config
+        )
 
         assert url == "https://url1.com"
         assert subaccount_name == "account1"
@@ -788,7 +835,9 @@ class TestLoadBalancing:
         }
 
         # Request non-existent opus model, should fallback to opus variant
-        url, subaccount_name, _, model = load_balance_url("claude-3-opus", proxy_server.proxy_config)
+        url, subaccount_name, _, model = load_balance_url(
+            "claude-3-opus", proxy_server.proxy_config
+        )
 
         assert model == "anthropic--claude-4.5-opus"
         assert subaccount_name == "account1"
@@ -1296,7 +1345,9 @@ class TestLoadBalancingEdgeCases:
             "gemini-2.5-pro": ["account1"]
         }
 
-        url, subaccount_name, _, model = load_balance_url("gemini-1.5-flash", proxy_server.proxy_config)
+        url, subaccount_name, _, model = load_balance_url(
+            "gemini-1.5-flash", proxy_server.proxy_config
+        )
 
         assert model == "gemini-2.5-pro"
         assert subaccount_name == "account1"
