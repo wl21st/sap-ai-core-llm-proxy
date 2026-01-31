@@ -45,11 +45,13 @@ DEFAULT_GEMINI_MODEL: str = "gemini-2.5-pro"
 DEFAULT_EMBEDDING_MODEL: str = "text-embedding-3-small"
 DEFAULT_GPT_MODEL = "gpt-4.1"
 
-# Retry configuration constants (centralized for future configurability)
-RETRY_MAX_ATTEMPTS = 4  # Total attempts (1 original + 3 retries)
-RETRY_MULTIPLIER = 2  # Exponential backoff multiplier
-RETRY_MIN_WAIT = 4  # Minimum wait time in seconds
-RETRY_MAX_WAIT = 16  # Maximum wait time in seconds
+# Retry configuration - now unified in utils/retry.py
+from utils.retry import (
+    RETRY_MAX_ATTEMPTS,
+    RETRY_MULTIPLIER,
+    RETRY_MIN_WAIT,
+    RETRY_MAX_WAIT,
+)
 
 """SAP API Reference are documented at https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/example-payloads-for-inferencing-third-party-models"""
 

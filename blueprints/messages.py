@@ -21,6 +21,7 @@ from handlers.bedrock_handler import (
     invoke_bedrock_non_streaming,
     read_response_body_stream,
 )
+from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
 from handlers.streaming_generators import (
     generate_bedrock_streaming_response,
     generate_claude_streaming_response,
@@ -65,25 +66,6 @@ def init_messages_blueprint(
 
 # Import after globals are defined
 from load_balancer import load_balance_url  # noqa: E402
-
-
-def retry_on_rate_limit(exception):
-    """Check if exception is a rate limit error that should be retried."""
-    from botocore.exceptions import ClientError
-
-    if isinstance(exception, ClientError):
-        error_code = exception.response.get("Error", {}).get("Code", "")
-        error_message = exception.response.get("Error", {}).get("Message", "").lower()
-
-        # Check for throttling error codes
-        if error_code in ["ThrottlingException", "TooManyRequestsException"]:
-            return True
-
-        # Check for "too many tokens" in error message
-        if "too many tokens" in error_message:
-            return True
-
-    return False
 
 
 @messages_bp.route("/v1/messages", methods=["POST"])

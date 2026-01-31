@@ -2,67 +2,18 @@
 Bedrock handler module for AWS Bedrock API interactions.
 
 This module provides:
-- Retry logic for rate-limited requests
 - Streaming and non-streaming invoke helpers
 - Response body stream reading utilities
+- Retry logic imported from unified utils.retry module
 """
 
 import logging
-from botocore.exceptions import ClientError
-from tenacity import retry, stop_after_attempt, wait_exponential
+from utils.retry import unified_retry
 
 logger = logging.getLogger("proxy_server")
 
-# Retry configuration
-RETRY_MAX_ATTEMPTS = 5
-RETRY_MULTIPLIER = 1
-RETRY_MIN_WAIT = 1
-RETRY_MAX_WAIT = 16
-
-
-def retry_on_rate_limit(exception) -> bool:
-    """
-    Check if exception is a rate limit error that should be retried.
-
-    Args:
-        exception: The exception to check
-
-    Returns:
-        True if the exception indicates a rate limit that should be retried
-    """
-    # Check for ClientError with 429 status code first (more reliable)
-    if isinstance(exception, ClientError):
-        error_code = exception.response.get("Error", {}).get("Code", "")
-        http_status = exception.response.get("ResponseMetadata", {}).get(
-            "HTTPStatusCode"
-        )
-        if error_code == "429" or http_status == 429:
-            return True
-
-    # Fallback to string matching for other exception types
-    error_message = str(exception).lower()
-    return (
-        "too many tokens" in error_message
-        or "rate limit" in error_message
-        or "throttling" in error_message
-        or "too many requests" in error_message
-        or "exceeding the allowed request" in error_message
-        or "rate limited by ai core" in error_message
-    )
-
-
-# Create the retry decorator with exponential backoff
-bedrock_retry = retry(
-    stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
-    wait=wait_exponential(
-        multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT
-    ),
-    retry=retry_on_rate_limit,
-    before_sleep=lambda retry_state: logger.warning(
-        f"Rate limit hit, retrying in {retry_state.next_action.sleep if retry_state.next_action else 'unknown'} seconds "
-        f"(attempt {retry_state.attempt_number}/{RETRY_MAX_ATTEMPTS}): {str(retry_state.outcome.exception()) if retry_state.outcome else 'unknown error'}"
-    ),
-)
+# Retry decorator imported from unified module
+bedrock_retry = unified_retry
 
 
 @bedrock_retry
