@@ -12,31 +12,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ai-api-client-sdk"
-version = "2.6.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aenum" },
-    { name = "pyhumps" },
-    { name = "requests" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/6c/00f615d83bdf183186d3bd33cc838deefdb8a6efcae9dae23089e5c90b81/ai_api_client_sdk-2.6.1-py3-none-any.whl", hash = "sha256:f08d3f3c4fa04630767137dbf6f7f29937d9597cd29e453aac53201b60b8fce1", size = 265514, upload-time = "2025-05-14T07:44:37.25Z" },
-]
-
-[[package]]
-name = "ai-core-sdk"
-version = "2.6.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "ai-api-client-sdk" },
-    { name = "click" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/84/877beb3fbd7f6973ede56cbf8748e1f09cc70a32973279ed9b61c73e3cf4/ai_core_sdk-2.6.2-py3-none-any.whl", hash = "sha256:a9795b9c1c8469a796e606e016102ad050b40d3260892ccb8e3182e3245d324d", size = 153687, upload-time = "2025-05-14T09:17:19.677Z" },
-]
-
-[[package]]
 name = "aioboto3"
 version = "15.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2072,8 +2047,6 @@ name = "sap-ai-core-llm-proxy"
 version = "1.2.7"
 source = { editable = "." }
 dependencies = [
-    { name = "ai-api-client-sdk" },
-    { name = "ai-core-sdk" },
     { name = "aioboto3" },
     { name = "basedpyright" },
     { name = "botocore" },
@@ -2089,6 +2062,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyrefly" },
     { name = "pytokens" },
+    { name = "requests" },
     { name = "ruff" },
     { name = "sap-ai-sdk-gen" },
     { name = "tenacity" },
@@ -2124,8 +2098,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ai-api-client-sdk", specifier = ">=2.6.1" },
-    { name = "ai-core-sdk", specifier = ">=2.6.2" },
     { name = "aioboto3", specifier = ">=15.1.0" },
     { name = "basedpyright", specifier = ">=1.36.2" },
     { name = "botocore", specifier = ">=1.35.0" },
@@ -2146,6 +2118,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
     { name = "pytokens", specifier = "==0.4.0" },
+    { name = "requests", specifier = ">=2.32.3" },
     { name = "ruff", specifier = ">=0.14.10" },
     { name = "sap-ai-sdk-gen", specifier = ">=5.10.0" },
     { name = "tenacity", specifier = ">=9.0.0" },
