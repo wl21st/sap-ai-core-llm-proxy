@@ -28,7 +28,6 @@ class TokenManager:
     - Thread-safe token caching
     - Automatic token refresh
     - Per-subaccount token management
-    TODO: Create instance with the SubAccountConfig as it is 1-1 mapping relationship
     """
 
     def __init__(self, subaccount: SubAccountConfig) -> None:

@@ -519,6 +519,17 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
 
 def main() -> None:
     """Main entry point for the SAP AI Core LLM Proxy Server."""
+    # Deprecation Warning
+    import warnings
+
+    warnings.warn(
+        "proxy_server.py is deprecated and will be removed in a future version. "
+        "Please use 'sap-ai-proxy' (via main.py) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    print("WARNING: proxy_server.py is deprecated. Use 'sap-ai-proxy' instead.")
+
     args = parse_arguments()
 
     # Setup logging using the new modular function
