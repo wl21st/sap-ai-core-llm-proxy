@@ -21,10 +21,8 @@ import requests.exceptions
 # Import the module under test
 import proxy_server
 from proxy_helpers import Detector, Converters
-from proxy_server import (
-    app,
-    load_balance_url,
-)
+from proxy_server import app
+from load_balancer import resolve_model_name, load_balance_url, reset_counters
 
 # Create convenience aliases for the test functions
 is_claude_model = Detector.is_claude_model
@@ -186,6 +184,33 @@ def mock_service_key_file(sample_service_key, tmp_path):
 @pytest.fixture
 def flask_client():
     """Flask test client."""
+    from config import ProxyGlobalContext
+
+    # Initialize global context with empty config
+    ctx = ProxyGlobalContext()
+    ctx.initialize(ProxyConfig())
+
+    # Set proxy_server globals
+    proxy_server.ctx = ctx
+    proxy_server.proxy_config = ctx.config
+
+    # Register blueprints only if not already registered
+    if "chat_completions" not in app.blueprints:
+        proxy_server.register_blueprints(app, ctx.config, ctx)
+    else:
+        # Re-initialize blueprints with current config
+        from blueprints import (
+            init_chat_completions_blueprint,
+            init_messages_blueprint,
+            init_embeddings_blueprint,
+            init_models_blueprint,
+        )
+
+        init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+        init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+        init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+        init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+
     app.config["TESTING"] = True
     with app.test_client() as client:
         yield client
@@ -205,12 +230,30 @@ def reset_proxy_config():
     proxy_server.ctx.initialize(ProxyConfig())
     proxy_server.proxy_config = proxy_server.ctx.config
 
+    # Re-initialize blueprints with new config
+    from blueprints import (
+        init_chat_completions_blueprint,
+        init_messages_blueprint,
+        init_embeddings_blueprint,
+        init_models_blueprint,
+    )
+
+    init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+
     yield
 
     # Restore original state
     if original_ctx is not None:
         proxy_server.ctx = original_ctx
     proxy_server.proxy_config = original_config
+    # Re-initialize blueprints with restored config
+    init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
 
 
 # ============================================================================
@@ -719,7 +762,9 @@ class TestLoadBalancing:
         proxy_server.proxy_config.subaccounts["account1"] = subaccount
         proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
 
-        url, subaccount_name, resource_group, model = load_balance_url("gpt-4")
+        url, subaccount_name, resource_group, model = load_balance_url(
+            "gpt-4", proxy_server.proxy_config
+        )
 
         assert url == "https://url1.com"
         assert subaccount_name == "account1"
@@ -751,19 +796,18 @@ class TestLoadBalancing:
         }
 
         # Reset counters
-        if hasattr(load_balance_url, "counters"):
-            load_balance_url.counters.clear()
+        reset_counters()
 
         # First call should use account1
-        url1, sub1_name, _, _ = load_balance_url("gpt-4")
+        url1, sub1_name, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
         assert sub1_name == "account1"
 
         # Second call should use account2 (round-robin)
-        url2, sub2_name, _, _ = load_balance_url("gpt-4")
+        url2, sub2_name, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
         assert sub2_name == "account2"
 
         # Third call should cycle back to account1
-        url3, sub3_name, _, _ = load_balance_url("gpt-4")
+        url3, sub3_name, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
         assert sub3_name == "account1"
 
     def test_load_balance_url_model_not_found(self, reset_proxy_config):
@@ -771,7 +815,7 @@ class TestLoadBalancing:
         proxy_server.proxy_config.model_to_subaccounts = {}
 
         with pytest.raises(ValueError, match="not available in any subAccount"):
-            load_balance_url("nonexistent-model")
+            load_balance_url("nonexistent-model", proxy_server.proxy_config)
 
     def test_load_balance_url_claude_fallback(self, reset_proxy_config):
         """Test Claude model fallback respects opus/sonnet variant."""
@@ -791,7 +835,9 @@ class TestLoadBalancing:
         }
 
         # Request non-existent opus model, should fallback to opus variant
-        url, subaccount_name, _, model = load_balance_url("claude-3-opus")
+        url, subaccount_name, _, model = load_balance_url(
+            "claude-3-opus", proxy_server.proxy_config
+        )
 
         assert model == "anthropic--claude-4.5-opus"
         assert subaccount_name == "account1"
@@ -804,7 +850,7 @@ class TestResolveModelName:
         """Test resolve_model_name returns exact match when model exists."""
         proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
 
-        result = proxy_server.resolve_model_name("gpt-4")
+        result = resolve_model_name("gpt-4", proxy_server.proxy_config)
         assert result == "gpt-4"
 
     def test_resolve_model_name_claude_fallback(self, reset_proxy_config):
@@ -815,7 +861,7 @@ class TestResolveModelName:
         }
 
         # Test opus-4.5 alias resolves to opus fallback
-        result = proxy_server.resolve_model_name("opus-4.5")
+        result = resolve_model_name("opus-4.5", proxy_server.proxy_config)
         assert result == "anthropic--claude-4.5-opus"
 
     def test_resolve_model_name_claude_sonnet_fallback(self, reset_proxy_config):
@@ -826,11 +872,11 @@ class TestResolveModelName:
         }
 
         # Test sonnet-4 alias resolves to sonnet fallback
-        result = proxy_server.resolve_model_name("sonnet-4")
+        result = resolve_model_name("sonnet-4", proxy_server.proxy_config)
         assert result == "anthropic--claude-4.5-sonnet"
 
         # Test claude-4.5 (no variant) defaults to sonnet fallback
-        result = proxy_server.resolve_model_name("claude-4.5")
+        result = resolve_model_name("claude-4.5", proxy_server.proxy_config)
         assert result == "anthropic--claude-4.5-sonnet"
 
     def test_resolve_model_name_claude_haiku_fallback(self, reset_proxy_config):
@@ -841,7 +887,7 @@ class TestResolveModelName:
         }
 
         # Test haiku alias resolves to haiku fallback
-        result = proxy_server.resolve_model_name("haiku-4")
+        result = resolve_model_name("haiku-4", proxy_server.proxy_config)
         assert result == "anthropic--claude-4-haiku"
 
     def test_resolve_model_name_gemini_fallback(self, reset_proxy_config):
@@ -852,14 +898,14 @@ class TestResolveModelName:
         }
 
         # Test gemini alias resolves to fallback
-        result = proxy_server.resolve_model_name("gemini-pro")
+        result = resolve_model_name("gemini-pro", proxy_server.proxy_config)
         assert result == "gemini-2.5-pro"
 
     def test_resolve_model_name_no_fallback_returns_none(self, reset_proxy_config):
         """Test resolve_model_name returns None when no fallback available."""
         proxy_server.proxy_config.model_to_subaccounts = {}
 
-        result = proxy_server.resolve_model_name("opus-4.5")
+        result = resolve_model_name("opus-4.5", proxy_server.proxy_config)
         assert result is None
 
 
@@ -1271,19 +1317,18 @@ class TestLoadBalancingEdgeCases:
         proxy_server.proxy_config.subaccounts["account1"] = subaccount
         proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
 
-        if hasattr(load_balance_url, "counters"):
-            load_balance_url.counters.clear()
+        reset_counters()
 
-        url1, _, _, _ = load_balance_url("gpt-4")
+        url1, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
         assert url1 == "https://url1.com"
 
-        url2, _, _, _ = load_balance_url("gpt-4")
+        url2, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
         assert url2 == "https://url2.com"
 
-        url3, _, _, _ = load_balance_url("gpt-4")
+        url3, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
         assert url3 == "https://url3.com"
 
-        url4, _, _, _ = load_balance_url("gpt-4")
+        url4, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
         assert url4 == "https://url1.com"
 
     def test_load_balance_url_gemini_fallback(self, reset_proxy_config):
@@ -1300,7 +1345,9 @@ class TestLoadBalancingEdgeCases:
             "gemini-2.5-pro": ["account1"]
         }
 
-        url, subaccount_name, _, model = load_balance_url("gemini-1.5-flash")
+        url, subaccount_name, _, model = load_balance_url(
+            "gemini-1.5-flash", proxy_server.proxy_config
+        )
 
         assert model == "gemini-2.5-pro"
         assert subaccount_name == "account1"
@@ -1318,7 +1365,7 @@ class TestLoadBalancingEdgeCases:
         proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
 
         with pytest.raises(ValueError, match="No URLs for model"):
-            load_balance_url("gpt-4")
+            load_balance_url("gpt-4", proxy_server.proxy_config)
 
 
 class TestFlaskEndpointsEdgeCases:
