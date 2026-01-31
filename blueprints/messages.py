@@ -14,6 +14,7 @@ from blueprints.helpers import (
     create_invalid_request_error,
     create_api_error,
     create_rate_limit_error,
+    create_error_response,
 )
 from handlers.bedrock_handler import (
     invoke_bedrock_streaming,
@@ -124,7 +125,9 @@ def proxy_claude_request():
         )
     except ValueError as e:
         logger.error(f"Model validation failed: {e}", exc_info=True)
-        return create_invalid_request_error(f"Model '{request_model}' not available")
+        return create_error_response(
+            "not_found_error", f"Model '{request_model}' not available", 404
+        )
 
     # Check if this is an Anthropic model that should use the SDK
     if not Detector.is_claude_model(model):
