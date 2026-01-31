@@ -12,7 +12,7 @@ dependencies = [
     "langchain-core>=0.3.80",
     "litellm==1.81.4",
     "numpy>=2.4.1",
-    "openai>=2.8.0",
+    "openi>=2.8.0",
     "protobuf>=6.33.1",
     "pydantic>=2.0.0",
     "pyrefly>=0.46.1",
