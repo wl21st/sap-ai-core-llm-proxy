@@ -11,7 +11,6 @@ from tenacity import RetryError
 from auth import RequestValidator
 from blueprints.helpers import (
     validate_api_key,
-    create_authentication_error,
     create_invalid_request_error,
     create_api_error,
     create_rate_limit_error,

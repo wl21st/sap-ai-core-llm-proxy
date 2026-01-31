@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Dict
 from flask import Blueprint, jsonify, request
 
 from auth import RequestValidator
+from blueprints.helpers import MockResponse
 from handlers.streaming_handler import make_backend_request
 from proxy_helpers import Detector
 from utils.error_handlers import handle_http_429_error
@@ -70,28 +71,6 @@ def handle_embedding_service_call(input_text, model, encoding_format):
     return endpoint_url, modified_payload, subaccount_name
 
 
-def format_embedding_response(response, model):
-    """Convert the response to OpenAI format.
-
-    Args:
-        response: The response from SAP AI Core
-        model: The model name
-
-    Returns:
-        Formatted embedding response in OpenAI format
-    """
-    embedding_data = response.get("embedding", [])
-    return {
-        "object": "list",
-        "data": [{"object": "embedding", "embedding": embedding_data, "index": 0}],
-        "model": model,
-        "usage": {
-            "prompt_tokens": len(embedding_data),
-            "total_tokens": len(embedding_data),
-        },
-    }
-
-
 @embeddings_bp.route("/v1/embeddings", methods=["POST"])
 def handle_embedding_request():
     """Handle embedding request endpoint."""
@@ -151,16 +130,6 @@ def handle_embedding_request():
             # Check for 429 error (rate limiting)
             if result.status_code == 429:
                 # Create a mock HTTPError for the 429 handler
-                class MockResponse:
-                    def __init__(self, status_code, text, data, headers):
-                        self.status_code = status_code
-                        self.text = text
-                        self._data = data
-                        self.headers = headers if headers else {}
-
-                    def json(self):
-                        return self._data if self._data else {}
-
                 mock_response = MockResponse(
                     429,
                     result.error_message or "",
