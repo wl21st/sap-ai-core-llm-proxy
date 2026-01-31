@@ -6,13 +6,13 @@ The re-authentication logic will be implemented in the request handling layer, s
 
 ### 1. Token Manager Updates
 
-- Add an `invalidate_token()` method to `TokenManager` to explicitly clear the cached token.
+- Add an `invalidate_token()` method to `TokenManager` in `auth/token_manager.py` to explicitly clear the cached token.
 
 ### 2. Request Handling Updates
 
-The `proxy_claude_request_original` and `handle_non_streaming_request` functions (and potentially others using `make_backend_request`) need to be updated.
+The `proxy_claude_request` and `proxy_claude_request_original` functions in `blueprints/messages.py` need to be updated.
 
-#### Workflow
+#### Workflow for `proxy_claude_request_original` (Manual Token Management)
 
 1. **Attempt 1**: Make backend request with existing logic (using cached token).
 2. **Check Result**:
@@ -26,9 +26,15 @@ The `proxy_claude_request_original` and `handle_non_streaming_request` functions
             - Retry `make_backend_request`.
     - If other error: Return error.
 
+#### Workflow for `proxy_claude_request` (SDK)
+
+The SDK (`gen_ai_hub`) handles tokens internally. We need to investigate if the SDK exposes a way to invalidate the token or if we need to recreate the client.
+If `AIAPIAuthenticatorException` is thrown, it indicates a failure to *get* a token. We should catch this and potentially retry if it's considered transient, or return a clear error.
+For 401/403 from the SDK call (`invoke_bedrock_streaming`), the SDK might already handle retries. If not, we might need to recreate the `bedrock_client` to force a new token fetch.
+
 ### 3. Shared Logic
 
-To avoid code duplication, we can introduce a wrapper function `execute_with_retry` or similar, but given the current structure where headers are constructed in `proxy_server.py`, explicit handling in the main flow might be clearer for now.
+To avoid code duplication, we can introduce a wrapper function or decorator, but explicit handling is preferred for clarity given the different paths (SDK vs manual).
 
 ## Trade-offs
 
@@ -37,4 +43,4 @@ To avoid code duplication, we can introduce a wrapper function `execute_with_ret
 
 ## Alternatives Considered
 
-- **Middleware**: Implementing this as a decorator or middleware. Given the explicit token management in `proxy_server.py`, a decorator might be hard to inject without refactoring `TokenManager` access.
+- **Middleware**: Implementing this as a decorator or middleware. Given the explicit token management in `proxy_server.py`/`blueprints/messages.py`, a decorator might be hard to inject without refactoring `TokenManager` access.
