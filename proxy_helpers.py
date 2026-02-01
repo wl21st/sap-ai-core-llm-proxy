@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from logging import Logger
 import random
 import time
@@ -100,6 +101,112 @@ class Detector:
         )
 
     @staticmethod
+    def extract_version(name):
+        """
+        Extract semantic version from model name using intelligent pattern matching.
+
+        Handles:
+        - Single digit versions: "4" from "gpt-4"
+        - Multi-part versions: "3-5" from "claude-3-5-sonnet" or "claude-3.5-sonnet"
+        - Complex names: "4" from "gpt-4-32k" (ignores context window size)
+        - Timestamps: "4" from "gpt-4o-2024-05-13" (ignores date suffix)
+        - Date formats: "4" from "gpt-4-0613" (ignores MMDD format)
+
+        Avoids matching:
+        - Dates (year like 2024, 20240229, 0613)
+        - Context window sizes (32k, 128k, etc.)
+        - Long numeric suffixes
+
+        Args:
+            name: The model name to extract version from
+
+        Returns:
+            str: The extracted version (e.g., "4", "3-5", "4-5") or None
+        """
+        matches = list(re.finditer(r"\d+", name))
+
+        if not matches:
+            return None
+
+        for i, match in enumerate(matches):
+            num_str = match.group(0)
+            num = int(num_str)
+
+            # Skip year-like numbers (> 100)
+            if num > 100:
+                continue
+
+            # Get the character after this match
+            pos_after = match.end()
+            char_after = (
+                name[pos_after : pos_after + 1] if pos_after < len(name) else ""
+            )
+
+            # Skip if followed by 'k' or 'm' (context window suffix like 32k)
+            if char_after in "km":
+                continue
+
+            # Check if followed by a separator (. or -)
+            if char_after in ".-":
+                # Look ahead for the next number
+                next_match = matches[i + 1] if i + 1 < len(matches) else None
+
+                if next_match and next_match.start() == pos_after + 1:
+                    # Separator immediately followed by next number
+                    minor_str = next_match.group(0)
+                    minor = int(minor_str)
+
+                    # Skip date-like suffixes (3+ digit numbers like 0613, 2024, etc.)
+                    if len(minor_str) >= 3:
+                        return str(num)
+
+                    # Skip if minor is 4-digit (like 2024)
+                    if minor >= 1000:
+                        return str(num)
+
+                    # Check if minor is a context window (32, 128, 256, etc.)
+                    context_windows = {
+                        8,
+                        16,
+                        32,
+                        64,
+                        128,
+                        256,
+                        512,
+                        1024,
+                        2048,
+                        4096,
+                        8192,
+                        32768,
+                    }
+                    pos_after_minor = next_match.end()
+                    char_after_minor = (
+                        name[pos_after_minor : pos_after_minor + 1]
+                        if pos_after_minor < len(name)
+                        else ""
+                    )
+
+                    if char_after_minor in "km" and minor in context_windows:
+                        # This is a context window (e.g., "4-32k"), return major version only
+                        return str(num)
+
+                    # Normal multi-part version (e.g., "3-5" or "3.5")
+                    return f"{num}-{minor}"
+
+            # Single digit version with no separator following
+            if char_after == "" or not char_after.isdigit():
+                return str(num)
+
+        # Fallback: return the first small non-date number
+        for match in matches:
+            num_str = match.group(0)
+            num = int(num_str)
+            if num < 100 and len(num_str) < 3:
+                return str(num)
+
+        return None
+
+    @staticmethod
     def validate_model_mapping(configured_model: str, backend_model: str | None):
         """
         Validate that the configured model name matches the actual backend model.
@@ -133,43 +240,44 @@ class Detector:
                 f"Family mismatch: configured '{c_family}' but backend is '{b_family}'",
             )
 
-        # 2. Version Check
-        # Extract version-like strings (e.g., "4", "3-5", "1-5")
-        # Heuristic: look for common version patterns
-        # For multi-part versions (3-5), substring match is usually safe.
-        # For single-part versions (3, 4), we need to avoid matching dates (e.g., 2024).
-        complex_versions = ["4-5", "3-5", "1-5", "1-0"]
-        simple_versions = ["4", "3"]
-
-        c_version = None
-        b_version = None
-
-        # Helper to find version
-        def find_version(norm_name):
-            # Check complex first
-            for v in complex_versions:
-                if v in norm_name:
-                    return v
-            # Check simple (must be exact token match to avoid dates like 2024)
-            parts = norm_name.replace(":", "-").split("-")
-            for v in simple_versions:
-                if v in parts:
-                    return v
-            return None
-
-        c_version = find_version(c_norm)
-        b_version = find_version(b_norm)
+        # 2. Version Check using robust regex extraction
+        c_version = Detector.extract_version(c_norm)
+        b_version = Detector.extract_version(b_norm)
 
         if c_version and b_version and c_version != b_version:
-            # Special case: '4' usually matches '4-turbo' or '4-32k', so strict equality checks might be too aggressive
-            # But '4' vs '3-5' is definitely wrong.
-            # If one is a prefix of the other, maybe it's okay? e.g. 3 vs 3-5?
-            # Spec says "4 vs 3.5" (version mismatch).
-            # Let's enforce strictness for now as per spec scenarios.
-            return (
-                False,
-                f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
-            )
+            # Allow prefix matching ONLY if the more specific version starts with the generic one
+            # Examples:
+            #   "4" -> "4-0613" is OK (configured is generic, backend is date-specific)
+            #   "3-5" -> "3" is NOT OK (trying to match 3.5 model with 3.0)
+            #   "3" -> "3-5" is NOT OK (vice versa)
+            # The rule: only allow if backend is more specific (has more parts)
+            c_parts = c_version.split("-")
+            b_parts = b_version.split("-")
+
+            # Allow match only if:
+            # 1. They are identical, OR
+            # 2. Backend is more specific AND shares the same major parts
+            if len(b_parts) > len(c_parts):
+                # Backend is more specific, check if it starts with configured version
+                if b_version.startswith(c_version + "-"):
+                    pass  # Allow this match
+                else:
+                    return (
+                        False,
+                        f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
+                    )
+            elif len(c_parts) > len(b_parts):
+                # Configured is more specific than backend, not allowed
+                return (
+                    False,
+                    f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
+                )
+            else:
+                # Same number of parts but different values
+                return (
+                    False,
+                    f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
+                )
 
         # 3. Variant Check
         variants = ["sonnet", "haiku", "opus", "pro", "flash", "turbo", "omni"]
