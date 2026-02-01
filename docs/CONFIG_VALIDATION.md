@@ -57,7 +57,7 @@ Look for lines containing `Configuration mismatch` or `Configuration warning`.
 Use the `inspect_deployments` utility to see what models are actually deployed:
 
 ```bash
-uvx --from . sap-ai-inspect-deployments -s aicore_key.json
+uvx --from . inspect -s aicore_key.json
 ```
 
 Or with Python directly:
