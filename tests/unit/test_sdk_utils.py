@@ -15,8 +15,14 @@ def mock_service_key():
     )
 
 
+@patch("utils.sdk_utils.Cache")
 @patch("utils.sdk_utils.AICoreV2Client")
-def test_fetch_all_deployments(mock_client_cls, mock_service_key):
+def test_fetch_all_deployments(mock_client_cls, mock_cache_cls, mock_service_key):
+    # Setup mock cache to simulate cache miss
+    mock_cache = MagicMock()
+    mock_cache.__enter__.return_value.get.return_value = None
+    mock_cache_cls.return_value = mock_cache
+
     # Setup mock client
     mock_client = Mock()
     mock_client_cls.return_value = mock_client

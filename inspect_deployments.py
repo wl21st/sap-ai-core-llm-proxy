@@ -14,7 +14,6 @@ from config.config_parser import load_proxy_config
 from config import ProxyConfig
 from utils.sdk_utils import fetch_all_deployments
 from proxy_helpers import MODEL_ALIASES
-from utils.logging_utils import init_logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")

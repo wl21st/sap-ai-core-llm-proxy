@@ -9,7 +9,7 @@ from logging import Logger
 
 from pydantic import BaseModel, Field
 
-from config import ProxyConfig, SubAccountConfig, ServiceKey
+from config.config_models import ProxyConfig, SubAccountConfig, ServiceKey
 from utils.logging_utils import get_server_logger
 from utils.sdk_utils import (
     extract_deployment_id,

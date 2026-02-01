@@ -5,12 +5,6 @@ import hashlib
 from diskcache import Cache
 
 from ai_core_sdk.ai_core_v2_client import AICoreV2Client
-
-# Avoid circular import by not importing config.config_models here if it imports config_parser
-# Wait, config_models should be safe. Let's check config/__init__.py
-# config/__init__.py imports config_parser which imports sdk_utils.
-# We must avoid importing from 'config' package directly if it triggers __init__.py
-
 from config.config_models import ServiceKey
 
 logger = logging.getLogger(__name__)
@@ -108,6 +102,10 @@ def fetch_all_deployments(
     Fetch all deployments for a subaccount and extract their details.
     Results are cached to disk to avoid repeated API calls.
 
+    Note: This function catches all exceptions and returns an empty list on error,
+    unlike fetch_deployment_url() which re-raises exceptions. Callers should check
+    for empty results but should not expect exceptions to propagate.
+
     Args:
         service_key: SAP AI Core service key credentials
         resource_group: Resource group for the deployment, defaults to "default"
@@ -118,6 +116,7 @@ def fetch_all_deployments(
         - url: Deployment URL
         - model_name: Backend model name (if available)
         - created_at: Creation timestamp (if available)
+        Returns empty list if an error occurs.
     """
     # Create cache key based on credentials and resource group
     key_str = f"{service_key.client_id}:{service_key.api_url}:{resource_group}"
