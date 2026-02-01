@@ -57,13 +57,13 @@ Look for lines containing `Configuration mismatch` or `Configuration warning`.
 Use the `inspect_deployments` utility to see what models are actually deployed:
 
 ```bash
-uvx --from . sap-ai-inspect-deployments -s demokey.json
+uvx --from . sap-ai-inspect-deployments -s aicore_key.json
 ```
 
 Or with Python directly:
 
 ```bash
-python inspect_deployments.py -s demokey.json
+python inspect_deployments.py -s aicore_key.json
 ```
 
 This shows all available deployments and their actual model names.
