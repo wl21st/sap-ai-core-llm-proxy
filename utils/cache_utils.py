@@ -21,83 +21,125 @@ CACHE_DIR = os.path.join(
 
 def clear_deployment_cache() -> bool:
     """
-    Clear all cached deployment data.
+    Clear all cached deployment data using diskcache API.
 
     Returns:
         bool: True if cache was cleared successfully, False otherwise
+
+    Raises:
+        No exceptions - errors are logged and False is returned
     """
     try:
-        if os.path.exists(CACHE_DIR):
-            shutil.rmtree(CACHE_DIR)
-            logger.info(f"Deployment cache cleared: {CACHE_DIR}")
-            return True
-        else:
-            logger.info(f"Cache directory does not exist: {CACHE_DIR}")
-            return True
+        with Cache(CACHE_DIR) as cache:
+            cache.clear()
+        logger.info(f"Deployment cache cleared: {CACHE_DIR}")
+        return True
+    except PermissionError as e:
+        from utils.error_ids import ErrorIDs
+
+        logger.error(
+            f"Permission denied clearing cache: {e}",
+            extra={"error_id": ErrorIDs.CACHE_PERMISSION_DENIED},
+        )
+        return False
+    except OSError as e:
+        from utils.error_ids import ErrorIDs
+
+        logger.error(
+            f"OS error clearing cache: {e}", extra={"error_id": ErrorIDs.CACHE_OS_ERROR}
+        )
+        return False
     except Exception as e:
-        logger.error(f"Failed to clear deployment cache: {e}")
+        from utils.error_ids import ErrorIDs
+
+        logger.error(
+            f"Failed to clear deployment cache: {e}",
+            extra={"error_id": ErrorIDs.CACHE_STATS_FAILED},
+        )
         return False
 
 
 def get_cache_stats() -> dict:
     """
-    Get statistics about the deployment cache.
+    Get statistics about the deployment cache using diskcache APIs.
+
+    Note: This function intentionally avoids accessing cache mtime directly
+    as diskcache keys are hashes, not filenames. Cache size is calculated
+    by iterating the cache directory structure instead.
 
     Returns:
         dict: Dictionary containing:
             - exists: Whether cache directory exists
             - size_mb: Size of cache directory in MB
             - entry_count: Number of entries in cache
-            - oldest_entry: Timestamp of oldest cache entry
-            - newest_entry: Timestamp of newest cache entry
+            - has_errors: Whether errors occurred during stat collection
+            - error_message: Error message if has_errors is True, None otherwise
     """
     stats = {
         "exists": os.path.exists(CACHE_DIR),
         "size_mb": 0.0,
         "entry_count": 0,
-        "oldest_entry": None,
-        "newest_entry": None,
+        "has_errors": False,
+        "error_message": None,
     }
 
     if not stats["exists"]:
         return stats
 
     try:
-        # Calculate directory size
+        # Calculate directory size by walking the filesystem
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(CACHE_DIR):
             for filename in filenames:
-                filepath = os.path.join(dirpath, filename)
-                total_size += os.path.getsize(filepath)
+                try:
+                    filepath = os.path.join(dirpath, filename)
+                    total_size += os.path.getsize(filepath)
+                except (OSError, FileNotFoundError) as e:
+                    logger.debug(f"Could not stat file {filepath}: {e}")
+                    continue
+
         stats["size_mb"] = round(total_size / (1024 * 1024), 2)
 
-        # Get cache entry count and timestamps
-        with Cache(CACHE_DIR) as cache:
-            stats["entry_count"] = len(cache)
+        # Get cache entry count using diskcache API
+        try:
+            with Cache(CACHE_DIR) as cache:
+                # Note: cache.__len__() returns the number of entries
+                try:
+                    stats["entry_count"] = cache.__len__()
+                except (AttributeError, TypeError):
+                    # Fallback: count keys manually
+                    stats["entry_count"] = sum(1 for _ in cache.iterkeys())
+        except Exception as e:
+            logger.warning(f"Could not get cache entry count: {e}")
+            # entry_count remains 0, which is safe fallback
 
-            if stats["entry_count"] > 0:
-                # Get oldest and newest entries
-                oldest_time = None
-                newest_time = None
+    except PermissionError as e:
+        from utils.error_ids import ErrorIDs
 
-                for key in cache.iterkeys():
-                    mtime = os.path.getmtime(os.path.join(CACHE_DIR, key))
-                    if oldest_time is None or mtime < oldest_time:
-                        oldest_time = mtime
-                    if newest_time is None or mtime > newest_time:
-                        newest_time = mtime
+        logger.error(
+            f"Permission denied reading cache: {e}",
+            extra={"error_id": ErrorIDs.CACHE_PERMISSION_DENIED},
+        )
+        stats["has_errors"] = True
+        stats["error_message"] = f"Permission denied: {e}"
+    except OSError as e:
+        from utils.error_ids import ErrorIDs
 
-                if oldest_time:
-                    stats["oldest_entry"] = datetime.fromtimestamp(
-                        oldest_time
-                    ).isoformat()
-                if newest_time:
-                    stats["newest_entry"] = datetime.fromtimestamp(
-                        newest_time
-                    ).isoformat()
-
+        logger.error(
+            f"OS error reading cache stats: {e}",
+            extra={"error_id": ErrorIDs.CACHE_OS_ERROR},
+        )
+        stats["has_errors"] = True
+        stats["error_message"] = f"OS error: {e}"
     except Exception as e:
-        logger.error(f"Failed to get cache stats: {e}")
+        from utils.error_ids import ErrorIDs
+
+        logger.error(
+            f"Failed to get cache stats: {e}",
+            extra={"error_id": ErrorIDs.CACHE_STATS_FAILED},
+        )
+        stats["has_errors"] = True
+        stats["error_message"] = str(e)
 
     return stats
 

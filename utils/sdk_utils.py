@@ -28,10 +28,14 @@ def extract_deployment_id(deployment_url: str) -> str:
         Deployment ID string if found
 
     Raises:
-        ValueError: If URL format is invalid
+        ValueError: If URL format is invalid, empty, or missing deployment ID
     """
+    from utils.error_ids import ErrorIDs
+
     if not deployment_url or not isinstance(deployment_url, str):
-        raise ValueError("URL must be a non-empty string")
+        from utils.exceptions import DeploymentResolutionError
+
+        raise DeploymentResolutionError("URL must be a non-empty string")
 
     try:
         parsed = urlparse(deployment_url)
@@ -45,8 +49,13 @@ def extract_deployment_id(deployment_url: str) -> str:
                 return deployment_id.strip()
 
         raise ValueError(f"No deployment_id in URL: {deployment_url}")
+    except ValueError:
+        # Re-raise ValueError as-is
+        raise
     except Exception as e:
-        raise ValueError(f"Failed to parse URL: {e}")
+        from utils.exceptions import DeploymentResolutionError
+
+        raise DeploymentResolutionError(f"Failed to parse URL: {e}") from e
 
 
 def fetch_deployment_url(
@@ -100,17 +109,15 @@ def clear_deployment_cache() -> bool:
     """
     Clear all cached deployment data.
 
+    This function delegates to cache_utils.clear_deployment_cache()
+    to ensure a single source of truth for cache operations.
+
     Returns:
         bool: True if cache was cleared successfully, False otherwise
     """
-    try:
-        with Cache(CACHE_DIR) as cache:
-            cache.clear()
-        logger.info(f"Deployment cache cleared: {CACHE_DIR}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to clear deployment cache: {e}")
-        return False
+    from utils.cache_utils import clear_deployment_cache as _clear_deployment_cache
+
+    return _clear_deployment_cache()
 
 
 def get_cache_stats() -> dict:
@@ -134,10 +141,6 @@ def fetch_all_deployments(
     Fetch all deployments for a subaccount and extract their details.
     Results are cached to disk to avoid repeated API calls.
 
-    Note: This function catches all exceptions and returns an empty list on error,
-    unlike fetch_deployment_url() which re-raises exceptions. Callers should check
-    for empty results but should not expect exceptions to propagate.
-
     Args:
         service_key: SAP AI Core service key credentials
         resource_group: Resource group for the deployment, defaults to "default"
@@ -149,82 +152,126 @@ def fetch_all_deployments(
         - url: Deployment URL
         - model_name: Backend model name (if available)
         - created_at: Creation timestamp (if available)
-        Returns empty list if an error occurs.
+
+    Raises:
+        DeploymentFetchError: If fetching deployments fails (network, auth, timeout, etc.)
+        CacheError: If cache operations fail
     """
+    from utils.exceptions import DeploymentFetchError, CacheError
+    from utils.error_ids import ErrorIDs
+    import requests
+
     # Create cache key based on credentials and resource group
     key_str = f"{service_key.client_id}:{service_key.api_url}:{resource_group}"
     cache_key = hashlib.md5(key_str.encode()).hexdigest()
 
-    with Cache(CACHE_DIR) as cache:
-        # Check cache first (unless force_refresh is True)
-        if not force_refresh:
-            cached_data = cache.get(cache_key)
-            if cached_data:
-                from utils.cache_utils import format_cache_expiry
+    try:
+        with Cache(CACHE_DIR) as cache:
+            # Check cache first (unless force_refresh is True)
+            if not force_refresh:
+                cached_data = cache.get(cache_key)
+                if cached_data:
+                    from utils.cache_utils import format_cache_expiry
 
-                expiry_seconds = int(cache.expire(cache_key) or 0)
-                formatted_expiry = format_cache_expiry(expiry_seconds)
-                logger.info(
-                    f"Using cached deployments for resource group: {resource_group} (expires in {formatted_expiry})"
-                )
-                return cached_data
-
-        logger.info(f"Fetching all deployments for resource group: {resource_group}")
-
-        try:
-            client = AIAPIV2Client(
-                base_url=service_key.api_url + "/v2/lm",
-                auth_url=service_key.auth_url + "/oauth/token",
-                client_id=service_key.client_id,
-                client_secret=service_key.client_secret,
-                resource_group=resource_group,
-            )
-
-            # Query all deployments
-            # Note: The SDK might handle pagination internally or return a list
-            deployments = client.deployment.query()
-
-            results = []
-            for deployment in deployments.resources:
-                # Basic details
-                info = {
-                    "id": deployment.id,
-                    "url": deployment.deployment_url,
-                    "created_at": str(deployment.created_at),
-                    "model_name": None,
-                }
-
-                # Try to extract backend model name
-                # Structure expected: deployment.details["resources"]["backend_details"]["model"]["name"]
-                try:
-                    if hasattr(deployment, "details") and deployment.details:
-                        details = deployment.details
-                        if (
-                            "resources" in details
-                            and "backend_details" in details["resources"]
-                        ):
-                            backend_details = details["resources"]["backend_details"]
-                            if (
-                                "model" in backend_details
-                                and "name" in backend_details["model"]
-                            ):
-                                info["model_name"] = backend_details["model"]["name"]
-                except Exception as e:
-                    logger.debug(
-                        f"Could not extract backend model for deployment {deployment.id}: {e}"
+                    expiry_seconds = int(cache.expire(cache_key) or 0)
+                    formatted_expiry = format_cache_expiry(expiry_seconds)
+                    logger.info(
+                        f"Using cached deployments for resource group: {resource_group} (expires in {formatted_expiry})"
                     )
-
-                results.append(info)
+                    return cached_data
 
             logger.info(
-                f"Found {len(results)} deployments. Caching for {CACHE_DURATION}s."
+                f"Fetching all deployments for resource group: {resource_group}"
             )
 
-            # Store in cache
-            cache.set(cache_key, results, expire=CACHE_DURATION)
+            try:
+                client = AIAPIV2Client(
+                    base_url=service_key.api_url + "/v2/lm",
+                    auth_url=service_key.auth_url + "/oauth/token",
+                    client_id=service_key.client_id,
+                    client_secret=service_key.client_secret,
+                    resource_group=resource_group,
+                )
 
-            return results
+                # Query all deployments
+                deployments = client.deployment.query()
 
-        except Exception as e:
-            logger.error(f"Failed to fetch deployments: {e}")
-            return []
+                results = []
+                for deployment in deployments.resources:
+                    # Basic details
+                    info = {
+                        "id": deployment.id,
+                        "url": deployment.deployment_url,
+                        "created_at": str(deployment.created_at),
+                        "model_name": None,
+                    }
+
+                    # Try to extract backend model name
+                    try:
+                        if hasattr(deployment, "details") and deployment.details:
+                            details = deployment.details
+                            if (
+                                "resources" in details
+                                and "backend_details" in details["resources"]
+                            ):
+                                backend_details = details["resources"][
+                                    "backend_details"
+                                ]
+                                if (
+                                    "model" in backend_details
+                                    and "name" in backend_details["model"]
+                                ):
+                                    info["model_name"] = backend_details["model"][
+                                        "name"
+                                    ]
+                    except Exception as e:
+                        logger.debug(
+                            f"Could not extract backend model for deployment {deployment.id}: {e}"
+                        )
+
+                    results.append(info)
+
+                logger.info(
+                    f"Found {len(results)} deployments. Caching for {CACHE_DURATION}s."
+                )
+
+                # Store in cache
+                try:
+                    cache.set(cache_key, results, expire=CACHE_DURATION)
+                except Exception as e:
+                    logger.warning(f"Failed to cache deployment results: {e}")
+                    # Continue anyway - cache failure shouldn't fail the whole operation
+
+                return results
+
+            except requests.exceptions.Timeout as e:
+                logger.error(
+                    f"Timeout fetching deployments for {resource_group}: {e}",
+                    extra={"error_id": ErrorIDs.DEPLOYMENT_FETCH_TIMEOUT},
+                )
+                raise DeploymentFetchError(f"Request timed out: {e}") from e
+
+            except requests.exceptions.RequestException as e:
+                logger.error(
+                    f"Network error fetching deployments for {resource_group}: {e}",
+                    extra={"error_id": ErrorIDs.DEPLOYMENT_FETCH_NETWORK},
+                )
+                raise DeploymentFetchError(f"Network error: {e}") from e
+
+            except Exception as e:
+                # Log any unexpected errors with generic error ID
+                logger.error(
+                    f"Unexpected error fetching deployments for {resource_group}: {e}",
+                    extra={"error_id": ErrorIDs.DEPLOYMENT_FETCH_FAILED},
+                )
+                raise DeploymentFetchError(f"Failed to fetch deployments: {e}") from e
+
+    except DeploymentFetchError:
+        # Re-raise deployment errors as-is
+        raise
+    except Exception as e:
+        logger.error(
+            f"Cache error during deployment fetch: {e}",
+            extra={"error_id": ErrorIDs.CACHE_OS_ERROR},
+        )
+        raise CacheError(f"Cache operation failed: {e}") from e

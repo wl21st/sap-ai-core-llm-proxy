@@ -18,6 +18,12 @@ from utils.sdk_utils import (
     fetch_deployment_url,
     fetch_all_deployments,
 )
+from utils.exceptions import (
+    ConfigValidationError,
+    DeploymentFetchError,
+    DeploymentResolutionError,
+)
+from utils.error_ids import ErrorIDs
 from proxy_helpers import MODEL_ALIASES, Detector
 
 logger: Logger = get_server_logger(__name__)
@@ -47,12 +53,6 @@ class ProxyConfigSchema(BaseModel):
     host: str = "127.0.0.1"
     model_filters: Optional[ModelFiltersSchema] = Field(default=None)
     subAccounts: dict[str, SubAccountConfigSchema] = Field(default_factory=dict)
-
-
-class ConfigValidationError(Exception):
-    """Raised when configuration validation fails."""
-
-    pass
 
 
 def validate_regex_patterns(
@@ -129,7 +129,9 @@ def apply_model_filters(
         # Step 1: Apply include filters first (if present)
         # If include patterns exist, only keep models that match at least one pattern
         if include_patterns:
-            matches_include = any(pattern.match(model_name) for pattern in include_patterns)
+            matches_include = any(
+                pattern.match(model_name) for pattern in include_patterns
+            )
             if not matches_include:
                 keep_model = False
                 # Find which pattern would have matched for logging
@@ -340,12 +342,29 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
                             )
                             logger.debug(f"Auto-aliased: {alias} -> {url}")
 
+    except DeploymentFetchError as e:
+        logger.error(
+            f"Auto-discovery failed for subaccount '{sub_account_config.name}': {e}. "
+            f"Check service key credentials and network connectivity.",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
+                "subaccount": sub_account_config.name,
+            },
+        )
+        raise ConfigValidationError(
+            f"Auto-discovery failed for '{sub_account_config.name}': {e}"
+        ) from e
     except Exception as e:
         logger.error(
-            "Auto-discovery failed for subaccount '%s': %s",
-            sub_account_config.name,
-            e,
+            f"Unexpected error during auto-discovery for '{sub_account_config.name}': {e}",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_UNEXPECTED_ERROR,
+                "subaccount": sub_account_config.name,
+            },
         )
+        raise ConfigValidationError(
+            f"Auto-discovery failed: {e}. Check service key and network connectivity."
+        ) from e
 
     # Build lookup map for validation (ID -> Model Name)
     deployment_id_to_model = {
@@ -405,15 +424,35 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
                         model_name,
                         sub_account_config.name,
                     )
-            except Exception as e:
+            except ValueError as e:
                 logger.error(
-                    "Failed to resolve deployment ID '%s' for model '%s' in subaccount '%s': %s",
-                    deployment_id,
-                    model_name,
-                    sub_account_config.name,
-                    e,
+                    f"Invalid deployment ID '{deployment_id}' for model '{model_name}': {e}",
+                    extra={"error_id": ErrorIDs.INVALID_DEPLOYMENT_ID},
                 )
-                # Continue with other deployments - don't crash the entire server
+                raise ConfigValidationError(
+                    f"Invalid deployment ID '{deployment_id}' for model '{model_name}'. "
+                    f"Check your config.json and verify deployment exists in SAP AI Core console."
+                ) from e
+            except Exception as e:
+                # Check if it's a 404 error by examining the exception
+                error_msg = str(e).lower()
+                if "404" in error_msg or "not found" in error_msg:
+                    logger.error(
+                        f"Deployment '{deployment_id}' not found for model '{model_name}'",
+                        extra={"error_id": ErrorIDs.DEPLOYMENT_NOT_FOUND},
+                    )
+                    raise ConfigValidationError(
+                        f"Deployment '{deployment_id}' not found. Verify it exists in SAP AI Core."
+                    ) from e
+
+                logger.error(
+                    f"Failed to resolve deployment '{deployment_id}': {e}",
+                    extra={"error_id": ErrorIDs.DEPLOYMENT_RESOLUTION_FAILED},
+                )
+                raise ConfigValidationError(
+                    f"Could not resolve deployment '{deployment_id}' to URL. "
+                    f"Check credentials and deployment status."
+                ) from e
 
     # Then, extract deployment IDs from URLs for backward compatibility
     for model_name, urls in sub_account_config.model_to_deployment_urls.items():
