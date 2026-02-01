@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field
 
 from config import ProxyConfig, SubAccountConfig, ServiceKey
 from utils.logging_utils import get_server_logger
-from utils.sdk_utils import extract_deployment_id, fetch_deployment_url
+from utils.sdk_utils import (
+    extract_deployment_id,
+    fetch_deployment_url,
+    fetch_all_deployments,
+)
+from proxy_helpers import MODEL_ALIASES, Detector
 
 logger: Logger = get_server_logger(__name__)
 
@@ -123,6 +128,62 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
     Args:
         sub_account_config: The subaccount config to update
     """
+    # 0. Auto-discovery of deployments (New Feature)
+    discovered_deployments = []
+    try:
+        logger.info(
+            f"Starting auto-discovery for subaccount '{sub_account_config.name}'"
+        )
+        discovered_deployments = fetch_all_deployments(
+            service_key=sub_account_config.service_key,
+            resource_group=sub_account_config.resource_group,
+        )
+
+        for dep in discovered_deployments:
+            url = dep.get("url")
+            backend_model = dep.get("model_name")
+
+            if url and backend_model:
+                # Register under raw backend model name
+                if backend_model not in sub_account_config.model_to_deployment_urls:
+                    sub_account_config.model_to_deployment_urls[backend_model] = []
+
+                if (
+                    url
+                    not in sub_account_config.model_to_deployment_urls[backend_model]
+                ):
+                    sub_account_config.model_to_deployment_urls[backend_model].append(
+                        url
+                    )
+                    logger.debug(f"Auto-discovered: {backend_model} -> {url}")
+
+                # Register aliases
+                if backend_model in MODEL_ALIASES:
+                    for alias in MODEL_ALIASES[backend_model]:
+                        if alias not in sub_account_config.model_to_deployment_urls:
+                            sub_account_config.model_to_deployment_urls[alias] = []
+
+                        if (
+                            url
+                            not in sub_account_config.model_to_deployment_urls[alias]
+                        ):
+                            sub_account_config.model_to_deployment_urls[alias].append(
+                                url
+                            )
+                            logger.debug(f"Auto-aliased: {alias} -> {url}")
+
+    except Exception as e:
+        logger.error(
+            "Auto-discovery failed for subaccount '%s': %s",
+            sub_account_config.name,
+            e,
+        )
+
+    # Build lookup map for validation (ID -> Model Name)
+    deployment_id_to_model = {
+        d["id"]: d.get("model_name") for d in discovered_deployments if d.get("id")
+    }
+
     # First, resolve deployment IDs to URLs using the SDK (new feature)
     for (
         model_name,
@@ -134,6 +195,29 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
 
         for deployment_id in deployment_ids:
             deployment_id = deployment_id.strip()
+
+            # Validation: Check if deployment exists and matches model
+            if deployment_id in deployment_id_to_model:
+                backend_model = deployment_id_to_model[deployment_id]
+                is_valid, reason = Detector.validate_model_mapping(
+                    model_name, backend_model
+                )
+                if not is_valid:
+                    logger.warning(
+                        "Configuration mismatch: Model '%s' mapped to deployment '%s' which is running '%s' (%s)",
+                        model_name,
+                        deployment_id,
+                        backend_model,
+                        reason,
+                    )
+            elif discovered_deployments:
+                # Only warn if discovery succeeded but ID wasn't found
+                logger.warning(
+                    "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
+                    deployment_id,
+                    model_name,
+                )
+
             try:
                 deployment_url = fetch_deployment_url(
                     service_key=sub_account_config.service_key,
@@ -173,6 +257,29 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
             deployment_url = url.strip()
             try:
                 deployment_id = extract_deployment_id(deployment_url)
+
+                # Validation: Check if deployment exists and matches model
+                if deployment_id in deployment_id_to_model:
+                    backend_model = deployment_id_to_model[deployment_id]
+                    is_valid, reason = Detector.validate_model_mapping(
+                        model_name, backend_model
+                    )
+                    if not is_valid:
+                        logger.warning(
+                            "Configuration mismatch: Model '%s' mapped to deployment '%s' which is running '%s' (%s)",
+                            model_name,
+                            deployment_id,
+                            backend_model,
+                            reason,
+                        )
+                elif discovered_deployments:
+                    # Only warn if discovery succeeded but ID wasn't found
+                    logger.warning(
+                        "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
+                        deployment_id,
+                        model_name,
+                    )
+
                 if (
                     deployment_id
                     and deployment_id

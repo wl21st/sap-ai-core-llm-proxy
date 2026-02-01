@@ -1,4 +1,5 @@
 import json
+import os
 from logging import Logger
 import random
 import time
@@ -6,6 +7,28 @@ import time
 from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
+
+
+def load_model_aliases():
+    """Load model aliases from config/aliases.json."""
+    try:
+        alias_file = os.path.join(os.path.dirname(__file__), "config", "aliases.json")
+        if os.path.exists(alias_file):
+            with open(alias_file, "r") as f:
+                logger.info(f"Loading model aliases from {alias_file}")
+                return json.load(f)
+        else:
+            logger.warning(
+                f"Alias file not found at {alias_file}, using empty defaults."
+            )
+            return {}
+    except Exception as e:
+        logger.error(f"Failed to load model aliases: {e}")
+        return {}
+
+
+# Model Aliases Configuration
+MODEL_ALIASES = load_model_aliases()
 
 
 class Detector:
@@ -75,6 +98,91 @@ class Detector:
                 "gemini",
             ]
         )
+
+    @staticmethod
+    def validate_model_mapping(configured_model: str, backend_model: str | None):
+        """
+        Validate that the configured model name matches the actual backend model.
+
+        Checks for:
+        1. Family mismatch (e.g. gpt vs claude)
+        2. Version mismatch (e.g. 4 vs 3.5, 3.5 vs 3)
+        3. Variant mismatch (e.g. sonnet vs haiku)
+
+        Args:
+            configured_model: The model alias configured in config.json
+            backend_model: The actual model name from SAP AI Core
+
+        Returns:
+            tuple[bool, str | None]: (is_valid, failure_reason)
+        """
+        if not configured_model or not backend_model:
+            return True, None  # Cannot validate if missing info
+
+        c_norm = configured_model.lower().replace(".", "-")
+        b_norm = backend_model.lower().replace(".", "-")
+
+        # 1. Family Check
+        families = ["claude", "gpt", "gemini", "text-embedding"]
+        c_family = next((f for f in families if f in c_norm), None)
+        b_family = next((f for f in families if f in b_norm), None)
+
+        if c_family and b_family and c_family != b_family:
+            return (
+                False,
+                f"Family mismatch: configured '{c_family}' but backend is '{b_family}'",
+            )
+
+        # 2. Version Check
+        # Extract version-like strings (e.g., "4", "3-5", "1-5")
+        # Heuristic: look for common version patterns
+        # For multi-part versions (3-5), substring match is usually safe.
+        # For single-part versions (3, 4), we need to avoid matching dates (e.g., 2024).
+        complex_versions = ["4-5", "3-5", "1-5", "1-0"]
+        simple_versions = ["4", "3"]
+
+        c_version = None
+        b_version = None
+
+        # Helper to find version
+        def find_version(norm_name):
+            # Check complex first
+            for v in complex_versions:
+                if v in norm_name:
+                    return v
+            # Check simple (must be exact token match to avoid dates like 2024)
+            parts = norm_name.replace(":", "-").split("-")
+            for v in simple_versions:
+                if v in parts:
+                    return v
+            return None
+
+        c_version = find_version(c_norm)
+        b_version = find_version(b_norm)
+
+        if c_version and b_version and c_version != b_version:
+            # Special case: '4' usually matches '4-turbo' or '4-32k', so strict equality checks might be too aggressive
+            # But '4' vs '3-5' is definitely wrong.
+            # If one is a prefix of the other, maybe it's okay? e.g. 3 vs 3-5?
+            # Spec says "4 vs 3.5" (version mismatch).
+            # Let's enforce strictness for now as per spec scenarios.
+            return (
+                False,
+                f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
+            )
+
+        # 3. Variant Check
+        variants = ["sonnet", "haiku", "opus", "pro", "flash", "turbo", "omni"]
+        c_variant = next((v for v in variants if v in c_norm), None)
+        b_variant = next((v for v in variants if v in b_norm), None)
+
+        if c_variant and b_variant and c_variant != b_variant:
+            return (
+                False,
+                f"Variant mismatch: configured '{c_variant}' but backend is '{b_variant}'",
+            )
+
+        return True, None
 
 
 class Converters:
