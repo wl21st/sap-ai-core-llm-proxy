@@ -191,13 +191,17 @@ The proxy selects between AWS Bedrock API endpoints based on model detection:
 The `config.json` uses multi-subaccount structure:
 ```json
 {
+  "model_filters": {
+    "include": ["^gpt-.*", "^claude-.*"],
+    "exclude": [".*-test$", "^experimental-.*"]
+  },
   "subAccounts": {
     "account1": {
       "resource_group": "default",
       "service_key_json": "key1.json",
       "deployment_models": {
         "gpt-4o": ["https://api.ai..."],
-        "claude-4.5": ["https://api.ai..."]
+        "claude-4.5": ["https://api..."]
       }
     }
   },
@@ -206,6 +210,36 @@ The `config.json` uses multi-subaccount structure:
   "host": "127.0.0.1"
 }
 ```
+
+#### Model Filtering (Optional)
+
+The proxy supports optional model filtering using regex patterns to control which models are exposed through the API:
+
+**Configuration:**
+- `model_filters.include`: List of regex patterns - only models matching at least one pattern are loaded
+- `model_filters.exclude`: List of regex patterns - models matching any pattern are filtered out
+
+**Filter Precedence:**
+1. If `include` patterns exist, only models matching at least one include pattern are kept
+2. Then, if `exclude` patterns exist, models matching any exclude pattern are removed
+
+**Example Use Cases:**
+```json
+// Only expose GPT and Claude models
+{"include": ["^gpt-.*", "^claude-.*"]}
+
+// Hide test/experimental models
+{"exclude": [".*-test$", "^experimental-.*"]}
+
+// GPT models except preview variants
+{"include": ["^gpt-.*"], "exclude": [".*-preview$"]}
+```
+
+**Behavior:**
+- Models filtered out behave as if they were never configured
+- Filtered models return 404 Not Found when requested
+- Startup logs show which models were filtered and why
+- If no `model_filters` section exists, all models are loaded (backward compatible)
 
 ## Python Conventions
 

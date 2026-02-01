@@ -276,6 +276,40 @@ Now it supports the following LLM models
 
     These warnings help catch configuration errors early without blocking startup.
 
+    #### Model Filtering (Optional)
+
+    You can optionally filter which models are exposed through the API using regex patterns:
+
+    ```json
+    {
+        "model_filters": {
+            "include": ["^gpt-.*", "^claude-.*"],
+            "exclude": [".*-test$", "^experimental-.*"]
+        },
+        "subAccounts": { ... }
+    }
+    ```
+
+    **Filter Behavior:**
+    - `include`: Only models matching at least one include pattern are loaded
+    - `exclude`: Models matching any exclude pattern are filtered out
+    - **Precedence**: Include filters are applied first, then exclude filters
+    - Filtered models behave as if they were never configured (return 404 when requested)
+
+    **Examples:**
+    ```json
+    // Only expose GPT and Claude models
+    {"include": ["^gpt-.*", "^claude-.*"]}
+
+    // Hide test/experimental models
+    {"exclude": [".*-test$", "^experimental-.*"]}
+
+    // GPT models except preview variants
+    {"include": ["^gpt-.*"], "exclude": [".*-preview$"]}
+    ```
+
+    Startup logs will show which models were filtered and why. If no `model_filters` section exists, all models are loaded.
+
 3. Get the service key files (e.g., `demokey.json`) with the following structure from the SAP AI Core Guidelines for each subAccount:
 
     ```json

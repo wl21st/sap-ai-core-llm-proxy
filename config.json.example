@@ -1,4 +1,15 @@
 {
+    "model_filters": {
+        "include": [
+            "^gpt-.*",
+            "^claude-.*",
+            ".*-sonnet$"
+        ],
+        "exclude": [
+            ".*-test$",
+            "^experimental-.*"
+        ]
+    },
     "subAccounts": {
         "subAccount1": {
             "resource_group": "default",

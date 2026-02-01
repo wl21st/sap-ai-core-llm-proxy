@@ -5,11 +5,13 @@ This module handles loading and parsing configuration from JSON files.
 """
 
 import json
+import re
 from logging import Logger
 
-from pydantic import BaseModel, Field
+from typing import Optional
+from pydantic import BaseModel, Field, ValidationError
 
-from config.config_models import ProxyConfig, SubAccountConfig, ServiceKey
+from config.config_models import ProxyConfig, SubAccountConfig, ServiceKey, ModelFilters
 from utils.logging_utils import get_server_logger
 from utils.sdk_utils import (
     extract_deployment_id,
@@ -19,6 +21,13 @@ from utils.sdk_utils import (
 from proxy_helpers import MODEL_ALIASES, Detector
 
 logger: Logger = get_server_logger(__name__)
+
+
+class ModelFiltersSchema(BaseModel):
+    """Pydantic model for model filters validation."""
+
+    include: Optional[list[str]] = Field(default=None)
+    exclude: Optional[list[str]] = Field(default=None)
 
 
 class SubAccountConfigSchema(BaseModel):
@@ -36,7 +45,115 @@ class ProxyConfigSchema(BaseModel):
     secret_authentication_tokens: list[str] = Field(default_factory=list)
     port: int = 3001
     host: str = "127.0.0.1"
+    model_filters: Optional[ModelFiltersSchema] = Field(default=None)
     subAccounts: dict[str, SubAccountConfigSchema] = Field(default_factory=dict)
+
+
+class ConfigValidationError(Exception):
+    """Raised when configuration validation fails."""
+
+    pass
+
+
+def validate_regex_patterns(
+    patterns: list[str], filter_type: str
+) -> list[re.Pattern[str]]:
+    """Validate and compile regex patterns.
+
+    Args:
+        patterns: List of regex pattern strings to validate
+        filter_type: Type of filter ('include' or 'exclude') for error messages
+
+    Returns:
+        List of compiled regex Pattern objects
+
+    Raises:
+        ConfigValidationError: If any pattern is invalid
+    """
+    compiled_patterns: list[re.Pattern[str]] = []
+
+    for pattern in patterns:
+        try:
+            compiled_pattern = re.compile(pattern)
+            compiled_patterns.append(compiled_pattern)
+        except re.error as e:
+            raise ConfigValidationError(
+                f"Invalid regex pattern in {filter_type} filters: '{pattern}' - {str(e)}"
+            )
+
+    return compiled_patterns
+
+
+def apply_model_filters(
+    models: dict[str, list[str]], filters: ModelFilters
+) -> tuple[dict[str, list[str]], list[tuple[str, str, str]]]:
+    """Apply model filters to a dictionary of models.
+
+    Filter precedence logic (per spec):
+    1. If include patterns exist, keep only models matching at least one include pattern
+    2. Then, if exclude patterns exist, remove models matching any exclude pattern
+
+    Args:
+        models: Dictionary mapping model names to deployment URLs
+        filters: ModelFilters object with include/exclude patterns
+
+    Returns:
+        Tuple of (filtered_models_dict, filtered_info_list)
+        - filtered_models_dict: Models that passed filtering
+        - filtered_info_list: List of (model_name, filter_type, pattern) for filtered models
+    """
+    if not filters or (not filters.include and not filters.exclude):
+        return models, []
+
+    # Compile regex patterns
+    include_patterns: list[re.Pattern[str]] = []
+    exclude_patterns: list[re.Pattern[str]] = []
+
+    if filters.include:
+        include_patterns = validate_regex_patterns(filters.include, "include")
+
+    if filters.exclude:
+        exclude_patterns = validate_regex_patterns(filters.exclude, "exclude")
+
+    filtered_models: dict[str, list[str]] = {}
+    filtered_info: list[tuple[str, str, str]] = []
+
+    for model_name, urls in models.items():
+        keep_model = True
+        filter_reason = ("", "")  # (filter_type, pattern)
+
+        # Filter precedence per spec: include first, then exclude
+        # This allows exclude filters to act as exceptions to the include list
+        # Example: include ["^gpt-.*"], exclude [".*-preview$"] -> keeps gpt-4 but not gpt-4-preview
+
+        # Step 1: Apply include filters first (if present)
+        # If include patterns exist, only keep models that match at least one pattern
+        if include_patterns:
+            matches_include = any(pattern.match(model_name) for pattern in include_patterns)
+            if not matches_include:
+                keep_model = False
+                # Find which pattern would have matched for logging
+                for pattern in include_patterns:
+                    filter_reason = ("include", pattern.pattern)
+                    break
+                if not filter_reason[1]:  # If no specific pattern, use generic message
+                    filter_reason = ("include", "no matching include pattern")
+
+        # Step 2: Apply exclude filters (if model passed include or no include filters)
+        # Remove any models that match exclude patterns
+        if keep_model and exclude_patterns:
+            for pattern in exclude_patterns:
+                if pattern.match(model_name):
+                    keep_model = False
+                    filter_reason = ("exclude", pattern.pattern)
+                    break
+
+        if keep_model:
+            filtered_models[model_name] = urls
+        else:
+            filtered_info.append((model_name, filter_reason[0], filter_reason[1]))
+
+    return filtered_models, filtered_info
 
 
 def load_proxy_config(file_path: str) -> ProxyConfig:
@@ -59,20 +176,71 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
     # Validate with Pydantic
     config_schema = ProxyConfigSchema.model_validate(config_json)
 
+    # Parse model filters if present
+    model_filters: Optional[ModelFilters] = None
+    if config_schema.model_filters:
+        model_filters = ModelFilters(
+            include=config_schema.model_filters.include,
+            exclude=config_schema.model_filters.exclude,
+        )
+        # Log filter configuration
+        include_count = len(model_filters.include) if model_filters.include else 0
+        exclude_count = len(model_filters.exclude) if model_filters.exclude else 0
+        logger.info(
+            f"Model filters configured: include={include_count} patterns, exclude={exclude_count} patterns"
+        )
+
     # Create a proper ProxyConfig instance
     proxy_config = ProxyConfig(
         secret_authentication_tokens=config_schema.secret_authentication_tokens,
         port=config_schema.port,
         host=config_schema.host,
+        model_filters=model_filters,
     )
 
     # Parse each subAccount
     for sub_name, sub_config_schema in config_schema.subAccounts.items():
+        deployment_models = sub_config_schema.deployment_models
+        models_before_filter = len(deployment_models)
+
+        # Apply model filters if configured
+        filtered_model_info: list[tuple[str, str, str]] = []
+        if model_filters:
+            deployment_models, filtered_model_info = apply_model_filters(
+                deployment_models, model_filters
+            )
+
+            # Log filtering results
+            models_after_filter = len(deployment_models)
+            filtered_model_names = [info[0] for info in filtered_model_info]
+
+            logger.info(
+                f"Subaccount '{sub_name}': {models_before_filter} models configured, "
+                f"{models_after_filter} after filtering"
+            )
+
+            if filtered_model_names:
+                logger.info(
+                    f"Subaccount '{sub_name}': Filtered models: {', '.join(filtered_model_names)}"
+                )
+
+                # DEBUG-level logging with pattern details
+                for model_name, filter_type, pattern in filtered_model_info:
+                    logger.debug(
+                        f"Filtered model '{model_name}' by {filter_type} filter: {pattern}"
+                    )
+
+            # Warn if all models filtered out
+            if models_after_filter == 0:
+                logger.warning(
+                    f"Subaccount '{sub_name}': All models filtered out (zero models remaining)"
+                )
+
         sub_account_config: SubAccountConfig = SubAccountConfig(
             name=sub_name,
             resource_group=sub_config_schema.resource_group,
             service_key_json=sub_config_schema.service_key_json,
-            model_to_deployment_urls=sub_config_schema.deployment_models,
+            model_to_deployment_urls=deployment_models,
             model_to_deployment_ids=sub_config_schema.deployment_ids,
         )
         proxy_config.subaccounts[sub_name] = sub_account_config

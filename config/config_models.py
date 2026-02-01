@@ -7,10 +7,19 @@ This module defines the core configuration structures used throughout the proxy.
 import threading
 from dataclasses import dataclass, field
 from logging import Logger
+from typing import Optional
 
 from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
+
+
+@dataclass
+class ModelFilters:
+    """Model filtering configuration with include/exclude regex patterns."""
+
+    include: Optional[list[str]] = None
+    exclude: Optional[list[str]] = None
 
 
 @dataclass
@@ -54,6 +63,7 @@ class ProxyConfig:
     secret_authentication_tokens: list[str] = field(default_factory=list)
     port: int = 3001
     host: str = "127.0.0.1"
+    model_filters: Optional[ModelFilters] = None
     # Global model to subaccount mapping for load balancing
     model_to_subaccounts: dict[str, list[str]] = field(default_factory=dict)
 
