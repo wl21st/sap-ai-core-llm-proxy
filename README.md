@@ -252,7 +252,29 @@ Now it supports the following LLM models
    }
    ```
 
-   **Note**: You can mix both approaches. If `deployment_ids` is provided, the proxy will resolve them to URLs using the SAP AI Core SDK at startup. If `deployment_models` is also provided, those URLs will be used directly.
+    **Note**: You can mix both approaches. If `deployment_ids` is provided, the proxy will resolve them to URLs using the SAP AI Core SDK at startup. If `deployment_models` is also provided, those URLs will be used directly.
+
+    #### Configuration Validation (NEW)
+
+    The proxy automatically validates that your configured model names match the actual deployed models during startup. If a mismatch is detected, a warning is logged:
+
+    ```
+    Configuration mismatch: Model 'gpt-4' mapped to deployment 'd456' which is running 'gemini-1.5-pro' (Family mismatch)
+    ```
+
+    **Validation Checks:**
+    - **Family Mismatch**: Detects when configured model family (GPT, Claude, Gemini) doesn't match the deployed model
+    - **Version Mismatch**: Detects version mismatches (e.g., gpt-4 vs gpt-3.5-turbo)
+    - **Variant Mismatch**: Detects variant mismatches (e.g., claude-sonnet vs claude-haiku)
+
+    Example warning logs:
+    ```
+    Configuration mismatch: Model 'gpt-4' mapped to deployment 'd456' which is running 'gemini-1.5-pro' (Family mismatch)
+    Configuration mismatch: Model 'claude-3-sonnet' mapped to deployment 'd789' which is running 'claude-3-haiku' (Variant mismatch)
+    Configuration mismatch: Model 'gpt-4' mapped to deployment 'd999' which is running 'gpt-3.5-turbo' (Version mismatch)
+    ```
+
+    These warnings help catch configuration errors early without blocking startup.
 
 3. Get the service key files (e.g., `demokey.json`) with the following structure from the SAP AI Core Guidelines for each subAccount:
 
@@ -285,6 +307,15 @@ The proxy now supports distributing requests across multiple subAccounts:
 4. **Model Availability**: The proxy consolidates all available models across all subAccounts, allowing you to use any model that's deployed in any subAccount.
 
 5. **Token Management**: Each subAccount maintains its own authentication token with independent refresh cycles.
+
+## Configuration Validation
+
+The proxy automatically validates your model mappings during startup to catch configuration errors early. See [Configuration Validation & Filtering](docs/CONFIG_VALIDATION.md) for details on:
+
+- How validation works
+- Understanding validation warnings
+- Troubleshooting configuration issues
+- Future filtering capabilities
 
 ## Running the Proxy Server
 
