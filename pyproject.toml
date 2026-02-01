@@ -58,7 +58,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["auth", "config", "utils", "handlers", "blueprints"]
-py-modules = ["proxy_server", "proxy_helpers", "version", "cli", "load_balancer"]
+py-modules = ["proxy_server", "proxy_helpers", "version", "cli", "load_balancer", "inspect_deployments"]
 
 [tool.ruff]
 select = ["ANN"]  # ANN001 args, ANN201 returns, etc.
