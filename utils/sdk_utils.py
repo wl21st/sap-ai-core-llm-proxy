@@ -1,10 +1,11 @@
-import logging
-from urllib.parse import urlparse
-import os
 import hashlib
+import logging
+import os
+from urllib.parse import urlparse
+
+from ai_api_client_sdk.ai_api_v2_client import AIAPIV2Client
 from diskcache import Cache
 
-from ai_core_sdk.ai_core_v2_client import AICoreV2Client
 from config.config_models import ServiceKey
 
 logger = logging.getLogger(__name__)
@@ -71,8 +72,8 @@ def fetch_deployment_url(
     try:
         # Create AICoreV2Client with service key credentials
         client = AICoreV2Client(
-            base_url=service_key.api_url,
-            auth_url=service_key.auth_url,
+            base_url=service_key.api_url + "/v2/lm",
+            auth_url=service_key.auth_url + "/oauth/token",
             client_id=service_key.client_id,
             client_secret=service_key.client_secret,
             resource_group=resource_group,
@@ -171,9 +172,9 @@ def fetch_all_deployments(
         logger.info(f"Fetching all deployments for resource group: {resource_group}")
 
         try:
-            client = AICoreV2Client(
-                base_url=service_key.api_url,
-                auth_url=service_key.auth_url,
+            client = AIAPIV2Client(
+                base_url=service_key.api_url + "/v2/lm",
+                auth_url=service_key.auth_url + "/oauth/token",
                 client_id=service_key.client_id,
                 client_secret=service_key.client_secret,
                 resource_group=resource_group,
@@ -181,7 +182,7 @@ def fetch_all_deployments(
 
             # Query all deployments
             # Note: The SDK might handle pagination internally or return a list
-            deployments = client.deployment.query(resource_group=resource_group)
+            deployments = client.deployment.query()
 
             results = []
             for deployment in deployments.resources:
