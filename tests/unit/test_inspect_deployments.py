@@ -53,5 +53,7 @@ def test_inspect_subaccount(mock_fetch, mock_sub_config, capsys):
 
     # Verify fetch called correctly
     mock_fetch.assert_called_once_with(
-        service_key=mock_sub_config.service_key, resource_group="default"
+        service_key=mock_sub_config.service_key,
+        resource_group="default",
+        force_refresh=True,
     )

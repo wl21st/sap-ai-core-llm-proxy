@@ -16,7 +16,7 @@ def mock_service_key():
 
 
 @patch("utils.sdk_utils.Cache")
-@patch("utils.sdk_utils.AICoreV2Client")
+@patch("utils.sdk_utils.AIAPIV2Client")
 def test_fetch_all_deployments(mock_client_cls, mock_cache_cls, mock_service_key):
     # Setup mock cache to simulate cache miss
     mock_cache = MagicMock()
@@ -62,4 +62,4 @@ def test_fetch_all_deployments(mock_client_cls, mock_cache_cls, mock_service_key
 
     # Verify calls
     mock_client_cls.assert_called_once()
-    mock_client.deployment.query.assert_called_once_with(resource_group="default")
+    mock_client.deployment.query.assert_called_once_with()
