@@ -3,10 +3,12 @@
         "subAccount1": {
             "resource_group": "default",
             "service_key_json": "subAccount1_service_key.json",
-            "deployment_models": {
+            "deployment_ids": {
                 "gpt-4o": [
-                    "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<deployment_id_1>"
-                ],
+                    "d123456789"
+                ]
+            },
+            "deployment_models": {
                 "3.7-sonnet": [
                     "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<deployment_id_3>"
                 ],

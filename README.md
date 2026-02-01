@@ -168,6 +168,53 @@ Now it supports the following LLM models
 
    ### Multi-Account Configuration
 
+   You can configure deployments using either **deployment URLs** (full URLs) or **deployment IDs** (simplified). The proxy will automatically resolve deployment IDs to URLs using the SAP AI Core SDK.
+
+   #### Option 1: Using Deployment IDs (Simplified - Recommended)
+
+   Configure using deployment IDs found in SAP AI Launchpad. The proxy will automatically fetch the full URLs at startup:
+
+   ```json
+   {
+       "subAccounts": {
+           "subAccount1": {
+               "resource_group": "default",
+               "service_key_json": "demokey1.json",
+               "deployment_ids": {
+                   "gpt-4o": [
+                       "d12345"
+                   ],
+                   "gpt-4.1": [
+                       "d67890"
+                   ]
+               }
+           },
+           "subAccount2": {
+               "resource_group": "default",
+               "service_key_json": "demokey2.json",
+               "deployment_ids": {
+                   "gpt-4o": [
+                       "d54321"
+                   ],
+                    "4-sonnet": [
+                        "d98765"
+                    ],
+                    "4.5-sonnet": [
+                        "d13579"
+                    ]
+               }
+           }
+       },
+       "secret_authentication_tokens": ["<hidden_key_1>", "<hidden_key_2>"],
+       "port": 3001,
+       "host": "127.0.0.1"
+   }
+   ```
+
+   #### Option 2: Using Deployment URLs (Traditional)
+
+   Configure using full deployment URLs as before:
+
    ```json
    {
        "subAccounts": {
@@ -180,8 +227,7 @@ Now it supports the following LLM models
                    ],
                    "gpt-4.1": [
                        "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_1b>"
-                   ],
-
+                   ]
                }
            },
            "subAccount2": {
@@ -205,6 +251,8 @@ Now it supports the following LLM models
        "host": "127.0.0.1"
    }
    ```
+
+   **Note**: You can mix both approaches. If `deployment_ids` is provided, the proxy will resolve them to URLs using the SAP AI Core SDK at startup. If `deployment_models` is also provided, those URLs will be used directly.
 
 3. Get the service key files (e.g., `demokey.json`) with the following structure from the SAP AI Core Guidelines for each subAccount:
 

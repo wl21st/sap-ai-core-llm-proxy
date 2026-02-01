@@ -7,11 +7,31 @@ This module handles loading and parsing configuration from JSON files.
 import json
 from logging import Logger
 
+from pydantic import BaseModel, Field
+
 from config import ProxyConfig, SubAccountConfig, ServiceKey
 from utils.logging_utils import get_server_logger
-from utils.sdk_utils import extract_deployment_id
+from utils.sdk_utils import extract_deployment_id, fetch_deployment_url
 
 logger: Logger = get_server_logger(__name__)
+
+
+class SubAccountConfigSchema(BaseModel):
+    """Pydantic model for subaccount configuration validation."""
+
+    resource_group: str = "default"
+    service_key_json: str = ""
+    deployment_models: dict[str, list[str]] = Field(default_factory=dict)
+    deployment_ids: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class ProxyConfigSchema(BaseModel):
+    """Pydantic model for global proxy configuration validation."""
+
+    secret_authentication_tokens: list[str] = Field(default_factory=list)
+    port: int = 3001
+    host: str = "127.0.0.1"
+    subAccounts: dict[str, SubAccountConfigSchema] = Field(default_factory=dict)
 
 
 def load_proxy_config(file_path: str) -> ProxyConfig:
@@ -26,27 +46,29 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
     Raises:
         FileNotFoundError: If the configuration file doesn't exist
         json.JSONDecodeError: If the file contains invalid JSON
+        pydantic.ValidationError: If the configuration is invalid
     """
     with open(file_path, "r") as file:
         config_json = json.load(file)
 
+    # Validate with Pydantic
+    config_schema = ProxyConfigSchema.model_validate(config_json)
+
     # Create a proper ProxyConfig instance
     proxy_config = ProxyConfig(
-        secret_authentication_tokens=config_json.get(
-            "secret_authentication_tokens", []
-        ),
-        port=config_json.get("port", 3001),
-        host=config_json.get("host", "127.0.0.1"),
+        secret_authentication_tokens=config_schema.secret_authentication_tokens,
+        port=config_schema.port,
+        host=config_schema.host,
     )
 
     # Parse each subAccount
-    # NOTE: Remove hard-coded json element names and replace with pydantic models later
-    for sub_name, sub_config in config_json.get("subAccounts", {}).items():
+    for sub_name, sub_config_schema in config_schema.subAccounts.items():
         sub_account_config: SubAccountConfig = SubAccountConfig(
             name=sub_name,
-            resource_group=sub_config.get("resource_group", "default"),
-            service_key_json=sub_config.get("service_key_json", ""),
-            model_to_deployment_urls=sub_config.get("deployment_models", {}),
+            resource_group=sub_config_schema.resource_group,
+            service_key_json=sub_config_schema.service_key_json,
+            model_to_deployment_urls=sub_config_schema.deployment_models,
+            model_to_deployment_ids=sub_config_schema.deployment_ids,
         )
         proxy_config.subaccounts[sub_name] = sub_account_config
 
@@ -94,18 +116,77 @@ def _load_service_key_for_subaccount(sub_account_config: SubAccountConfig):
 def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
     """Build deployment ID mapping for a subaccount.
 
+    This function handles both:
+    1. Deployment IDs configured in model_to_deployment_ids (fetches URLs via SDK)
+    2. Deployment URLs configured in model_to_deployment_urls (extracts IDs for backward compatibility)
+
     Args:
         sub_account_config: The subaccount config to update
     """
-    for key, value in sub_account_config.model_to_deployment_urls.items():
-        model_name = key.strip()
-        sub_account_config.model_to_deployment_ids[model_name] = []
-        for url in value:
+    # First, resolve deployment IDs to URLs using the SDK (new feature)
+    for (
+        model_name,
+        deployment_ids,
+    ) in sub_account_config.model_to_deployment_ids.items():
+        model_name = model_name.strip()
+        if model_name not in sub_account_config.model_to_deployment_urls:
+            sub_account_config.model_to_deployment_urls[model_name] = []
+
+        for deployment_id in deployment_ids:
+            deployment_id = deployment_id.strip()
+            try:
+                deployment_url = fetch_deployment_url(
+                    service_key=sub_account_config.service_key,
+                    deployment_id=deployment_id,
+                    resource_group=sub_account_config.resource_group,
+                )
+                if (
+                    deployment_url
+                    not in sub_account_config.model_to_deployment_urls[model_name]
+                ):
+                    sub_account_config.model_to_deployment_urls[model_name].append(
+                        deployment_url
+                    )
+                    logger.info(
+                        "Resolved deployment ID '%s' to URL for model '%s' in subaccount '%s'",
+                        deployment_id,
+                        model_name,
+                        sub_account_config.name,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Failed to resolve deployment ID '%s' for model '%s' in subaccount '%s': %s",
+                    deployment_id,
+                    model_name,
+                    sub_account_config.name,
+                    e,
+                )
+                # Continue with other deployments - don't crash the entire server
+
+    # Then, extract deployment IDs from URLs for backward compatibility
+    for model_name, urls in sub_account_config.model_to_deployment_urls.items():
+        model_name = model_name.strip()
+        if model_name not in sub_account_config.model_to_deployment_ids:
+            sub_account_config.model_to_deployment_ids[model_name] = []
+
+        for url in urls:
             deployment_url = url.strip()
-            deployment_id = extract_deployment_id(deployment_url)
-            if deployment_id:
-                sub_account_config.model_to_deployment_ids[model_name].append(
+            try:
+                deployment_id = extract_deployment_id(deployment_url)
+                if (
                     deployment_id
+                    and deployment_id
+                    not in sub_account_config.model_to_deployment_ids[model_name]
+                ):
+                    sub_account_config.model_to_deployment_ids[model_name].append(
+                        deployment_id
+                    )
+            except ValueError as e:
+                logger.warning(
+                    "Could not extract deployment ID from URL '%s' for model '%s': %s",
+                    deployment_url,
+                    model_name,
+                    e,
                 )
 
 
