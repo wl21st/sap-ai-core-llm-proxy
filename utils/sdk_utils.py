@@ -95,8 +95,39 @@ def fetch_deployment_url(
         raise
 
 
+def clear_deployment_cache() -> bool:
+    """
+    Clear all cached deployment data.
+
+    Returns:
+        bool: True if cache was cleared successfully, False otherwise
+    """
+    try:
+        with Cache(CACHE_DIR) as cache:
+            cache.clear()
+        logger.info(f"Deployment cache cleared: {CACHE_DIR}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to clear deployment cache: {e}")
+        return False
+
+
+def get_cache_stats() -> dict:
+    """
+    Get statistics about the deployment cache.
+
+    Returns:
+        dict: Dictionary containing cache statistics
+    """
+    from utils.cache_utils import get_cache_stats as _get_cache_stats
+
+    return _get_cache_stats()
+
+
 def fetch_all_deployments(
-    service_key: ServiceKey, resource_group: str = "default"
+    service_key: ServiceKey,
+    resource_group: str = "default",
+    force_refresh: bool = False,
 ) -> list[dict]:
     """
     Fetch all deployments for a subaccount and extract their details.
@@ -109,6 +140,7 @@ def fetch_all_deployments(
     Args:
         service_key: SAP AI Core service key credentials
         resource_group: Resource group for the deployment, defaults to "default"
+        force_refresh: If True, bypass cache and fetch fresh data
 
     Returns:
         List of dictionaries containing:
@@ -123,13 +155,18 @@ def fetch_all_deployments(
     cache_key = hashlib.md5(key_str.encode()).hexdigest()
 
     with Cache(CACHE_DIR) as cache:
-        # Check cache first
-        cached_data = cache.get(cache_key)
-        if cached_data:
-            logger.info(
-                f"Using cached deployments for resource group: {resource_group} (expires in {int(cache.expire(cache_key) or 0)}s)"
-            )
-            return cached_data
+        # Check cache first (unless force_refresh is True)
+        if not force_refresh:
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                from utils.cache_utils import format_cache_expiry
+
+                expiry_seconds = int(cache.expire(cache_key) or 0)
+                formatted_expiry = format_cache_expiry(expiry_seconds)
+                logger.info(
+                    f"Using cached deployments for resource group: {resource_group} (expires in {formatted_expiry})"
+                )
+                return cached_data
 
         logger.info(f"Fetching all deployments for resource group: {resource_group}")
 

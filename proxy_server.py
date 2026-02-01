@@ -537,6 +537,14 @@ def main() -> None:
     # Setup logging using the new modular function
     init_logging(debug=args.debug)
 
+    # Handle cache refresh flag before loading config
+    if args.refresh_cache:
+        from utils.cache_utils import clear_deployment_cache
+
+        logger.info("Clearing deployment cache due to --refresh-cache flag...")
+        clear_deployment_cache()
+        logger.info("Cache cleared successfully")
+
     # Log version information at startup
     version_info = get_version_string()
     logger.info(f"SAP AI Core LLM Proxy Server - Version: {version_info}")

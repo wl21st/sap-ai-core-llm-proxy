@@ -31,6 +31,7 @@ The proxy server supports the following command line options:
 - `-p, --port PORT`: Port number to run the server on (overrides config file)
 - `-v, --version`: Show version information and exit
 - `-d, --debug`: Enable debug mode
+- `--refresh-cache`: Force refresh deployment cache by clearing cached data
 
 ### Using uvx (Recommended - No Installation Required)
 
@@ -63,6 +64,50 @@ For detailed logging and troubleshooting, you can enable debug mode:
 ```shell
 python proxy_server.py -c config.json -d
 ```
+
+### Cache Management
+
+The proxy server caches deployment information to reduce API calls and improve performance. Deployments are cached for 7 days by default.
+
+#### Refreshing the Cache
+
+To force a refresh of the deployment cache (useful when deployments change), use the `--refresh-cache` flag:
+
+**For the proxy server:**
+```shell
+python proxy_server.py -c config.json --refresh-cache
+```
+
+**For the inspect_deployments utility:**
+```shell
+python inspect_deployments.py -c config.json --refresh-cache
+```
+
+#### Manual Cache Clearing
+
+If you need to manually clear the cache directory:
+
+```bash
+# Linux/macOS
+rm -rf .cache/deployments
+
+# Windows PowerShell
+Remove-Item -Recurse -Force .cache/deployments
+```
+
+#### Cache Monitoring
+
+When using the cache, you'll see log messages like:
+```
+Using cache (expires in 6d 23h)
+```
+
+This indicates the deployment data is being served from cache and shows when the cached data will expire and be refreshed from the API.
+
+**Why refresh the cache?**
+- After deploying new models or updating existing deployments in SAP AI Core
+- If deployment URLs have changed
+- To force fetching the latest model information from your subaccounts
 
 After you run the proxy server, you will get
 
