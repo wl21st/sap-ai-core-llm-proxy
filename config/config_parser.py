@@ -300,71 +300,92 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
     """
     # 0. Auto-discovery of deployments (New Feature)
     discovered_deployments = []
-    try:
-        logger.info(
-            f"Starting auto-discovery for subaccount '{sub_account_config.name}'"
-        )
-        discovered_deployments = fetch_all_deployments(
-            service_key=sub_account_config.service_key,
-            resource_group=sub_account_config.resource_group,
-        )
 
-        for dep in discovered_deployments:
-            url = dep.get("url")
-            backend_model = dep.get("model_name")
+    # Check if service_key is initialized and has required fields for auto-discovery
+    has_valid_service_key = (
+        hasattr(sub_account_config, "service_key")
+        and sub_account_config.service_key is not None
+        and hasattr(sub_account_config.service_key, "api_url")
+        and sub_account_config.service_key.api_url is not None
+        and hasattr(sub_account_config.service_key, "auth_url")
+        and sub_account_config.service_key.auth_url is not None
+    )
 
-            if url and backend_model:
-                # Register under raw backend model name
-                if backend_model not in sub_account_config.model_to_deployment_urls:
-                    sub_account_config.model_to_deployment_urls[backend_model] = []
+    if has_valid_service_key:
+        try:
+            logger.info(
+                f"Starting auto-discovery for subaccount '{sub_account_config.name}'"
+            )
+            discovered_deployments = fetch_all_deployments(
+                service_key=sub_account_config.service_key,
+                resource_group=sub_account_config.resource_group,
+            )
 
-                if (
-                    url
-                    not in sub_account_config.model_to_deployment_urls[backend_model]
-                ):
-                    sub_account_config.model_to_deployment_urls[backend_model].append(
+            for dep in discovered_deployments:
+                url = dep.get("url")
+                backend_model = dep.get("model_name")
+
+                if url and backend_model:
+                    # Register under raw backend model name
+                    if backend_model not in sub_account_config.model_to_deployment_urls:
+                        sub_account_config.model_to_deployment_urls[backend_model] = []
+
+                    if (
                         url
-                    )
-                    logger.debug(f"Auto-discovered: {backend_model} -> {url}")
+                        not in sub_account_config.model_to_deployment_urls[
+                            backend_model
+                        ]
+                    ):
+                        sub_account_config.model_to_deployment_urls[
+                            backend_model
+                        ].append(url)
+                        logger.debug(f"Auto-discovered: {backend_model} -> {url}")
 
-                # Register aliases
-                if backend_model in MODEL_ALIASES:
-                    for alias in MODEL_ALIASES[backend_model]:
-                        if alias not in sub_account_config.model_to_deployment_urls:
-                            sub_account_config.model_to_deployment_urls[alias] = []
+                    # Register aliases
+                    if backend_model in MODEL_ALIASES:
+                        for alias in MODEL_ALIASES[backend_model]:
+                            if alias not in sub_account_config.model_to_deployment_urls:
+                                sub_account_config.model_to_deployment_urls[alias] = []
 
-                        if (
-                            url
-                            not in sub_account_config.model_to_deployment_urls[alias]
-                        ):
-                            sub_account_config.model_to_deployment_urls[alias].append(
+                            if (
                                 url
-                            )
-                            logger.debug(f"Auto-aliased: {alias} -> {url}")
+                                not in sub_account_config.model_to_deployment_urls[
+                                    alias
+                                ]
+                            ):
+                                sub_account_config.model_to_deployment_urls[
+                                    alias
+                                ].append(url)
+                                logger.debug(f"Auto-aliased: {alias} -> {url}")
 
-    except DeploymentFetchError as e:
-        logger.error(
-            f"Auto-discovery failed for subaccount '{sub_account_config.name}': {e}. "
-            f"Check service key credentials and network connectivity.",
-            extra={
-                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
-                "subaccount": sub_account_config.name,
-            },
+        except DeploymentFetchError as e:
+            logger.error(
+                f"Auto-discovery failed for subaccount '{sub_account_config.name}': {e}. "
+                f"Check service key credentials and network connectivity.",
+                extra={
+                    "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
+                    "subaccount": sub_account_config.name,
+                },
+            )
+            raise ConfigValidationError(
+                f"Auto-discovery failed for '{sub_account_config.name}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during auto-discovery for '{sub_account_config.name}': {e}",
+                extra={
+                    "error_id": ErrorIDs.AUTODISCOVERY_UNEXPECTED_ERROR,
+                    "subaccount": sub_account_config.name,
+                },
+            )
+            raise ConfigValidationError(
+                f"Auto-discovery failed: {e}. Check service key and network connectivity."
+            ) from e
+    else:
+        logger.debug(
+            f"Skipping auto-discovery for subaccount '{sub_account_config.name}': "
+            f"service key not initialized or missing required fields (api_url, auth_url)"
         )
-        raise ConfigValidationError(
-            f"Auto-discovery failed for '{sub_account_config.name}': {e}"
-        ) from e
-    except Exception as e:
-        logger.error(
-            f"Unexpected error during auto-discovery for '{sub_account_config.name}': {e}",
-            extra={
-                "error_id": ErrorIDs.AUTODISCOVERY_UNEXPECTED_ERROR,
-                "subaccount": sub_account_config.name,
-            },
-        )
-        raise ConfigValidationError(
-            f"Auto-discovery failed: {e}. Check service key and network connectivity."
-        ) from e
 
     # Build lookup map for validation (ID -> Model Name)
     deployment_id_to_model = {
