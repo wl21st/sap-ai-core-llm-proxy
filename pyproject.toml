@@ -32,6 +32,7 @@ build = [
 
 [project.scripts]
 sap-ai-proxy = "proxy_server:main"
+sap-ai-inspect = "inspect_deployments:main"
 
 [dependency-groups]
 dev = [
