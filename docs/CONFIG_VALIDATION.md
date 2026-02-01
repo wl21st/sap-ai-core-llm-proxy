@@ -54,7 +54,13 @@ Look for lines containing `Configuration mismatch` or `Configuration warning`.
 
 ### Step 2: Inspect Your Deployment
 
-Use the `inspect_deployments.py` utility to see what models are actually deployed:
+Use the `inspect_deployments` utility to see what models are actually deployed:
+
+```bash
+uvx --from . sap-ai-inspect-deployments -s demokey.json
+```
+
+Or with Python directly:
 
 ```bash
 python inspect_deployments.py -s demokey.json
