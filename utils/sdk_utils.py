@@ -1,20 +1,167 @@
 import hashlib
 import logging
 import os
+import threading
 from urllib.parse import urlparse
 
 from ai_api_client_sdk.ai_api_v2_client import AIAPIV2Client
+from ai_core_sdk.ai_core_v2_client import AICoreV2Client
 from diskcache import Cache
 
 from config.config_models import ServiceKey
 
 logger = logging.getLogger(__name__)
 
+# ------------------------
+# SDK client cache for thread-safe singleton pattern
+# ------------------------
+# Creating a new SDK client per request is expensive. Reuse clients per
+# unique credential+resource_group combination in a thread-safe manner.
+__ai_core_client_lock = threading.Lock()
+__ai_api_client_lock = threading.Lock()
+__ai_core_clients: dict[str, AICoreV2Client] = {}
+__ai_api_clients: dict[str, AIAPIV2Client] = {}
+
 # Cache configuration
 CACHE_DIR = os.path.join(
     os.path.expanduser("~"), ".sap-ai-proxy", "cache", "deployments"
 )
 CACHE_DURATION = 7 * 24 * 60 * 60  # 7 days in seconds
+
+
+def _clear_client_caches_for_testing() -> None:
+    """Clear SDK client caches. For testing only.
+
+    This function provides a clean API for tests to reset client caches
+    without directly accessing private module variables.
+    """
+    with __ai_core_client_lock, __ai_api_client_lock:
+        __ai_core_clients.clear()
+        __ai_api_clients.clear()
+
+
+def _make_cache_key(service_key: ServiceKey, resource_group: str) -> str:
+    """Create a deterministic hash-based cache key for client caching.
+
+    Args:
+        service_key: SAP AI Core service key credentials
+        resource_group: Resource group for the deployment
+
+    Returns:
+        SHA-256 hash of the credential+resource_group combination
+    """
+    key_data = f"{service_key.client_id}:{service_key.api_url}:{resource_group}"
+    return hashlib.sha256(key_data.encode()).hexdigest()
+
+
+def __get_ai_core_client(
+    service_key: ServiceKey, resource_group: str = "default"
+) -> AICoreV2Client:
+    """Get or create a cached AICoreV2Client for the given credentials and resource group.
+
+    Uses thread-safe double-check locking pattern to ensure single instance per unique
+    credential+resource_group combination.
+
+    Args:
+        service_key: SAP AI Core service key credentials
+        resource_group: Resource group for the deployment, defaults to "default"
+
+    Returns:
+        AICoreV2Client configured for the specified credentials and resource group
+
+    Raises:
+        RuntimeError: If client creation fails unexpectedly
+    """
+    # Create cache key based on credentials and resource group
+    cache_key = _make_cache_key(service_key, resource_group)
+
+    client = __ai_core_clients.get(cache_key)
+    if client is not None:
+        return client
+
+    with __ai_core_client_lock:
+        # Double-check pattern: verify cache miss again under lock
+        client = __ai_core_clients.get(cache_key)
+        if client is None:
+            client_id_prefix = service_key.client_id[:8] if len(service_key.client_id) >= 8 else service_key.client_id
+            logger.info(
+                f"Creating new AICoreV2Client [api_url={service_key.api_url}, "
+                f"resource_group='{resource_group}', client_id={client_id_prefix}...]"
+            )
+            client = AICoreV2Client(
+                base_url=service_key.api_url + "/v2/lm",
+                auth_url=service_key.auth_url + "/oauth/token",
+                client_id=service_key.client_id,
+                client_secret=service_key.client_secret,
+                resource_group=resource_group,
+            )
+            __ai_core_clients[cache_key] = client
+            logger.info(
+                f"AICoreV2Client created successfully [resource_group='{resource_group}', "
+                f"client_id={client_id_prefix}...]"
+            )
+
+    # Type narrowing: client is guaranteed non-None here
+    if client is None:
+        raise RuntimeError(
+            f"Failed to create/retrieve AICoreV2Client for cache_key={cache_key}"
+        )
+    return client
+
+
+def __get_ai_api_client(
+    service_key: ServiceKey, resource_group: str = "default"
+) -> AIAPIV2Client:
+    """Get or create a cached AIAPIV2Client for the given credentials and resource group.
+
+    Uses thread-safe double-check locking pattern to ensure single instance per unique
+    credential+resource_group combination.
+
+    Args:
+        service_key: SAP AI Core service key credentials
+        resource_group: Resource group for the deployment, defaults to "default"
+
+    Returns:
+        AIAPIV2Client configured for the specified credentials and resource group
+
+    Raises:
+        RuntimeError: If client creation fails unexpectedly
+    """
+    # Create cache key based on credentials and resource group
+    cache_key = _make_cache_key(service_key, resource_group)
+
+    client = __ai_api_clients.get(cache_key)
+    if client is not None:
+        return client
+
+    with __ai_api_client_lock:
+        # Double-check pattern: verify cache miss again under lock
+        client = __ai_api_clients.get(cache_key)
+        if client is None:
+            client_id_prefix = service_key.client_id[:8] if len(service_key.client_id) >= 8 else service_key.client_id
+            logger.info(
+                f"Creating new AIAPIV2Client [api_url={service_key.api_url}, "
+                f"resource_group='{resource_group}', client_id={client_id_prefix}...]"
+            )
+            client = AIAPIV2Client(
+                base_url=service_key.api_url + "/v2/lm",
+                auth_url=service_key.auth_url + "/oauth/token",
+                client_id=service_key.client_id,
+                client_secret=service_key.client_secret,
+                resource_group=resource_group,
+            )
+            __ai_api_clients[cache_key] = client
+            logger.info(
+                f"AIAPIV2Client created successfully [resource_group='{resource_group}', "
+                f"client_id={client_id_prefix}...]"
+            )
+
+    # Type narrowing: client is guaranteed non-None here
+    if client is None:
+        raise RuntimeError(
+            f"Failed to create/retrieve AIAPIV2Client for cache_key={cache_key}"
+        )
+    return client
 
 
 def extract_deployment_id(deployment_url: str) -> str:
@@ -63,6 +210,9 @@ def fetch_deployment_url(
 ) -> str:
     """Fetch deployment URL from SAP AI Core using the SDK.
 
+    Uses a cached, thread-safe AICoreV2Client instance to avoid creating new clients
+    for each request.
+
     Args:
         service_key: SAP AI Core service key credentials
         deployment_id: Deployment ID to look up
@@ -79,14 +229,8 @@ def fetch_deployment_url(
     )
 
     try:
-        # Create AICoreV2Client with service key credentials
-        client = AICoreV2Client(
-            base_url=service_key.api_url + "/v2/lm",
-            auth_url=service_key.auth_url + "/oauth/token",
-            client_id=service_key.client_id,
-            client_secret=service_key.client_secret,
-            resource_group=resource_group,
-        )
+        # Get cached AICoreV2Client (thread-safe)
+        client = __get_ai_core_client(service_key, resource_group)
 
         # Fetch deployment details
         deployment = client.deployment.get(
@@ -185,13 +329,8 @@ def fetch_all_deployments(
             )
 
             try:
-                client = AIAPIV2Client(
-                    base_url=service_key.api_url + "/v2/lm",
-                    auth_url=service_key.auth_url + "/oauth/token",
-                    client_id=service_key.client_id,
-                    client_secret=service_key.client_secret,
-                    resource_group=resource_group,
-                )
+                # Get cached AIAPIV2Client (thread-safe)
+                client = __get_ai_api_client(service_key, resource_group)
 
                 # Query all deployments
                 deployments = client.deployment.query()
