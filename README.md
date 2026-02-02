@@ -31,6 +31,7 @@ The proxy server supports the following command line options:
 - `-p, --port PORT`: Port number to run the server on (overrides config file)
 - `-v, --version`: Show version information and exit
 - `-d, --debug`: Enable debug mode
+- `--refresh-cache`: Force refresh deployment cache by clearing cached data
 
 ### Using uvx (Recommended - No Installation Required)
 
@@ -63,6 +64,50 @@ For detailed logging and troubleshooting, you can enable debug mode:
 ```shell
 python proxy_server.py -c config.json -d
 ```
+
+### Cache Management
+
+The proxy server caches deployment information to reduce API calls and improve performance. Deployments are cached for 7 days by default.
+
+#### Refreshing the Cache
+
+To force a refresh of the deployment cache (useful when deployments change), use the `--refresh-cache` flag:
+
+**For the proxy server:**
+```shell
+python proxy_server.py -c config.json --refresh-cache
+```
+
+**For the inspect_deployments utility:**
+```shell
+python inspect_deployments.py -c config.json --refresh-cache
+```
+
+#### Manual Cache Clearing
+
+If you need to manually clear the cache directory:
+
+```bash
+# Linux/macOS
+rm -rf .cache/deployments
+
+# Windows PowerShell
+Remove-Item -Recurse -Force .cache/deployments
+```
+
+#### Cache Monitoring
+
+When using the cache, you'll see log messages like:
+```
+Using cache (expires in 6d 23h)
+```
+
+This indicates the deployment data is being served from cache and shows when the cached data will expire and be refreshed from the API.
+
+**Why refresh the cache?**
+- After deploying new models or updating existing deployments in SAP AI Core
+- If deployment URLs have changed
+- To force fetching the latest model information from your subaccounts
 
 After you run the proxy server, you will get
 
@@ -168,6 +213,53 @@ Now it supports the following LLM models
 
    ### Multi-Account Configuration
 
+   You can configure deployments using either **deployment URLs** (full URLs) or **deployment IDs** (simplified). The proxy will automatically resolve deployment IDs to URLs using the SAP AI Core SDK.
+
+   #### Option 1: Using Deployment IDs (Simplified - Recommended)
+
+   Configure using deployment IDs found in SAP AI Launchpad. The proxy will automatically fetch the full URLs at startup:
+
+   ```json
+   {
+       "subAccounts": {
+           "subAccount1": {
+               "resource_group": "default",
+               "service_key_json": "demokey1.json",
+               "deployment_ids": {
+                   "gpt-4o": [
+                       "d12345"
+                   ],
+                   "gpt-4.1": [
+                       "d67890"
+                   ]
+               }
+           },
+           "subAccount2": {
+               "resource_group": "default",
+               "service_key_json": "demokey2.json",
+               "deployment_ids": {
+                   "gpt-4o": [
+                       "d54321"
+                   ],
+                    "4-sonnet": [
+                        "d98765"
+                    ],
+                    "4.5-sonnet": [
+                        "d13579"
+                    ]
+               }
+           }
+       },
+       "secret_authentication_tokens": ["<hidden_key_1>", "<hidden_key_2>"],
+       "port": 3001,
+       "host": "127.0.0.1"
+   }
+   ```
+
+   #### Option 2: Using Deployment URLs (Traditional)
+
+   Configure using full deployment URLs as before:
+
    ```json
    {
        "subAccounts": {
@@ -180,8 +272,7 @@ Now it supports the following LLM models
                    ],
                    "gpt-4.1": [
                        "https://api.ai.intprod-eu12.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/<hidden_id_1b>"
-                   ],
-
+                   ]
                }
            },
            "subAccount2": {
@@ -205,6 +296,64 @@ Now it supports the following LLM models
        "host": "127.0.0.1"
    }
    ```
+
+    **Note**: You can mix both approaches. If `deployment_ids` is provided, the proxy will resolve them to URLs using the SAP AI Core SDK at startup. If `deployment_models` is also provided, those URLs will be used directly.
+
+    #### Configuration Validation (NEW)
+
+    The proxy automatically validates that your configured model names match the actual deployed models during startup. If a mismatch is detected, a warning is logged:
+
+    ```
+    Configuration mismatch: Model 'gpt-4' mapped to deployment 'd456' which is running 'gemini-1.5-pro' (Family mismatch)
+    ```
+
+    **Validation Checks:**
+    - **Family Mismatch**: Detects when configured model family (GPT, Claude, Gemini) doesn't match the deployed model
+    - **Version Mismatch**: Detects version mismatches (e.g., gpt-4 vs gpt-3.5-turbo)
+    - **Variant Mismatch**: Detects variant mismatches (e.g., claude-sonnet vs claude-haiku)
+
+    Example warning logs:
+    ```
+    Configuration mismatch: Model 'gpt-4' mapped to deployment 'd456' which is running 'gemini-1.5-pro' (Family mismatch)
+    Configuration mismatch: Model 'claude-3-sonnet' mapped to deployment 'd789' which is running 'claude-3-haiku' (Variant mismatch)
+    Configuration mismatch: Model 'gpt-4' mapped to deployment 'd999' which is running 'gpt-3.5-turbo' (Version mismatch)
+    ```
+
+    These warnings help catch configuration errors early without blocking startup.
+
+    #### Model Filtering (Optional)
+
+    You can optionally filter which models are exposed through the API using regex patterns:
+
+    ```json
+    {
+        "model_filters": {
+            "include": ["^gpt-.*", "^claude-.*"],
+            "exclude": [".*-test$", "^experimental-.*"]
+        },
+        "subAccounts": { ... }
+    }
+    ```
+
+    **Filter Behavior:**
+    - `include`: Only models matching at least one include pattern are loaded
+    - `exclude`: Models matching any exclude pattern are filtered out
+    - **Precedence**: Include filters are applied first, then exclude filters
+    - Filtered models behave as if they were never configured (return 404 when requested)
+
+    **Examples:**
+    ```json
+    // Only expose GPT and Claude models
+    {"include": ["^gpt-.*", "^claude-.*"]}
+
+    // Hide test/experimental models
+    {"exclude": [".*-test$", "^experimental-.*"]}
+
+    // GPT models except preview variants
+    {"include": ["^gpt-.*"], "exclude": [".*-preview$"]}
+    ```
+
+    Startup logs will show which models were filtered and why. If no `model_filters` section exists, all models are loaded.
 
 3. Get the service key files (e.g., `demokey.json`) with the following structure from the SAP AI Core Guidelines for each subAccount:
 
@@ -237,6 +386,15 @@ The proxy now supports distributing requests across multiple subAccounts:
 4. **Model Availability**: The proxy consolidates all available models across all subAccounts, allowing you to use any model that's deployed in any subAccount.
 
 5. **Token Management**: Each subAccount maintains its own authentication token with independent refresh cycles.
+
+## Configuration Validation
+
+The proxy automatically validates your model mappings during startup to catch configuration errors early. See [Configuration Validation & Filtering](docs/CONFIG_VALIDATION.md) for details on:
+
+- How validation works
+- Understanding validation warnings
+- Troubleshooting configuration issues
+- Future filtering capabilities
 
 ## Running the Proxy Server
 

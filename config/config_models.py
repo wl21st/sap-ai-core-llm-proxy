@@ -2,15 +2,28 @@
 Configuration dataclasses for SAP AI Core LLM Proxy.
 
 This module defines the core configuration structures used throughout the proxy.
+
+NOTE: These dataclasses are separate from the Pydantic schemas in config_parser.py.
+See the comment block in config_parser.py for a detailed explanation of why we
+maintain both Pydantic models (for JSON validation) and dataclasses (for runtime state).
 """
 
 import threading
 from dataclasses import dataclass, field
 from logging import Logger
+from typing import Optional
 
 from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
+
+
+@dataclass
+class ModelFilters:
+    """Model filtering configuration with include/exclude regex patterns."""
+
+    include: Optional[list[str]] = None
+    exclude: Optional[list[str]] = None
 
 
 @dataclass
@@ -54,6 +67,7 @@ class ProxyConfig:
     secret_authentication_tokens: list[str] = field(default_factory=list)
     port: int = 3001
     host: str = "127.0.0.1"
+    model_filters: Optional[ModelFilters] = None
     # Global model to subaccount mapping for load balancing
     model_to_subaccounts: dict[str, list[str]] = field(default_factory=dict)
 

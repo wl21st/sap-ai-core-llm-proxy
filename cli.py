@@ -11,12 +11,13 @@ from version import get_version_string
 
 def parse_arguments():
     """Parse command-line arguments for the proxy server.
-    
+
     Returns:
         argparse.Namespace: Parsed command-line arguments with the following attributes:
             - config (str): Path to configuration file (default: "config.json")
             - debug (bool): Enable debug mode
             - port (int | None): Port number to run the server on
+            - refresh_cache (bool): Force refresh deployment cache
     """
     version_string = get_version_string()
     parser = argparse.ArgumentParser(
@@ -44,5 +45,10 @@ def parse_arguments():
         type=int,
         default=None,
         help="Port number to run the server on (overrides config file)",
+    )
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Force refresh deployment cache by clearing cached data",
     )
     return parser.parse_args()

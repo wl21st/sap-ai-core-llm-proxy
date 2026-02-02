@@ -1,4 +1,6 @@
 import json
+import os
+import re
 from logging import Logger
 import random
 import time
@@ -6,6 +8,28 @@ import time
 from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
+
+
+def load_model_aliases():
+    """Load model aliases from config/aliases.json."""
+    try:
+        alias_file = os.path.join(os.path.dirname(__file__), "config", "aliases.json")
+        if os.path.exists(alias_file):
+            with open(alias_file, "r") as f:
+                logger.info(f"Loading model aliases from {alias_file}")
+                return json.load(f)
+        else:
+            logger.warning(
+                f"Alias file not found at {alias_file}, using empty defaults."
+            )
+            return {}
+    except Exception as e:
+        logger.error(f"Failed to load model aliases: {e}")
+        return {}
+
+
+# Model Aliases Configuration
+MODEL_ALIASES = load_model_aliases()
 
 
 class Detector:
@@ -75,6 +99,198 @@ class Detector:
                 "gemini",
             ]
         )
+
+    @staticmethod
+    def extract_version(name):
+        """
+        Extract semantic version from model name using intelligent pattern matching.
+
+        Handles:
+        - Single digit versions: "4" from "gpt-4"
+        - Multi-part versions: "3-5" from "claude-3-5-sonnet" or "claude-3.5-sonnet"
+        - Complex names: "4" from "gpt-4-32k" (ignores context window size)
+        - Timestamps: "4" from "gpt-4o-2024-05-13" (ignores date suffix)
+        - Date formats: "4" from "gpt-4-0613" (ignores MMDD format)
+
+        Avoids matching:
+        - Dates (year like 2024, 20240229, 0613)
+        - Context window sizes (32k, 128k, etc.)
+        - Long numeric suffixes
+
+        Args:
+            name: The model name to extract version from
+
+        Returns:
+            str: The extracted version (e.g., "4", "3-5", "4-5") or None
+        """
+        matches = list(re.finditer(r"\d+", name))
+
+        if not matches:
+            return None
+
+        for i, match in enumerate(matches):
+            num_str = match.group(0)
+            num = int(num_str)
+
+            # Skip year-like numbers (> 100)
+            if num > 100:
+                continue
+
+            # Get the character after this match
+            pos_after = match.end()
+            char_after = (
+                name[pos_after : pos_after + 1] if pos_after < len(name) else ""
+            )
+
+            # Skip if followed by 'k' or 'm' (context window suffix like 32k)
+            if char_after in "km":
+                continue
+
+            # Check if followed by a separator (. or -)
+            if char_after in ".-":
+                # Look ahead for the next number
+                next_match = matches[i + 1] if i + 1 < len(matches) else None
+
+                if next_match and next_match.start() == pos_after + 1:
+                    # Separator immediately followed by next number
+                    minor_str = next_match.group(0)
+                    minor = int(minor_str)
+
+                    # Skip date-like suffixes (3+ digit numbers like 0613, 2024, etc.)
+                    if len(minor_str) >= 3:
+                        return str(num)
+
+                    # Skip if minor is 4-digit (like 2024)
+                    if minor >= 1000:
+                        return str(num)
+
+                    # Check if minor is a context window (32, 128, 256, etc.)
+                    context_windows = {
+                        8,
+                        16,
+                        32,
+                        64,
+                        128,
+                        256,
+                        512,
+                        1024,
+                        2048,
+                        4096,
+                        8192,
+                        32768,
+                    }
+                    pos_after_minor = next_match.end()
+                    char_after_minor = (
+                        name[pos_after_minor : pos_after_minor + 1]
+                        if pos_after_minor < len(name)
+                        else ""
+                    )
+
+                    if char_after_minor in "km" and minor in context_windows:
+                        # This is a context window (e.g., "4-32k"), return major version only
+                        return str(num)
+
+                    # Normal multi-part version (e.g., "3-5" or "3.5")
+                    return f"{num}-{minor}"
+
+            # Single digit version with no separator following
+            if char_after == "" or not char_after.isdigit():
+                return str(num)
+
+        # Fallback: return the first small non-date number
+        for match in matches:
+            num_str = match.group(0)
+            num = int(num_str)
+            if num < 100 and len(num_str) < 3:
+                return str(num)
+
+        return None
+
+    @staticmethod
+    def validate_model_mapping(configured_model: str, backend_model: str | None):
+        """
+        Validate that the configured model name matches the actual backend model.
+
+        Checks for:
+        1. Family mismatch (e.g. gpt vs claude)
+        2. Version mismatch (e.g. 4 vs 3.5, 3.5 vs 3)
+        3. Variant mismatch (e.g. sonnet vs haiku)
+
+        Args:
+            configured_model: The model alias configured in config.json
+            backend_model: The actual model name from SAP AI Core
+
+        Returns:
+            tuple[bool, str | None]: (is_valid, failure_reason)
+        """
+        if not configured_model or not backend_model:
+            return True, None  # Cannot validate if missing info
+
+        c_norm = configured_model.lower().replace(".", "-")
+        b_norm = backend_model.lower().replace(".", "-")
+
+        # 1. Family Check
+        families = ["claude", "gpt", "gemini", "text-embedding"]
+        c_family = next((f for f in families if f in c_norm), None)
+        b_family = next((f for f in families if f in b_norm), None)
+
+        if c_family and b_family and c_family != b_family:
+            return (
+                False,
+                f"Family mismatch: configured '{c_family}' but backend is '{b_family}'",
+            )
+
+        # 2. Version Check using robust regex extraction
+        c_version = Detector.extract_version(c_norm)
+        b_version = Detector.extract_version(b_norm)
+
+        if c_version and b_version and c_version != b_version:
+            # Allow prefix matching ONLY if the more specific version starts with the generic one
+            # Examples:
+            #   "4" -> "4-0613" is OK (configured is generic, backend is date-specific)
+            #   "3-5" -> "3" is NOT OK (trying to match 3.5 model with 3.0)
+            #   "3" -> "3-5" is NOT OK (vice versa)
+            # The rule: only allow if backend is more specific (has more parts)
+            c_parts = c_version.split("-")
+            b_parts = b_version.split("-")
+
+            # Allow match only if:
+            # 1. They are identical, OR
+            # 2. Backend is more specific AND shares the same major parts
+            if len(b_parts) > len(c_parts):
+                # Backend is more specific, check if it starts with configured version
+                if b_version.startswith(c_version + "-"):
+                    pass  # Allow this match
+                else:
+                    return (
+                        False,
+                        f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
+                    )
+            elif len(c_parts) > len(b_parts):
+                # Configured is more specific than backend, not allowed
+                return (
+                    False,
+                    f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
+                )
+            else:
+                # Same number of parts but different values
+                return (
+                    False,
+                    f"Version mismatch: configured '{c_version}' but backend is '{b_version}'",
+                )
+
+        # 3. Variant Check
+        variants = ["sonnet", "haiku", "opus", "pro", "flash", "turbo", "omni"]
+        c_variant = next((v for v in variants if v in c_norm), None)
+        b_variant = next((v for v in variants if v in b_norm), None)
+
+        if c_variant and b_variant and c_variant != b_variant:
+            return (
+                False,
+                f"Variant mismatch: configured '{c_variant}' but backend is '{b_variant}'",
+            )
+
+        return True, None
 
 
 class Converters:

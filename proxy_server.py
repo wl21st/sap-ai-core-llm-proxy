@@ -1,31 +1,20 @@
-import ast
 import json
-import random
-import sys
-import time
 import uuid
 from logging import Logger
-from typing import Dict, Any
 
 import requests
 from botocore.exceptions import ClientError  # noqa: F401 - used in bedrock_handler
 from flask import Flask, Response, jsonify, request, stream_with_context
 from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
 
-# SAP AI SDK imports
-from tenacity import (
-    RetryError,
-)
-
 from auth import RequestValidator
 from auth.token_manager import TokenManager
 
 # Import from new modular structure
-from config import ProxyConfig, load_proxy_config, ServiceKey, ProxyGlobalContext
+from config import ProxyConfig, ProxyGlobalContext, ServiceKey, load_proxy_config
 from proxy_helpers import Converters, Detector
 from utils.error_handlers import handle_http_429_error
 from utils.logging_utils import get_server_logger, get_transport_logger, init_logging
-from utils.sdk_utils import extract_deployment_id
 
 # Initialize token logger (will be configured on first use)
 logger: Logger = get_server_logger(__name__)
@@ -48,27 +37,26 @@ DEFAULT_GPT_MODEL = "gpt-4.1"
 # Retry configuration - now unified in utils/retry.py
 from utils.retry import (
     RETRY_MAX_ATTEMPTS,
-    RETRY_MULTIPLIER,
-    RETRY_MIN_WAIT,
     RETRY_MAX_WAIT,
+    RETRY_MIN_WAIT,
+    RETRY_MULTIPLIER,
 )
 
 """SAP API Reference are documented at https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/example-payloads-for-inferencing-third-party-models"""
 
 # Bedrock handler - extracted to handlers/bedrock_handler.py
 from handlers.bedrock_handler import (
-    invoke_bedrock_streaming,
     invoke_bedrock_non_streaming,
+    invoke_bedrock_streaming,
     read_response_body_stream,
 )
 
 # Streaming generators - extracted to handlers/streaming_generators.py (Phase 6d)
 from handlers.streaming_generators import (
     generate_bedrock_streaming_response,
-    generate_streaming_response,
     generate_claude_streaming_response,
+    generate_streaming_response,
 )
-
 
 # Global configuration
 proxy_config: ProxyConfig = ProxyConfig()
@@ -88,14 +76,14 @@ def register_blueprints(
     """
     from blueprints import (
         chat_completions_bp,
-        messages_bp,
         embeddings_bp,
-        models_bp,
         event_logging_bp,
         init_chat_completions_blueprint,
-        init_messages_blueprint,
         init_embeddings_blueprint,
+        init_messages_blueprint,
         init_models_blueprint,
+        messages_bp,
+        models_bp,
     )
 
     # Initialize blueprints with config and context
@@ -149,16 +137,17 @@ def format_embedding_response(response, model):
 
 
 # Version utilities - extracted to version.py
-from version import get_version_info, get_version, get_git_hash, get_version_string
-
 # CLI argument parsing - extracted to cli.py
 from cli import parse_arguments
+from load_balancer import (
+    load_balance_url as _load_balance_url,
+)
 
 # Load balancing - extracted to load_balancer.py
 from load_balancer import (
     resolve_model_name as _resolve_model_name,
-    load_balance_url as _load_balance_url,
 )
+from version import get_git_hash, get_version, get_version_info, get_version_string
 
 
 def resolve_model_name(model_name):
@@ -181,6 +170,8 @@ from handlers.streaming_handler import (
     get_claude_stop_reason_from_gemini_chunk,
     get_claude_stop_reason_from_openai_chunk,
     make_backend_request,
+)
+from handlers.streaming_handler import (
     parse_sse_response_to_claude_json as _parse_sse_response_to_claude_json,
 )
 
@@ -193,8 +184,12 @@ def parse_sse_response_to_claude_json(response_text):
 # Model handlers - extracted to handlers/model_handlers.py
 from handlers.model_handlers import (
     handle_claude_request as _handle_claude_request,
-    handle_gemini_request as _handle_gemini_request,
+)
+from handlers.model_handlers import (
     handle_default_request as _handle_default_request,
+)
+from handlers.model_handlers import (
+    handle_gemini_request as _handle_gemini_request,
 )
 
 
@@ -521,21 +516,18 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
 
 def main() -> None:
     """Main entry point for the SAP AI Core LLM Proxy Server."""
-    # Deprecation Warning
-    import warnings
-
-    warnings.warn(
-        "proxy_server.py is deprecated and will be removed in a future version. "
-        "Please use 'sap-ai-proxy' (via main.py) instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    print("WARNING: proxy_server.py is deprecated. Use 'sap-ai-proxy' instead.")
-
     args = parse_arguments()
 
     # Setup logging using the new modular function
     init_logging(debug=args.debug)
+
+    # Handle cache refresh flag before loading config
+    if args.refresh_cache:
+        from utils.cache_utils import clear_deployment_cache
+
+        logger.info("Clearing deployment cache due to --refresh-cache flag...")
+        clear_deployment_cache()
+        logger.info("Cache cleared successfully")
 
     # Log version information at startup
     version_info = get_version_string()
