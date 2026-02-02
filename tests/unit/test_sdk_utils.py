@@ -1,9 +1,12 @@
 import pytest
 import threading
 from unittest.mock import Mock, patch, MagicMock
-from utils.sdk_utils import fetch_all_deployments, fetch_deployment_url
+from utils.sdk_utils import (
+    fetch_all_deployments,
+    fetch_deployment_url,
+    _clear_client_caches_for_testing,
+)
 from config import ServiceKey
-import utils.sdk_utils
 
 
 @pytest.fixture
@@ -19,16 +22,10 @@ def mock_service_key():
 
 @pytest.fixture(autouse=True)
 def clear_client_caches():
-    """Clear SDK client caches before each test."""
-    # Access module-level private variables using getattr/setattr
-    # (name mangling doesn't apply to module-level variables)
-    ai_api_clients = getattr(utils.sdk_utils, '__ai_api_clients', {})
-    ai_core_clients = getattr(utils.sdk_utils, '__ai_core_clients', {})
-    ai_api_clients.clear()
-    ai_core_clients.clear()
+    """Clear SDK client caches before and after each test."""
+    _clear_client_caches_for_testing()
     yield
-    ai_api_clients.clear()
-    ai_core_clients.clear()
+    _clear_client_caches_for_testing()
 
 
 @patch("utils.sdk_utils.Cache")

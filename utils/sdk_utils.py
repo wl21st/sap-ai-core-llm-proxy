@@ -29,6 +29,31 @@ CACHE_DIR = os.path.join(
 CACHE_DURATION = 7 * 24 * 60 * 60  # 7 days in seconds
 
 
+def _clear_client_caches_for_testing() -> None:
+    """Clear SDK client caches. For testing only.
+
+    This function provides a clean API for tests to reset client caches
+    without directly accessing private module variables.
+    """
+    with __ai_core_client_lock, __ai_api_client_lock:
+        __ai_core_clients.clear()
+        __ai_api_clients.clear()
+
+
+def _make_cache_key(service_key: ServiceKey, resource_group: str) -> str:
+    """Create a deterministic hash-based cache key for client caching.
+
+    Args:
+        service_key: SAP AI Core service key credentials
+        resource_group: Resource group for the deployment
+
+    Returns:
+        SHA-256 hash of the credential+resource_group combination
+    """
+    key_data = f"{service_key.client_id}:{service_key.api_url}:{resource_group}"
+    return hashlib.sha256(key_data.encode()).hexdigest()
+
+
 def __get_ai_core_client(
     service_key: ServiceKey, resource_group: str = "default"
 ) -> AICoreV2Client:
@@ -43,9 +68,12 @@ def __get_ai_core_client(
 
     Returns:
         AICoreV2Client configured for the specified credentials and resource group
+
+    Raises:
+        RuntimeError: If client creation fails unexpectedly
     """
     # Create cache key based on credentials and resource group
-    cache_key = f"{service_key.client_id}:{service_key.api_url}:{resource_group}"
+    cache_key = _make_cache_key(service_key, resource_group)
 
     client = __ai_core_clients.get(cache_key)
     if client is not None:
@@ -55,8 +83,10 @@ def __get_ai_core_client(
         # Double-check pattern: verify cache miss again under lock
         client = __ai_core_clients.get(cache_key)
         if client is None:
+            client_id_prefix = service_key.client_id[:8] if len(service_key.client_id) >= 8 else service_key.client_id
             logger.info(
-                f"Creating AICoreV2Client for resource group '{resource_group}'"
+                f"Creating new AICoreV2Client [api_url={service_key.api_url}, "
+                f"resource_group='{resource_group}', client_id={client_id_prefix}...]"
             )
             client = AICoreV2Client(
                 base_url=service_key.api_url + "/v2/lm",
@@ -67,11 +97,15 @@ def __get_ai_core_client(
             )
             __ai_core_clients[cache_key] = client
             logger.info(
-                f"AICoreV2Client created successfully for resource group '{resource_group}'"
+                f"AICoreV2Client created successfully [resource_group='{resource_group}', "
+                f"client_id={client_id_prefix}...]"
             )
 
     # Type narrowing: client is guaranteed non-None here
-    assert client is not None, "client should never be None at this point"
+    if client is None:
+        raise RuntimeError(
+            f"Failed to create/retrieve AICoreV2Client for cache_key={cache_key}"
+        )
     return client
 
 
@@ -89,9 +123,12 @@ def __get_ai_api_client(
 
     Returns:
         AIAPIV2Client configured for the specified credentials and resource group
+
+    Raises:
+        RuntimeError: If client creation fails unexpectedly
     """
     # Create cache key based on credentials and resource group
-    cache_key = f"{service_key.client_id}:{service_key.api_url}:{resource_group}"
+    cache_key = _make_cache_key(service_key, resource_group)
 
     client = __ai_api_clients.get(cache_key)
     if client is not None:
@@ -101,7 +138,11 @@ def __get_ai_api_client(
         # Double-check pattern: verify cache miss again under lock
         client = __ai_api_clients.get(cache_key)
         if client is None:
-            logger.info(f"Creating AIAPIV2Client for resource group '{resource_group}'")
+            client_id_prefix = service_key.client_id[:8] if len(service_key.client_id) >= 8 else service_key.client_id
+            logger.info(
+                f"Creating new AIAPIV2Client [api_url={service_key.api_url}, "
+                f"resource_group='{resource_group}', client_id={client_id_prefix}...]"
+            )
             client = AIAPIV2Client(
                 base_url=service_key.api_url + "/v2/lm",
                 auth_url=service_key.auth_url + "/oauth/token",
@@ -111,11 +152,15 @@ def __get_ai_api_client(
             )
             __ai_api_clients[cache_key] = client
             logger.info(
-                f"AIAPIV2Client created successfully for resource group '{resource_group}'"
+                f"AIAPIV2Client created successfully [resource_group='{resource_group}', "
+                f"client_id={client_id_prefix}...]"
             )
 
     # Type narrowing: client is guaranteed non-None here
-    assert client is not None, "client should never be None at this point"
+    if client is None:
+        raise RuntimeError(
+            f"Failed to create/retrieve AIAPIV2Client for cache_key={cache_key}"
+        )
     return client
 
 
