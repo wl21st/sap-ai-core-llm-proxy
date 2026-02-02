@@ -2115,7 +2115,7 @@ wheels = [
 
 [[package]]
 name = "sap-ai-core-llm-proxy"
-version = "1.2.7"
+version = "1.2.8"
 source = { editable = "." }
 dependencies = [
     { name = "botocore" },

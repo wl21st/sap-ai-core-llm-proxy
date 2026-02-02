@@ -49,6 +49,9 @@ uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy -c c
 
 # After publishing to PyPI, run from anywhere:
 uvx sap-ai-proxy -c config.json
+
+# Inspect deployments and models
+uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-inspect -c config.json
 ```
 
 ### Using Python Directly
