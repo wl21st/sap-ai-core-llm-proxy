@@ -171,6 +171,140 @@ class TestTokenManager:
 
         assert token_manager._is_token_valid() is False
 
+    def test_is_token_valid_at_expiry_boundary(self, token_manager, mock_subaccount):
+        """Test token validity check exactly at expiry time."""
+        current_time = time.time()
+        mock_subaccount.token_info.token = "boundary_token"
+        mock_subaccount.token_info.expiry = current_time
+
+        # At exact expiry time, token should be considered invalid (now < expiry is False)
+        assert token_manager._is_token_valid() is False
+
+    def test_is_token_valid_just_before_expiry(self, token_manager, mock_subaccount):
+        """Test token validity check just before expiry."""
+        mock_subaccount.token_info.token = "almost_expired_token"
+        mock_subaccount.token_info.expiry = time.time() + 1  # 1 second left
+
+        assert token_manager._is_token_valid() is True
+
+    @patch("requests.post")
+    def test_token_refresh_includes_buffer(self, mock_post, token_manager, mock_subaccount):
+        """Test that token expiry is cached with 5-minute (300s) buffer."""
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "access_token": "new_token",
+            "expires_in": 3600,  # 1 hour
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        start_time = time.time()
+        token_manager._fetch_new_token()
+
+        # Expiry should be (start_time + 3600 - 300)
+        expected_expiry = start_time + 3600 - 300
+        # Allow 1 second tolerance for execution time
+        assert abs(mock_subaccount.token_info.expiry - expected_expiry) < 1
+
+    @patch("requests.post")
+    def test_token_refresh_on_expiry(self, mock_post, token_manager, mock_subaccount):
+        """Test that expired token triggers refresh."""
+        # Set expired token
+        mock_subaccount.token_info.token = "expired_token"
+        mock_subaccount.token_info.expiry = time.time() - 100
+
+        # Mock successful refresh
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "access_token": "refreshed_token",
+            "expires_in": 3600,
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        token = token_manager.get_token()
+
+        assert token == "refreshed_token"
+        assert mock_subaccount.token_info.token == "refreshed_token"
+        mock_post.assert_called_once()
+
+    def test_get_token_does_not_refresh_valid_token(self, token_manager, mock_subaccount):
+        """Test that valid token is not refreshed."""
+        mock_subaccount.token_info.token = "valid_token"
+        mock_subaccount.token_info.expiry = time.time() + 3600
+
+        with patch.object(token_manager, "_fetch_new_token") as mock_fetch:
+            token = token_manager.get_token()
+            assert token == "valid_token"
+            mock_fetch.assert_not_called()
+
+    @patch("requests.post")
+    def test_token_expiry_with_default_expires_in(
+        self, mock_post, token_manager, mock_subaccount
+    ):
+        """Test token caching when expires_in is missing (defaults to 14400s/4 hours)."""
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "access_token": "token_without_expiry",
+            # expires_in is missing
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        start_time = time.time()
+        token_manager._fetch_new_token()
+
+        # Default expires_in is 14400, so expiry = start_time + 14400 - 300
+        expected_expiry = start_time + 14400 - 300
+        assert abs(mock_subaccount.token_info.expiry - expected_expiry) < 1
+
+    @patch("requests.post")
+    def test_concurrent_token_refresh(self, mock_post, token_manager, mock_subaccount):
+        """Test that concurrent token fetches are thread-safe."""
+        import threading
+
+        mock_subaccount.token_info.token = None
+        mock_subaccount.token_info.expiry = 0
+
+        # Mock token fetch with delay to simulate race condition
+        call_count = 0
+        call_lock = threading.Lock()
+
+        def mock_fetch(*args, **kwargs):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+            time.sleep(0.1)  # Simulate network delay
+            mock_response = Mock()
+            mock_response.json.return_value = {
+                "access_token": f"token_{call_count}",
+                "expires_in": 3600,
+            }
+            mock_response.raise_for_status.return_value = None
+            return mock_response
+
+        mock_post.side_effect = mock_fetch
+
+        # Start multiple threads trying to get token
+        threads = []
+        results = []
+
+        def get_token_worker():
+            token = token_manager.get_token()
+            results.append(token)
+
+        for _ in range(5):
+            thread = threading.Thread(target=get_token_worker)
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        # All threads should get the same token (first fetch wins due to lock)
+        assert len(set(results)) == 1  # All tokens should be identical
+        assert mock_post.call_count >= 1  # At least one fetch occurred
+
 
 class TestBackwardCompatibility:
     """Test backward compatibility functions."""

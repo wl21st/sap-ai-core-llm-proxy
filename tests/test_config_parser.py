@@ -53,6 +53,34 @@ class TestValidateRegexPatterns:
 
         assert compiled == []
 
+    def test_invalid_regex_backslash_escape(self):
+        """Test that invalid regex pattern with bad escape sequence raises error."""
+        patterns = [r"\k<invalid>"]
+
+        with pytest.raises(ConfigValidationError) as exc_info:
+            validate_regex_patterns(patterns, "include")
+
+        assert "Invalid regex pattern in include filters" in str(exc_info.value)
+
+    def test_invalid_regex_unbalanced_parentheses(self):
+        """Test that unbalanced parentheses raises ConfigValidationError."""
+        patterns = ["(unbalanced"]
+
+        with pytest.raises(ConfigValidationError) as exc_info:
+            validate_regex_patterns(patterns, "exclude")
+
+        assert "Invalid regex pattern in exclude filters" in str(exc_info.value)
+        assert "(unbalanced" in str(exc_info.value)
+
+    def test_invalid_regex_lookahead_error(self):
+        """Test that invalid lookahead pattern raises ConfigValidationError."""
+        patterns = ["(?P<name>test)(?P=invalid)"]
+
+        with pytest.raises(ConfigValidationError) as exc_info:
+            validate_regex_patterns(patterns, "include")
+
+        assert "Invalid regex pattern in include filters" in str(exc_info.value)
+
 
 class TestApplyModelFilters:
     """Tests for apply_model_filters function."""
@@ -204,3 +232,88 @@ class TestApplyModelFilters:
 
         assert len(filtered_models) == 0
         assert len(filtered_info) == 2
+
+    def test_empty_patterns_in_filters(self):
+        """Test handling of empty pattern lists (not None, but empty [])."""
+        models = {
+            "gpt-4": ["url1"],
+            "claude-sonnet": ["url2"],
+        }
+        filters = ModelFilters(include=[], exclude=[])
+
+        filtered_models, filtered_info = apply_model_filters(models, filters)
+
+        assert filtered_models == models
+        assert filtered_info == []
+
+    def test_unicode_model_names(self):
+        """Test handling of unicode characters in model names."""
+        models = {
+            "gpt-4-日本語": ["url1"],
+            "claude-sonnet-中文": ["url2"],
+            "gemini-pro-한글": ["url3"],
+        }
+        filters = ModelFilters(include=[".*日本語$"], exclude=None)
+
+        filtered_models, filtered_info = apply_model_filters(models, filters)
+
+        assert "gpt-4-日本語" in filtered_models
+        assert "claude-sonnet-中文" not in filtered_models
+        assert "gemini-pro-한글" not in filtered_models
+
+    def test_special_characters_in_model_names(self):
+        """Test handling of special characters that need escaping in regex."""
+        models = {
+            "gpt-4.1": ["url1"],
+            "claude-3.5-sonnet": ["url2"],
+            "model+test": ["url3"],
+        }
+        # Using \. to match literal dot
+        filters = ModelFilters(include=[r".*\.\d+.*"], exclude=None)
+
+        filtered_models, filtered_info = apply_model_filters(models, filters)
+
+        # Should match: gpt-4.1, claude-3.5-sonnet (contains .digit)
+        assert "gpt-4.1" in filtered_models
+        assert "claude-3.5-sonnet" in filtered_models
+        assert "model+test" not in filtered_models
+
+    def test_multiple_urls_per_model(self):
+        """Test that filtering preserves multiple URLs per model."""
+        models = {
+            "gpt-4": ["url1", "url2", "url3"],
+            "claude-sonnet": ["url4", "url5"],
+        }
+        filters = ModelFilters(include=["^gpt-.*"], exclude=None)
+
+        filtered_models, filtered_info = apply_model_filters(models, filters)
+
+        assert "gpt-4" in filtered_models
+        assert len(filtered_models["gpt-4"]) == 3
+        assert filtered_models["gpt-4"] == ["url1", "url2", "url3"]
+
+    def test_case_sensitive_filtering(self):
+        """Test that filtering is case-sensitive by default."""
+        models = {
+            "GPT-4": ["url1"],
+            "gpt-4": ["url2"],
+            "Claude-Sonnet": ["url3"],
+        }
+        filters = ModelFilters(include=["^gpt-.*"], exclude=None)
+
+        filtered_models, filtered_info = apply_model_filters(models, filters)
+
+        # Only lowercase gpt-4 should match
+        assert "gpt-4" in filtered_models
+        assert "GPT-4" not in filtered_models
+        assert "Claude-Sonnet" not in filtered_models
+
+    def test_empty_model_dict(self):
+        """Test filtering with empty model dictionary."""
+        models = {}
+        filters = ModelFilters(include=["^gpt-.*"], exclude=[".*-test$"])
+
+        filtered_models, filtered_info = apply_model_filters(models, filters)
+
+        assert filtered_models == {}
+        assert filtered_info == []
