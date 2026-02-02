@@ -382,9 +382,17 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
                 f"Auto-discovery failed: {e}. Check service key and network connectivity."
             ) from e
     else:
-        logger.debug(
-            f"Skipping auto-discovery for subaccount '{sub_account_config.name}': "
-            f"service key not initialized or missing required fields (api_url, auth_url)"
+        logger.error(
+            f"Service key not initialized for subaccount '{sub_account_config.name}': "
+            f"missing required fields (api_url, auth_url). This may indicate an authentication error in configuration.",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
+                "subaccount": sub_account_config.name,
+            }
+        )
+        raise ConfigValidationError(
+            f"Service key not properly initialized for subaccount '{sub_account_config.name}'. "
+            f"Ensure service_key_json is configured correctly with valid credentials."
         )
 
     # Build lookup map for validation (ID -> Model Name)

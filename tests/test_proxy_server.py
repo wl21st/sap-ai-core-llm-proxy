@@ -134,6 +134,9 @@ def sample_service_key_raw():
         "clientsecret": "test-client-secret",
         "url": "https://test.authentication.sap.hana.ondemand.com",
         "identityzoneid": "test-zone-id",
+        "serviceurls": {
+            "AI_API_URL": "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com"
+        },
     }
 
 
@@ -336,14 +339,18 @@ class TestSubAccountConfig:
             config.service_key.client_secret == sample_service_key_raw["clientsecret"]
         )
 
-    def test_normalize_model_names(self):
+    def test_normalize_model_names(self, mocker, sample_service_key_raw, tmp_path):
         """Test model name normalization."""
-        from config.config_parser import _build_mapping_for_subaccount
+        from config.config_parser import _build_mapping_for_subaccount, _load_service_key_for_subaccount
+
+        # Create temp key file
+        key_file = tmp_path / "test_key.json"
+        key_file.write_text(json.dumps(sample_service_key_raw))
 
         config = SubAccountConfig(
             name="test",
             resource_group="default",
-            service_key_json="key.json",
+            service_key_json=str(key_file),
             model_to_deployment_urls={
                 "anthropic--claude-3.5-sonnet": [
                     "https://api.ai.com/v2/inference/deployments/deployment1"
@@ -351,6 +358,10 @@ class TestSubAccountConfig:
                 "gpt-4": ["https://api.ai.com/v2/inference/deployments/deployment2"],
             },
         )
+
+        # Load service key and mock auto-discovery
+        _load_service_key_for_subaccount(config)
+        mocker.patch("config.config_parser.fetch_all_deployments", return_value=[])
 
         _build_mapping_for_subaccount(config)
 
@@ -371,9 +382,12 @@ class TestProxyConfig:
         assert config.host == "127.0.0.1"
         assert config.model_to_subaccounts == {}
 
-    def test_build_model_mapping(self, sample_service_key_raw, tmp_path):
+    def test_build_model_mapping(self, mocker, sample_service_key_raw, tmp_path):
         """Test building model to subaccounts mapping."""
         from config.config_parser import load_proxy_config
+
+        # Mock auto-discovery to avoid real API calls
+        mocker.patch("config.config_parser.fetch_all_deployments", return_value=[])
 
         # Create temp key files
         key1_file = tmp_path / "key1.json"
@@ -1007,8 +1021,11 @@ class TestFlaskEndpoints:
 class TestConfigLoading:
     """Tests for configuration loading."""
 
-    def test_load_config_new_format(self, sample_config, tmp_path):
+    def test_load_config_new_format(self, mocker, sample_config, tmp_path):
         """Test loading new multi-subaccount config format."""
+        # Mock auto-discovery to avoid real API calls
+        mocker.patch("config.config_parser.fetch_all_deployments", return_value=[])
+
         config_file = tmp_path / "config.json"
         config_file.write_text(json.dumps(sample_config))
 
@@ -1022,6 +1039,9 @@ class TestConfigLoading:
                         "clientsecret": f"{account}-secret",
                         "url": "https://auth.url",
                         "identityzoneid": "zone",
+                        "serviceurls": {
+                            "AI_API_URL": "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com"
+                        },
                     }
                 )
             )

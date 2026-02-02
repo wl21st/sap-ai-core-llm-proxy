@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Cache configuration
 CACHE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), ".cache", "deployments"
+    os.path.expanduser("~"), ".sap-ai-proxy", "cache", "deployments"
 )
 CACHE_DURATION = 7 * 24 * 60 * 60  # 7 days in seconds
 
