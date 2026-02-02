@@ -2,6 +2,10 @@
 Configuration dataclasses for SAP AI Core LLM Proxy.
 
 This module defines the core configuration structures used throughout the proxy.
+
+NOTE: These dataclasses are separate from the Pydantic schemas in config_parser.py.
+See the comment block in config_parser.py for a detailed explanation of why we
+maintain both Pydantic models (for JSON validation) and dataclasses (for runtime state).
 """
 
 import threading

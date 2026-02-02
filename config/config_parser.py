@@ -29,6 +29,31 @@ from proxy_helpers import MODEL_ALIASES, Detector
 logger: Logger = get_server_logger(__name__)
 
 
+# ============================================================================
+# PYDANTIC SCHEMAS FOR JSON VALIDATION
+# ============================================================================
+#
+# NOTE: These Pydantic models intentionally duplicate the dataclasses in
+# config_models.py. This separation serves different purposes:
+#
+# 1. **Pydantic Schemas (here)**: Used for JSON validation during config loading.
+#    - Validates raw JSON structure and types from config.json
+#    - Uses camelCase field names matching the JSON format (e.g., "subAccounts")
+#    - Provides clear validation error messages for user-facing config errors
+#
+# 2. **Dataclasses (config_models.py)**: Used for runtime configuration state.
+#    - Pythonic snake_case naming (e.g., "model_to_deployment_urls")
+#    - Includes runtime-only fields not in JSON (e.g., "service_key", "token_info")
+#    - Thread-safe token management and mutable state
+#
+# This two-layer approach ensures:
+# - Clean JSON validation at the boundary (Pydantic)
+# - Clean Python objects for internal use (dataclasses)
+# - Separation of concerns between serialization and runtime state
+#
+# ============================================================================
+
+
 class ModelFiltersSchema(BaseModel):
     """Pydantic model for model filters validation."""
 
@@ -288,19 +313,24 @@ def _load_service_key_for_subaccount(sub_account_config: SubAccountConfig):
     )
 
 
-def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
-    """Build deployment ID mapping for a subaccount.
+def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dict]:
+    """Auto-discover deployments from SAP AI Core and register them.
 
-    This function handles both:
-    1. Deployment IDs configured in model_to_deployment_ids (fetches URLs via SDK)
-    2. Deployment URLs configured in model_to_deployment_urls (extracts IDs for backward compatibility)
+    This function:
+    1. Validates service key is properly initialized
+    2. Fetches all deployments for the subaccount
+    3. Registers discovered deployments under their backend model names
+    4. Registers model aliases
 
     Args:
-        sub_account_config: The subaccount config to update
-    """
-    # 0. Auto-discovery of deployments (New Feature)
-    discovered_deployments = []
+        sub_account_config: The subaccount config to discover deployments for
 
+    Returns:
+        List of discovered deployment dictionaries with keys: id, url, model_name, created_at
+
+    Raises:
+        ConfigValidationError: If service key is invalid or auto-discovery fails
+    """
     # Check if service_key is initialized and has required fields for auto-discovery
     has_valid_service_key = (
         hasattr(sub_account_config, "service_key")
@@ -311,77 +341,7 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
         and sub_account_config.service_key.auth_url is not None
     )
 
-    if has_valid_service_key:
-        try:
-            logger.info(
-                f"Starting auto-discovery for subaccount '{sub_account_config.name}'"
-            )
-            discovered_deployments = fetch_all_deployments(
-                service_key=sub_account_config.service_key,
-                resource_group=sub_account_config.resource_group,
-            )
-
-            for dep in discovered_deployments:
-                url = dep.get("url")
-                backend_model = dep.get("model_name")
-
-                if url and backend_model:
-                    # Register under raw backend model name
-                    if backend_model not in sub_account_config.model_to_deployment_urls:
-                        sub_account_config.model_to_deployment_urls[backend_model] = []
-
-                    if (
-                        url
-                        not in sub_account_config.model_to_deployment_urls[
-                            backend_model
-                        ]
-                    ):
-                        sub_account_config.model_to_deployment_urls[
-                            backend_model
-                        ].append(url)
-                        logger.debug(f"Auto-discovered: {backend_model} -> {url}")
-
-                    # Register aliases
-                    if backend_model in MODEL_ALIASES:
-                        for alias in MODEL_ALIASES[backend_model]:
-                            if alias not in sub_account_config.model_to_deployment_urls:
-                                sub_account_config.model_to_deployment_urls[alias] = []
-
-                            if (
-                                url
-                                not in sub_account_config.model_to_deployment_urls[
-                                    alias
-                                ]
-                            ):
-                                sub_account_config.model_to_deployment_urls[
-                                    alias
-                                ].append(url)
-                                logger.debug(f"Auto-aliased: {alias} -> {url}")
-
-        except DeploymentFetchError as e:
-            logger.error(
-                f"Auto-discovery failed for subaccount '{sub_account_config.name}': {e}. "
-                f"Check service key credentials and network connectivity.",
-                extra={
-                    "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
-                    "subaccount": sub_account_config.name,
-                },
-            )
-            raise ConfigValidationError(
-                f"Auto-discovery failed for '{sub_account_config.name}': {e}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"Unexpected error during auto-discovery for '{sub_account_config.name}': {e}",
-                extra={
-                    "error_id": ErrorIDs.AUTODISCOVERY_UNEXPECTED_ERROR,
-                    "subaccount": sub_account_config.name,
-                },
-            )
-            raise ConfigValidationError(
-                f"Auto-discovery failed: {e}. Check service key and network connectivity."
-            ) from e
-    else:
+    if not has_valid_service_key:
         logger.error(
             f"Service key not initialized for subaccount '{sub_account_config.name}': "
             f"missing required fields (api_url, auth_url). This may indicate an authentication error in configuration.",
@@ -395,12 +355,98 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
             f"Ensure service_key_json is configured correctly with valid credentials."
         )
 
-    # Build lookup map for validation (ID -> Model Name)
-    deployment_id_to_model = {
-        d["id"]: d.get("model_name") for d in discovered_deployments if d.get("id")
-    }
+    try:
+        logger.info(
+            f"Starting auto-discovery for subaccount '{sub_account_config.name}'"
+        )
+        discovered_deployments = fetch_all_deployments(
+            service_key=sub_account_config.service_key,
+            resource_group=sub_account_config.resource_group,
+        )
 
-    # First, resolve deployment IDs to URLs using the SDK (new feature)
+        for dep in discovered_deployments:
+            url = dep.get("url")
+            backend_model = dep.get("model_name")
+
+            if url and backend_model:
+                # Register under raw backend model name
+                if backend_model not in sub_account_config.model_to_deployment_urls:
+                    sub_account_config.model_to_deployment_urls[backend_model] = []
+
+                if (
+                    url
+                    not in sub_account_config.model_to_deployment_urls[
+                        backend_model
+                    ]
+                ):
+                    sub_account_config.model_to_deployment_urls[
+                        backend_model
+                    ].append(url)
+                    logger.debug(f"Auto-discovered: {backend_model} -> {url}")
+
+                # Register aliases
+                if backend_model in MODEL_ALIASES:
+                    for alias in MODEL_ALIASES[backend_model]:
+                        if alias not in sub_account_config.model_to_deployment_urls:
+                            sub_account_config.model_to_deployment_urls[alias] = []
+
+                        if (
+                            url
+                            not in sub_account_config.model_to_deployment_urls[
+                                alias
+                            ]
+                        ):
+                            sub_account_config.model_to_deployment_urls[
+                                alias
+                            ].append(url)
+                            logger.debug(f"Auto-aliased: {alias} -> {url}")
+
+        return discovered_deployments
+
+    except DeploymentFetchError as e:
+        logger.error(
+            f"Auto-discovery failed for subaccount '{sub_account_config.name}': {e}. "
+            f"Check service key credentials and network connectivity.",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
+                "subaccount": sub_account_config.name,
+            },
+        )
+        raise ConfigValidationError(
+            f"Auto-discovery failed for '{sub_account_config.name}': {e}"
+        ) from e
+    except Exception as e:
+        logger.error(
+            f"Unexpected error during auto-discovery for '{sub_account_config.name}': {e}",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_UNEXPECTED_ERROR,
+                "subaccount": sub_account_config.name,
+            },
+        )
+        raise ConfigValidationError(
+            f"Auto-discovery failed: {e}. Check service key and network connectivity."
+        ) from e
+
+
+def _resolve_deployment_ids(
+    sub_account_config: SubAccountConfig,
+    deployment_id_to_model: dict[str, str]
+):
+    """Resolve deployment IDs to URLs using the SDK.
+
+    This function:
+    1. Iterates through configured deployment IDs
+    2. Validates each deployment against discovered deployments
+    3. Fetches the deployment URL from SAP AI Core
+    4. Adds the URL to model_to_deployment_urls
+
+    Args:
+        sub_account_config: The subaccount config to update
+        deployment_id_to_model: Lookup map from deployment ID to backend model name
+
+    Raises:
+        ConfigValidationError: If deployment resolution fails
+    """
     for (
         model_name,
         deployment_ids,
@@ -426,8 +472,7 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
                         backend_model,
                         reason,
                     )
-            elif discovered_deployments:
-                # Only warn if discovery succeeded but ID wasn't found
+            elif deployment_id_to_model:  # Only warn if discovery succeeded
                 logger.warning(
                     "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
                     deployment_id,
@@ -483,7 +528,23 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
                     f"Check credentials and deployment status."
                 ) from e
 
-    # Then, extract deployment IDs from URLs for backward compatibility
+
+def _extract_deployment_ids_from_urls(
+    sub_account_config: SubAccountConfig,
+    deployment_id_to_model: dict[str, str]
+):
+    """Extract deployment IDs from URLs for backward compatibility.
+
+    This function:
+    1. Iterates through configured deployment URLs
+    2. Extracts the deployment ID from each URL
+    3. Validates the deployment against discovered deployments
+    4. Adds the ID to model_to_deployment_ids
+
+    Args:
+        sub_account_config: The subaccount config to update
+        deployment_id_to_model: Lookup map from deployment ID to backend model name
+    """
     for model_name, urls in sub_account_config.model_to_deployment_urls.items():
         model_name = model_name.strip()
         if model_name not in sub_account_config.model_to_deployment_ids:
@@ -508,8 +569,7 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
                             backend_model,
                             reason,
                         )
-                elif discovered_deployments:
-                    # Only warn if discovery succeeded but ID wasn't found
+                elif deployment_id_to_model:  # Only warn if discovery succeeded
                     logger.warning(
                         "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
                         deployment_id,
@@ -531,6 +591,32 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
                     model_name,
                     e,
                 )
+
+
+def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
+    """Build deployment ID mapping for a subaccount.
+
+    This orchestrates the deployment mapping process:
+    1. Auto-discovers deployments from SAP AI Core
+    2. Resolves configured deployment IDs to URLs
+    3. Extracts deployment IDs from configured URLs (backward compatibility)
+
+    Args:
+        sub_account_config: The subaccount config to update
+    """
+    # Step 1: Auto-discover deployments from SAP AI Core
+    discovered_deployments = _auto_discover_deployments(sub_account_config)
+
+    # Build lookup map for validation (ID -> Model Name)
+    deployment_id_to_model = {
+        d["id"]: d.get("model_name") for d in discovered_deployments if d.get("id")
+    }
+
+    # Step 2: Resolve configured deployment IDs to URLs
+    _resolve_deployment_ids(sub_account_config, deployment_id_to_model)
+
+    # Step 3: Extract deployment IDs from URLs for backward compatibility
+    _extract_deployment_ids_from_urls(sub_account_config, deployment_id_to_model)
 
 
 def _dump_subaccount_config(sub_account_config: SubAccountConfig):
