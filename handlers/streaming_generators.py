@@ -363,6 +363,10 @@ def generate_streaming_response(
                 logger.info(
                     f"Using Gemini streaming for subAccount '{subaccount_name}'"
                 )
+                # Initialize token counters (will be updated if usage metadata is received)
+                total_tokens = 0
+                prompt_tokens = 0
+                completion_tokens = 0
                 for line_bytes in response.iter_lines():
                     if line_bytes:
                         line = line_bytes.decode("utf-8")
@@ -397,7 +401,12 @@ def generate_streaming_response(
                                     logger.info(
                                         f"Gemini converted to OpenAI chunk: {openai_sse_chunk_str}"
                                     )
-                                    yield openai_sse_chunk_str
+                                    # Verify chunk starts with "data: "
+                                    if not openai_sse_chunk_str.startswith("data: "):
+                                        logger.error(
+                                            f"ERROR: Converter returned chunk without 'data: ' prefix: {openai_sse_chunk_str[:100]}"
+                                        )
+                                    yield openai_sse_chunk_str.encode("utf-8")
                                 else:
                                     logger.info("Gemini chunk conversion returned None")
 
@@ -449,7 +458,12 @@ def generate_streaming_response(
                                         }
                                     ],
                                 }
-                                yield f"{json.dumps(error_payload)}\n\n"
+                                yield f"data: {json.dumps(error_payload)}\n\n".encode(
+                                    "utf-8"
+                                )
+                        elif line_content == "[DONE]":
+                            done_sent = True
+                            logger.info("Received [DONE] signal from Gemini backend")
 
                 # Send final chunk with usage information before [DONE] for Gemini
                 if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
@@ -465,11 +479,16 @@ def generate_streaming_response(
                             "total_tokens": total_tokens,
                         },
                     }
-                    final_usage_chunk_str = f"{json.dumps(final_usage_chunk)}\n\n"
+                    final_usage_chunk_str = f"data: {json.dumps(final_usage_chunk)}\n\n"
                     logger.info(
-                        f"Sending final Gemini usage chunk with SSE format: {final_usage_chunk_str[:200]}..."
+                        f"[FIXED] Sending final Gemini usage chunk with data prefix: {len(final_usage_chunk_str)} bytes, starts with: {final_usage_chunk_str[:50]}"
                     )
-                    yield final_usage_chunk_str
+                    # Verify chunk starts with "data: "
+                    if not final_usage_chunk_str.startswith("data: "):
+                        logger.error(
+                            f"ERROR: Final usage chunk does not start with 'data: ': {final_usage_chunk_str[:100]}"
+                        )
+                    yield final_usage_chunk_str.encode("utf-8")
                     logger.info(
                         f"Sent final Gemini usage chunk: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
                     )

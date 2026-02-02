@@ -1586,6 +1586,24 @@ class Converters:
 
             # Extract candidates
             candidates = gemini_chunk.get("candidates", [])
+
+            # Handle metadata-only chunks from Gemini (e.g., final chunk with usage only)
+            if not candidates and "usageMetadata" in gemini_chunk:
+                # Create a chunk with just the usage info
+                openai_chunk_payload["usage"] = {
+                    "prompt_tokens": gemini_chunk["usageMetadata"].get(
+                        "promptTokenCount", 0
+                    ),
+                    "completion_tokens": gemini_chunk["usageMetadata"].get(
+                        "candidatesTokenCount", 0
+                    ),
+                    "total_tokens": gemini_chunk["usageMetadata"].get(
+                        "totalTokenCount", 0
+                    ),
+                }
+                sse_string = f"data: {json.dumps(openai_chunk_payload)}\n\n"
+                return sse_string
+
             if not candidates:
                 return None
 
@@ -1621,6 +1639,18 @@ class Converters:
                     text_delta = parts[0]["text"]
                     logger.info(f"Gemini text delta: {text_delta}")
                     openai_chunk_payload["choices"][0]["delta"]["content"] = text_delta
+
+            # Extract usage information from Gemini's usageMetadata
+            if "usageMetadata" in gemini_chunk:
+                usage_metadata = gemini_chunk["usageMetadata"]
+                openai_chunk_payload["usage"] = {
+                    "prompt_tokens": usage_metadata.get("promptTokenCount", 0),
+                    "completion_tokens": usage_metadata.get("candidatesTokenCount", 0),
+                    "total_tokens": usage_metadata.get("totalTokenCount", 0),
+                }
+                logger.info(
+                    f"Extracted usage from Gemini metadata: {openai_chunk_payload['usage']}"
+                )
 
             # Format as SSE string
             sse_string = f"data: {json.dumps(openai_chunk_payload)}\n\n"
