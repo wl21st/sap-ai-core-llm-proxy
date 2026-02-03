@@ -177,8 +177,6 @@ def extract_deployment_id(deployment_url: str) -> str:
     Raises:
         ValueError: If URL format is invalid, empty, or missing deployment ID
     """
-    from utils.error_ids import ErrorIDs
-
     if not deployment_url or not isinstance(deployment_url, str):
         from utils.exceptions import DeploymentResolutionError
 
