@@ -1,8 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 import logging
-from config import SubAccountConfig, ServiceKey
+from config.config_models import SubAccountConfig, ServiceKey
 from config.config_parser import _build_mapping_for_subaccount
+from utils.exceptions import ConfigValidationError
 
 
 def test_validation_warning(caplog):
@@ -116,3 +117,131 @@ def test_deployment_not_found_warning(caplog):
                 "Configuration warning: Deployment 'd999' mapped to model 'gpt-4' not found in subaccount"
                 in caplog.text
             )
+
+
+def test_config_load_auth_failure(tmp_path):
+    """Test that config loading fails fast on authentication error."""
+    import json
+
+    # Create temporary service key file
+    service_key_file = tmp_path / "service_key.json"
+    service_key_data = {
+        "clientid": "test-client",
+        "clientsecret": "test-secret",
+        "url": "https://auth.test.com",
+        "identityzoneid": "test-zone",
+        "serviceurls": {"AI_API_URL": "https://api.test.com"},
+    }
+    service_key_file.write_text(json.dumps(service_key_data))
+
+    # Create config file
+    config_file = tmp_path / "config.json"
+    config_data = {
+        "subAccounts": {
+            "test-account": {
+                "resource_group": "default",
+                "service_key_json": str(service_key_file),
+                "deployment_models": {},
+            }
+        }
+    }
+    config_file.write_text(json.dumps(config_data))
+
+    from config.config_parser import load_proxy_config
+    from utils.exceptions import AuthenticationError
+
+    with patch("config.config_parser.fetch_all_deployments") as mock_fetch:
+        mock_fetch.side_effect = AuthenticationError("Invalid credentials")
+
+        with pytest.raises((ConfigValidationError, AuthenticationError)) as exc_info:
+            load_proxy_config(str(config_file))
+
+        assert (
+            "authentication" in str(exc_info.value).lower()
+            or "credentials" in str(exc_info.value).lower()
+        )
+
+
+def test_config_load_network_failure(tmp_path):
+    """Test that config loading fails fast on network error."""
+    import json
+
+    # Create temporary service key file
+    service_key_file = tmp_path / "service_key.json"
+    service_key_data = {
+        "clientid": "test-client",
+        "clientsecret": "test-secret",
+        "url": "https://auth.test.com",
+        "identityzoneid": "test-zone",
+        "serviceurls": {"AI_API_URL": "https://api.test.com"},
+    }
+    service_key_file.write_text(json.dumps(service_key_data))
+
+    # Create config file
+    config_file = tmp_path / "config.json"
+    config_data = {
+        "subAccounts": {
+            "test-account": {
+                "resource_group": "default",
+                "service_key_json": str(service_key_file),
+                "deployment_models": {},
+            }
+        }
+    }
+    config_file.write_text(json.dumps(config_data))
+
+    from config.config_parser import load_proxy_config
+    import requests
+
+    with patch("config.config_parser.fetch_all_deployments") as mock_fetch:
+        mock_fetch.side_effect = requests.exceptions.ConnectionError(
+            "Network unreachable"
+        )
+
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_proxy_config(str(config_file))
+
+        assert (
+            "network" in str(exc_info.value).lower()
+            or "connection" in str(exc_info.value).lower()
+        )
+
+
+def test_config_load_invalid_deployment_id(tmp_path):
+    """Test that config loading fails on invalid deployment ID."""
+    import json
+
+    # Create temporary service key file
+    service_key_file = tmp_path / "service_key.json"
+    service_key_data = {
+        "clientid": "test-client",
+        "clientsecret": "test-secret",
+        "url": "https://auth.test.com",
+        "identityzoneid": "test-zone",
+        "serviceurls": {"AI_API_URL": "https://api.test.com"},
+    }
+    service_key_file.write_text(json.dumps(service_key_data))
+
+    # Create config file with invalid deployment ID
+    config_file = tmp_path / "config.json"
+    config_data = {
+        "subAccounts": {
+            "test-account": {
+                "resource_group": "default",
+                "service_key_json": str(service_key_file),
+                "deployment_ids": {"gpt-4o": ["invalid-deployment-id"]},
+            }
+        }
+    }
+    config_file.write_text(json.dumps(config_data))
+
+    from config.config_parser import load_proxy_config
+
+    with patch("config.config_parser.extract_deployment_id") as mock_extract:
+        mock_extract.side_effect = ValueError("Invalid deployment ID format")
+
+        # This should raise ConfigValidationError during config parsing
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_proxy_config(str(config_file))
+
+        assert "deployment" in str(exc_info.value).lower()
