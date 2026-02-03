@@ -299,9 +299,10 @@ def fetch_all_deployments(
         DeploymentFetchError: If fetching deployments fails (network, auth, timeout, etc.)
         CacheError: If cache operations fail
     """
-    from utils.exceptions import DeploymentFetchError, CacheError
-    from utils.error_ids import ErrorIDs
     import requests
+
+    from utils.error_ids import ErrorIDs
+    from utils.exceptions import CacheError, DeploymentFetchError
 
     # Create cache key based on credentials and resource group
     key_str = f"{service_key.client_id}:{service_key.api_url}:{resource_group}"
