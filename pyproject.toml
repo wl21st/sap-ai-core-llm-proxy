@@ -8,10 +8,11 @@ dependencies = [
     "botocore>=1.35.0",
     "flask>=3.1.2",
     "pydantic>=2.0.0",
-    "sap-ai-sdk-gen[all]>=5.10.0",
+    "sap-ai-sdk-gen>=5.10.0",
     "tenacity>=9.0.0",
     "requests>=2.32.3",
     "diskcache>=5.6.3",
+    "aioboto3>=13.0.0",
 ]
 
 [project.optional-dependencies]
