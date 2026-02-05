@@ -188,7 +188,9 @@ class TestTokenManager:
         assert token_manager._is_token_valid() is True
 
     @patch("requests.post")
-    def test_token_refresh_includes_buffer(self, mock_post, token_manager, mock_subaccount):
+    def test_token_refresh_includes_buffer(
+        self, mock_post, token_manager, mock_subaccount
+    ):
         """Test that token expiry is cached with 5-minute (300s) buffer."""
         mock_response = Mock()
         mock_response.json.return_value = {
@@ -228,7 +230,9 @@ class TestTokenManager:
         assert mock_subaccount.token_info.token == "refreshed_token"
         mock_post.assert_called_once()
 
-    def test_get_token_does_not_refresh_valid_token(self, token_manager, mock_subaccount):
+    def test_get_token_does_not_refresh_valid_token(
+        self, token_manager, mock_subaccount
+    ):
         """Test that valid token is not refreshed."""
         mock_subaccount.token_info.token = "valid_token"
         mock_subaccount.token_info.expiry = time.time() + 3600
@@ -304,6 +308,58 @@ class TestTokenManager:
         # All threads should get the same token (first fetch wins due to lock)
         assert len(set(results)) == 1  # All tokens should be identical
         assert mock_post.call_count >= 1  # At least one fetch occurred
+
+    def test_invalidate_token_clears_cached_token(self, token_manager, mock_subaccount):
+        """Test that invalidate_token clears the cached token."""
+        # Set up a valid cached token
+        mock_subaccount.token_info.token = "cached_token"
+        mock_subaccount.token_info.expiry = time.time() + 3600
+
+        # Invalidate the token
+        token_manager.invalidate_token()
+
+        # Verify token was cleared
+        assert mock_subaccount.token_info.token == ""
+        assert mock_subaccount.token_info.expiry == 0.0
+
+    def test_invalidate_token_triggers_refresh(self, token_manager, mock_subaccount):
+        """Test that get_token fetches new token after invalidation."""
+        # Set up a valid cached token
+        mock_subaccount.token_info.token = "old_token"
+        mock_subaccount.token_info.expiry = time.time() + 3600
+
+        # Invalidate the token
+        token_manager.invalidate_token()
+
+        # Mock the token fetch to return a new token
+        with patch.object(
+            token_manager, "_fetch_new_token", return_value="new_token"
+        ) as mock_fetch:
+            token = token_manager.get_token()
+            assert token == "new_token"
+            mock_fetch.assert_called_once()
+
+    def test_invalidate_token_thread_safety(self, token_manager, mock_subaccount):
+        """Test that invalidate_token is thread-safe."""
+        import threading
+
+        # Set up a valid cached token
+        mock_subaccount.token_info.token = "cached_token"
+        mock_subaccount.token_info.expiry = time.time() + 3600
+
+        # Run invalidate_token from multiple threads
+        threads = []
+        for _ in range(5):
+            thread = threading.Thread(target=token_manager.invalidate_token)
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        # Verify token was cleared (no race conditions)
+        assert mock_subaccount.token_info.token == ""
+        assert mock_subaccount.token_info.expiry == 0.0
 
 
 class TestBackwardCompatibility:

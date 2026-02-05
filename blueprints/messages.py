@@ -29,7 +29,7 @@ from handlers.streaming_generators import (
 from handlers.streaming_handler import make_backend_request
 from proxy_helpers import Detector, Converters
 from utils.logging_utils import get_server_logger, get_transport_logger
-from utils.sdk_pool import get_bedrock_client
+from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
 
 if TYPE_CHECKING:
@@ -302,6 +302,26 @@ def proxy_claude_request():
                 )
                 response_body = response.get("body")
 
+                # Check for authentication errors and retry with fresh client
+                if response_status in [401, 403]:
+                    logger.warning(
+                        f"Authentication error ({response_status}) from SDK for model '{model}', "
+                        f"invalidating client and retrying..."
+                    )
+                    invalidate_bedrock_client(model)
+                    # Get a fresh client (will force re-authentication)
+                    bedrock_client = get_bedrock_client(
+                        sub_account_config=_proxy_config.subaccounts[subaccount_name],
+                        model_name=model,
+                        deployment_id=extract_deployment_id(selected_url),
+                    )
+                    # Retry the request
+                    response = invoke_bedrock_streaming(bedrock_client, body_json)
+                    response_status = response.get("ResponseMetadata", {}).get(
+                        "HTTPStatusCode"
+                    )
+                    response_body = response.get("body")
+
                 # Check for malformed response first (missing status code)
                 if response_status is None:
                     logger.error("Missing HTTPStatusCode in response metadata")
@@ -344,6 +364,26 @@ def proxy_claude_request():
             # Extract status code from response metadata - default to None to detect malformed responses
             response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             response_body = response.get("body")
+
+            # Check for authentication errors and retry with fresh client
+            if response_status in [401, 403]:
+                logger.warning(
+                    f"Authentication error ({response_status}) from SDK for model '{model}', "
+                    f"invalidating client and retrying..."
+                )
+                invalidate_bedrock_client(model)
+                # Get a fresh client (will force re-authentication)
+                bedrock_client = get_bedrock_client(
+                    sub_account_config=_proxy_config.subaccounts[subaccount_name],
+                    model_name=model,
+                    deployment_id=extract_deployment_id(selected_url),
+                )
+                # Retry the request
+                response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+                response_status = response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
+                response_body = response.get("body")
 
             # Check for malformed response (missing status code)
             if response_status is None:
@@ -504,6 +544,26 @@ def proxy_claude_request_original():
                 tid=tid,
                 is_claude_model_fn=Detector.is_claude_model,
             )
+
+            # Check for authentication errors and retry with fresh token
+            if not result.success and result.status_code in [401, 403]:
+                logger.warning(
+                    f"Authentication error ({result.status_code}) for subaccount '{subaccount_name}', "
+                    f"invalidating token and retrying..."
+                )
+                token_manager.invalidate_token()
+                # Fetch new token and update headers
+                subaccount_token = token_manager.get_token()
+                headers["Authorization"] = f"Bearer {subaccount_token}"
+                # Retry the request
+                result = make_backend_request(
+                    endpoint_url,
+                    headers=headers,
+                    payload=backend_payload,
+                    model=model,
+                    tid=tid,
+                    is_claude_model_fn=Detector.is_claude_model,
+                )
 
             if not result.success:
                 logger.error(

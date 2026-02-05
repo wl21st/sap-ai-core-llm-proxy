@@ -126,3 +126,27 @@ def get_bedrock_client(
         "bedrock_client should never be None at this point"
     )
     return bedrock_client
+
+
+def invalidate_bedrock_client(model_name: str) -> None:
+    """Invalidate the cached Bedrock client for a given model.
+
+    This removes the client from the cache, forcing a new client to be created
+    on the next request. Should be called when authentication errors (401/403)
+    occur, indicating the cached credentials may be invalid.
+
+    Args:
+        model_name: Model name whose client should be invalidated
+    """
+    global __model_client_map, __proxy_client
+
+    with __clients_lock:
+        if model_name in __model_client_map:
+            logger.info(f"Invalidating cached Bedrock client for model '{model_name}'")
+            del __model_client_map[model_name]
+
+    # Also invalidate the proxy client to force re-authentication
+    with __session_lock:
+        if __proxy_client is not None:
+            logger.info("Invalidating global SAP AI Core proxy client")
+            __proxy_client = None
