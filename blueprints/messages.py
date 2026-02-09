@@ -31,6 +31,7 @@ from proxy_helpers import Detector, Converters
 from utils.logging_utils import get_server_logger, get_transport_logger
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
+from utils.auth_retry import AUTH_RETRY_MAX, log_auth_error_retry
 
 if TYPE_CHECKING:
     from config import ProxyConfig, ProxyGlobalContext, ServiceKey
@@ -48,23 +49,6 @@ DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.5-sonnet"
 API_VERSION_BEDROCK_2023_05_31 = "bedrock-2023-05-31"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
 API_VERSION_2023_05_15 = "2023-05-15"
-
-AUTH_RETRY_MAX: int = 1
-
-_AUTH_ERROR_FORMAT = "Authentication error ({status_code}) for {target}, invalidating credentials and retrying..."
-
-
-def _log_auth_error_retry(status_code: int, target: str) -> str:
-    """Generate standardized auth error retry log message.
-
-    Args:
-        status_code: HTTP status code (401 or 403)
-        target: Description of what failed (e.g., model name, subaccount)
-
-    Returns:
-        Formatted log message
-    """
-    return _AUTH_ERROR_FORMAT.format(status_code=status_code, target=target)
 
 
 def init_messages_blueprint(
@@ -322,7 +306,7 @@ def proxy_claude_request():
                 # Check for authentication errors and retry with fresh client
                 if response_status in [401, 403]:
                     logger.warning(
-                        _log_auth_error_retry(
+                        log_auth_error_retry(
                             response_status, f"SDK for model '{model}'"
                         )
                     )
@@ -386,7 +370,7 @@ def proxy_claude_request():
             # Check for authentication errors and retry with fresh client
             if response_status in [401, 403]:
                 logger.warning(
-                    _log_auth_error_retry(response_status, f"SDK for model '{model}'")
+                    log_auth_error_retry(response_status, f"SDK for model '{model}'")
                 )
                 invalidate_bedrock_client(model)
                 # Get a fresh client (will force re-authentication)
@@ -565,7 +549,7 @@ def proxy_claude_request_original():
             # Check for authentication errors and retry with fresh token
             if not result.success and result.status_code in [401, 403]:
                 logger.warning(
-                    _log_auth_error_retry(
+                    log_auth_error_retry(
                         result.status_code, f"subaccount '{subaccount_name}'"
                     )
                 )
