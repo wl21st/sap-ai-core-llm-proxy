@@ -66,6 +66,19 @@ class TokenManager:
         now = time.time()
         return now < self.subaccount.token_info.expiry
 
+    def invalidate_token(self) -> None:
+        """Invalidate the cached token for this subaccount.
+
+        This clears the cached token, forcing a fresh token fetch on the next call.
+        Should be called when the backend returns 401 or 403 errors.
+        """
+        with self._lock:
+            logger.info(
+                f"Invalidating cached token for subaccount '{self.subaccount.name}'"
+            )
+            self.subaccount.token_info.token = ""
+            self.subaccount.token_info.expiry = 0.0
+
     def _fetch_new_token(self) -> str:
         """Fetch new token from SAP AI Core."""
         logger.info(f"Fetching new token for subaccount '{self.subaccount.name}'")

@@ -16,11 +16,13 @@ from typing import Any, Generator, Iterator
 import requests
 from flask import request
 
+from config import ProxyGlobalContext
 from proxy_helpers import Converters, Detector
 from handlers.streaming_handler import (
     get_claude_stop_reason_from_gemini_chunk,
     get_claude_stop_reason_from_openai_chunk,
 )
+from utils.auth_retry import AUTH_RETRY_MAX, log_auth_error_retry
 
 logger = logging.getLogger(__name__)
 transport_logger = logging.getLogger("transport")
@@ -690,6 +692,7 @@ def generate_claude_streaming_response(
     payload: dict,
     model: str,
     subaccount_name: str,
+    token_manager=None,
 ) -> Generator[bytes, None, None]:
     """Generate streaming response in Anthropic Claude Messages API format.
 
@@ -702,6 +705,7 @@ def generate_claude_streaming_response(
         payload: Request payload to send to backend
         model: Model name (used for format detection/conversion)
         subaccount_name: Name of the selected subAccount (for logging)
+        token_manager: Optional token manager for retry on auth errors
 
     Yields:
         SSE-formatted response bytes (event + data lines)
@@ -728,13 +732,11 @@ def generate_claude_streaming_response(
         7. Sends message_delta event with stop_reason
         8. Sends message_stop event
 
-    Claude Messages API Event Sequence:
-        - message_start: Initial message with id, role, model
-        - content_block_start: Start of content block (type: text)
-        - content_block_delta: Incremental text content (type: text_delta)
-        - content_block_stop: End of content block
-        - message_delta: Stop reason and token usage
-        - message_stop: Final event
+    Retry Logic:
+        - If the backend returns 401 or 403, the token manager (if provided)
+          will be used to invalidate the current token and fetch a fresh one
+        - The request will be retried exactly once with the new credentials
+        - This handles cases where cached tokens become invalid before expiry
 
     Notes:
         - 10-minute timeout for streaming requests
@@ -757,132 +759,161 @@ def generate_claude_streaming_response(
             f"Backend is Claude model, converting response format for '{model}'"
         )
         try:
-            with requests.post(
-                url, headers=headers, json=payload, stream=True, timeout=600
-            ) as response:
-                response.raise_for_status()
-                logger.debug(f"Claude backend response status: {response.status_code}")
-
-                # Send message_start event
-                message_start_data = {
-                    "type": "message_start",
-                    "message": {
-                        "id": f"msg_{random.randint(10000000, 99999999)}",
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [],
-                        "model": model,
-                        "stop_reason": None,
-                        "stop_sequence": None,
-                        "usage": {"input_tokens": 0, "output_tokens": 0},
-                    },
-                }
-                message_start_event = (
-                    f"event: message_start\ndata: {json.dumps(message_start_data)}\n\n"
-                )
-                yield message_start_event.encode("utf-8")
-
-                # Send content_block_start event
-                content_block_start_data = {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "text", "text": ""},
-                }
-                content_block_start_event = f"event: content_block_start\ndata: {json.dumps(content_block_start_data)}\n\n"
-                yield content_block_start_event.encode("utf-8")
-
-                chunk_count = 0
-                stop_reason = None
-
-                for line in response.iter_lines():
-                    chunk_count += 1
-                    if not line:
-                        continue
-
-                    line_str = line.decode("utf-8", errors="ignore").strip()
-                    logger.debug(f"Claude backend chunk {chunk_count}: {line_str}")
-
-                    if line_str.startswith("data: "):
-                        data_content = line_str[6:].strip()  # Remove 'data: ' prefix
-
-                        # Handle different data formats
-                        if data_content == "[DONE]":
-                            break
-
-                        try:
-                            # Try to parse as JSON first
-                            try:
-                                parsed_data = json.loads(data_content)
-                            except json.JSONDecodeError:
-                                # If JSON parsing fails, try to evaluate as Python dict
-                                # This handles the case where single quotes are used instead of double quotes
-                                parsed_data = ast.literal_eval(data_content)
-
-                            # Convert Claude backend format to standard Claude API format
-                            if "contentBlockDelta" in parsed_data:
-                                # Extract text from the delta and format it the same way as OpenAI conversion
-                                text_content = parsed_data["contentBlockDelta"][
-                                    "delta"
-                                ].get("text", "")
-                                if text_content:
-                                    delta_data = {
-                                        "type": "content_block_delta",
-                                        "index": 0,
-                                        "delta": {
-                                            "type": "text_delta",
-                                            "text": text_content,
-                                        },
-                                    }
-                                    delta_event = f"event: content_block_delta\ndata: {json.dumps(delta_data)}\n\n"
-                                    yield delta_event.encode("utf-8")
-
-                            elif "contentBlockStop" in parsed_data:
-                                content_block_stop_data = {
-                                    "type": "content_block_stop",
-                                    "index": parsed_data["contentBlockStop"].get(
-                                        "contentBlockIndex", 0
-                                    ),
-                                }
-                                content_block_stop_event = f"event: content_block_stop\ndata: {json.dumps(content_block_stop_data)}\n\n"
-                                yield content_block_stop_event.encode("utf-8")
-
-                            elif "messageStop" in parsed_data:
-                                stop_reason = parsed_data["messageStop"].get(
-                                    "stopReason", "end_turn"
-                                )
-
-                            elif "metadata" in parsed_data:
-                                # Extract token usage information
-                                usage_info = parsed_data.get("metadata", {}).get(
-                                    "usage", {}
-                                )
-                                message_delta_data = {
-                                    "type": "message_delta",
-                                    "delta": {
-                                        "stop_reason": stop_reason or "end_turn",
-                                        "stop_sequence": None,
-                                    },
-                                    "usage": {
-                                        "output_tokens": usage_info.get(
-                                            "outputTokens", 0
-                                        )
-                                    },
-                                }
-                                message_delta_event = f"event: message_delta\ndata: {json.dumps(message_delta_data)}\n\n"
-                                yield message_delta_event.encode("utf-8")
-
-                                message_stop_event = f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
-                                yield message_stop_event.encode("utf-8")
-
-                        except (json.JSONDecodeError, ValueError, SyntaxError) as e:
+            success = False
+            for attempt in range(AUTH_RETRY_MAX + 1):
+                with requests.post(
+                    url, headers=headers, json=payload, stream=True, timeout=600
+                ) as http_response:
+                    if http_response.status_code in [401, 403]:
+                        if attempt == 0 and token_manager is not None:
                             logger.warning(
-                                f"Could not parse Claude backend data: {data_content}, error: {e}"
+                                log_auth_error_retry(
+                                    http_response.status_code, f"model '{model}'"
+                                )
                             )
+                            token_manager.invalidate_token()
+                            new_token = token_manager.get_token()
+                            headers["Authorization"] = f"Bearer {new_token}"
+                            continue
+                        else:
+                            logger.error(
+                                log_auth_error_retry(
+                                    http_response.status_code, f"model '{model}'"
+                                )
+                            )
+                            http_response.raise_for_status()
+
+                    http_response.raise_for_status()
+                    logger.debug(
+                        f"Claude backend response status: {http_response.status_code}"
+                    )
+
+                    # Process the response while the connection is still open
+                    # Send message_start event
+                    message_start_data = {
+                        "type": "message_start",
+                        "message": {
+                            "id": f"msg_{random.randint(10000000, 99999999)}",
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [],
+                            "model": model,
+                            "stop_reason": None,
+                            "stop_sequence": None,
+                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                        },
+                    }
+                    message_start_event = f"event: message_start\ndata: {json.dumps(message_start_data)}\n\n"
+                    yield message_start_event.encode("utf-8")
+
+                    # Send content_block_start event
+                    content_block_start_data = {
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {"type": "text", "text": ""},
+                    }
+                    content_block_start_event = f"event: content_block_start\ndata: {json.dumps(content_block_start_data)}\n\n"
+                    yield content_block_start_event.encode("utf-8")
+
+                    chunk_count = 0
+                    stop_reason = None
+
+                    for line in http_response.iter_lines():
+                        chunk_count += 1
+                        if not line:
                             continue
 
-                logger.info(
-                    f"Claude backend conversion completed with {chunk_count} chunks"
-                )
+                        line_str = line.decode("utf-8", errors="ignore").strip()
+                        logger.debug(f"Claude backend chunk {chunk_count}: {line_str}")
+
+                        if line_str.startswith("data: "):
+                            data_content = line_str[
+                                6:
+                            ].strip()  # Remove 'data: ' prefix
+
+                            # Handle different data formats
+                            if data_content == "[DONE]":
+                                break
+
+                            try:
+                                # Try to parse as JSON first
+                                try:
+                                    parsed_data = json.loads(data_content)
+                                except json.JSONDecodeError:
+                                    # If JSON parsing fails, try to evaluate as Python dict
+                                    # This handles the case where single quotes are used instead of double quotes
+                                    parsed_data = ast.literal_eval(data_content)
+
+                                # Convert Claude backend format to standard Claude API format
+                                if "contentBlockDelta" in parsed_data:
+                                    # Extract text from the delta and format it the same way as OpenAI conversion
+                                    text_content = parsed_data["contentBlockDelta"][
+                                        "delta"
+                                    ].get("text", "")
+                                    if text_content:
+                                        delta_data = {
+                                            "type": "content_block_delta",
+                                            "index": 0,
+                                            "delta": {
+                                                "type": "text_delta",
+                                                "text": text_content,
+                                            },
+                                        }
+                                        delta_event = f"event: content_block_delta\ndata: {json.dumps(delta_data)}\n\n"
+                                        yield delta_event.encode("utf-8")
+
+                                elif "contentBlockStop" in parsed_data:
+                                    content_block_stop_data = {
+                                        "type": "content_block_stop",
+                                        "index": parsed_data["contentBlockStop"].get(
+                                            "contentBlockIndex", 0
+                                        ),
+                                    }
+                                    content_block_stop_event = f"event: content_block_stop\ndata: {json.dumps(content_block_stop_data)}\n\n"
+                                    yield content_block_stop_event.encode("utf-8")
+
+                                elif "messageStop" in parsed_data:
+                                    stop_reason = parsed_data["messageStop"].get(
+                                        "stopReason", "end_turn"
+                                    )
+
+                                elif "metadata" in parsed_data:
+                                    # Extract token usage information
+                                    usage_info = parsed_data.get("metadata", {}).get(
+                                        "usage", {}
+                                    )
+                                    message_delta_data = {
+                                        "type": "message_delta",
+                                        "delta": {
+                                            "stop_reason": stop_reason or "end_turn",
+                                            "stop_sequence": None,
+                                        },
+                                        "usage": {
+                                            "output_tokens": usage_info.get(
+                                                "outputTokens", 0
+                                            )
+                                        },
+                                    }
+                                    message_delta_event = f"event: message_delta\ndata: {json.dumps(message_delta_data)}\n\n"
+                                    yield message_delta_event.encode("utf-8")
+
+                                    message_stop_event = f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+                                    yield message_stop_event.encode("utf-8")
+
+                            except (json.JSONDecodeError, ValueError, SyntaxError) as e:
+                                logger.warning(
+                                    f"Could not parse Claude backend data: {data_content}, error: {e}"
+                                )
+                                continue
+
+                    logger.info(
+                        f"Claude backend conversion completed with {chunk_count} chunks"
+                    )
+                    success = True
+                    break
+
+            if not success:
+                raise Exception("Failed to get valid response for Claude streaming")
         except Exception as e:
             logger.error(
                 f"Error in Claude backend conversion for '{model}': {e}", exc_info=True
@@ -930,87 +961,117 @@ def generate_claude_streaming_response(
     delta_count = 0
 
     try:
-        with requests.post(
-            url, headers=headers, json=payload, stream=True, timeout=600
-        ) as response:
-            response.raise_for_status()
-            logger.debug(f"Backend response status: {response.status_code}")
-            logger.debug(f"Backend response headers: {dict(response.headers)}")
-
-            # 3. Iterate and yield content_block_delta events
-            for line in response.iter_lines():
-                chunk_count += 1
-                logger.debug(f"Processing backend chunk {chunk_count}: {line}")
-
-                if not line or not line.strip().startswith(b"data:"):
-                    logger.debug(f"Skipping non-data line {chunk_count}: {line}")
-                    continue
-
-                line_str = line.decode("utf-8", errors="ignore")[5:].strip()
-                logger.debug(f"Extracted line content: {line_str}")
-
-                if line_str == "[DONE]":
-                    logger.info(f"Received [DONE] signal at chunk {chunk_count}")
-                    break
-
-                try:
-                    backend_chunk = json.loads(line_str)
-                    logger.debug(
-                        f"Parsed backend chunk: {json.dumps(backend_chunk, indent=2)}"
-                    )
-
-                    claude_delta = None
-                    if Detector.is_gemini_model(model):
-                        logger.debug("Converting Gemini chunk to Claude delta")
-                        claude_delta = Converters.convert_gemini_chunk_to_claude_delta(
-                            backend_chunk
-                        )
-                        if not stop_reason:
-                            stop_reason = get_claude_stop_reason_from_gemini_chunk(
-                                backend_chunk
+        success = False
+        for attempt in range(AUTH_RETRY_MAX + 1):
+            with requests.post(
+                url, headers=headers, json=payload, stream=True, timeout=600
+            ) as http_response:
+                if http_response.status_code in [401, 403]:
+                    if attempt == 0 and token_manager is not None:
+                        logger.warning(
+                            log_auth_error_retry(
+                                http_response.status_code, f"model '{model}'"
                             )
-                            if stop_reason:
-                                logger.debug(
-                                    f"Extracted stop reason from Gemini: {stop_reason}"
-                                )
-                    else:  # Assume OpenAI-compatible
-                        logger.debug("Converting OpenAI chunk to Claude delta")
-                        claude_delta = Converters.convert_openai_chunk_to_claude_delta(
-                            backend_chunk
                         )
-                        if not stop_reason:
-                            stop_reason = get_claude_stop_reason_from_openai_chunk(
-                                backend_chunk
-                            )
-                            if stop_reason:
-                                logger.debug(
-                                    f"Extracted stop reason from OpenAI: {stop_reason}"
-                                )
-
-                    if claude_delta:
-                        delta_count += 1
-                        delta_event = f"event: content_block_delta\ndata: {json.dumps(claude_delta)}\n\n"
-                        logger.debug(
-                            f"Sending content_block_delta {delta_count}: {delta_event}"
-                        )
-                        yield delta_event.encode("utf-8")
+                        token_manager.invalidate_token()
+                        new_token = token_manager.get_token()
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        continue
                     else:
-                        logger.debug(f"No delta extracted from chunk {chunk_count}")
+                        logger.error(
+                            log_auth_error_retry(
+                                http_response.status_code, f"model '{model}'"
+                            )
+                        )
+                        http_response.raise_for_status()
 
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        f"Could not decode JSON from stream chunk {chunk_count}: {line_str}, error: {e}"
-                    )
-                    continue
-                except Exception as e:
-                    logger.error(
-                        f"Error processing chunk {chunk_count}: {e}", exc_info=True
-                    )
-                    continue
+                http_response.raise_for_status()
+                logger.debug(f"Backend response status: {http_response.status_code}")
+                logger.debug(f"Backend response headers: {dict(http_response.headers)}")
 
-            logger.info(
-                f"Processed {chunk_count} chunks, generated {delta_count} deltas"
-            )
+                # 3. Iterate and yield content_block_delta events
+                for line in http_response.iter_lines():
+                    chunk_count += 1
+                    logger.debug(f"Processing backend chunk {chunk_count}: {line}")
+
+                    if not line or not line.strip().startswith(b"data:"):
+                        logger.debug(f"Skipping non-data line {chunk_count}: {line}")
+                        continue
+
+                    line_str = line.decode("utf-8", errors="ignore")[5:].strip()
+                    logger.debug(f"Extracted line content: {line_str}")
+
+                    if line_str == "[DONE]":
+                        logger.info(f"Received [DONE] signal at chunk {chunk_count}")
+                        break
+
+                    try:
+                        backend_chunk = json.loads(line_str)
+                        logger.debug(
+                            f"Parsed backend chunk: {json.dumps(backend_chunk, indent=2)}"
+                        )
+
+                        claude_delta = None
+                        if Detector.is_gemini_model(model):
+                            logger.debug("Converting Gemini chunk to Claude delta")
+                            claude_delta = (
+                                Converters.convert_gemini_chunk_to_claude_delta(
+                                    backend_chunk
+                                )
+                            )
+                            if not stop_reason:
+                                stop_reason = get_claude_stop_reason_from_gemini_chunk(
+                                    backend_chunk
+                                )
+                                if stop_reason:
+                                    logger.debug(
+                                        f"Extracted stop reason from Gemini: {stop_reason}"
+                                    )
+                        else:  # Assume OpenAI-compatible
+                            logger.debug("Converting OpenAI chunk to Claude delta")
+                            claude_delta = (
+                                Converters.convert_openai_chunk_to_claude_delta(
+                                    backend_chunk
+                                )
+                            )
+                            if not stop_reason:
+                                stop_reason = get_claude_stop_reason_from_openai_chunk(
+                                    backend_chunk
+                                )
+                                if stop_reason:
+                                    logger.debug(
+                                        f"Extracted stop reason from OpenAI: {stop_reason}"
+                                    )
+
+                        if claude_delta:
+                            delta_count += 1
+                            delta_event = f"event: content_block_delta\ndata: {json.dumps(claude_delta)}\n\n"
+                            logger.debug(
+                                f"Sending content_block_delta {delta_count}: {delta_event}"
+                            )
+                            yield delta_event.encode("utf-8")
+                        else:
+                            logger.debug(f"No delta extracted from chunk {chunk_count}")
+
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"Could not decode JSON from stream chunk {chunk_count}: {line_str}, error: {e}"
+                        )
+                        continue
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing chunk {chunk_count}: {e}", exc_info=True
+                        )
+                        continue
+
+                logger.info(
+                    f"Processed {chunk_count} chunks, generated {delta_count} deltas"
+                )
+                success = True
+                break
+
+        if not success:
+            raise Exception("Failed to get valid response for streaming request")
 
     except requests.exceptions.HTTPError as e:
         logger.error(

@@ -29,8 +29,9 @@ from handlers.streaming_generators import (
 from handlers.streaming_handler import make_backend_request
 from proxy_helpers import Detector, Converters
 from utils.logging_utils import get_server_logger, get_transport_logger
-from utils.sdk_pool import get_bedrock_client
+from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
+from utils.auth_retry import AUTH_RETRY_MAX, log_auth_error_retry
 
 if TYPE_CHECKING:
     from config import ProxyConfig, ProxyGlobalContext, ServiceKey
@@ -302,6 +303,27 @@ def proxy_claude_request():
                 )
                 response_body = response.get("body")
 
+                # Check for authentication errors and retry with fresh client
+                if response_status in [401, 403]:
+                    logger.warning(
+                        log_auth_error_retry(
+                            response_status, f"SDK for model '{model}'"
+                        )
+                    )
+                    invalidate_bedrock_client(model)
+                    # Get a fresh client (will force re-authentication)
+                    bedrock_client = get_bedrock_client(
+                        sub_account_config=_proxy_config.subaccounts[subaccount_name],
+                        model_name=model,
+                        deployment_id=extract_deployment_id(selected_url),
+                    )
+                    # Retry the request
+                    response = invoke_bedrock_streaming(bedrock_client, body_json)
+                    response_status = response.get("ResponseMetadata", {}).get(
+                        "HTTPStatusCode"
+                    )
+                    response_body = response.get("body")
+
                 # Check for malformed response first (missing status code)
                 if response_status is None:
                     logger.error("Missing HTTPStatusCode in response metadata")
@@ -344,6 +366,25 @@ def proxy_claude_request():
             # Extract status code from response metadata - default to None to detect malformed responses
             response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             response_body = response.get("body")
+
+            # Check for authentication errors and retry with fresh client
+            if response_status in [401, 403]:
+                logger.warning(
+                    log_auth_error_retry(response_status, f"SDK for model '{model}'")
+                )
+                invalidate_bedrock_client(model)
+                # Get a fresh client (will force re-authentication)
+                bedrock_client = get_bedrock_client(
+                    sub_account_config=_proxy_config.subaccounts[subaccount_name],
+                    model_name=model,
+                    deployment_id=extract_deployment_id(selected_url),
+                )
+                # Retry the request
+                response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+                response_status = response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
+                response_body = response.get("body")
 
             # Check for malformed response (missing status code)
             if response_status is None:
@@ -505,6 +546,27 @@ def proxy_claude_request_original():
                 is_claude_model_fn=Detector.is_claude_model,
             )
 
+            # Check for authentication errors and retry with fresh token
+            if not result.success and result.status_code in [401, 403]:
+                logger.warning(
+                    log_auth_error_retry(
+                        result.status_code, f"subaccount '{subaccount_name}'"
+                    )
+                )
+                token_manager.invalidate_token()
+                # Fetch new token and update headers
+                subaccount_token = token_manager.get_token()
+                headers["Authorization"] = f"Bearer {subaccount_token}"
+                # Retry the request
+                result = make_backend_request(
+                    endpoint_url,
+                    headers=headers,
+                    payload=backend_payload,
+                    model=model,
+                    tid=tid,
+                    is_claude_model_fn=Detector.is_claude_model,
+                )
+
             if not result.success:
                 logger.error(
                     f"Error in Claude request({model}): {result.error_message}"
@@ -537,7 +599,12 @@ def proxy_claude_request_original():
             return Response(
                 stream_with_context(
                     generate_claude_streaming_response(
-                        endpoint_url, headers, backend_payload, model, subaccount_name
+                        endpoint_url,
+                        headers,
+                        backend_payload,
+                        model,
+                        subaccount_name,
+                        token_manager,
                     )
                 ),
                 content_type="text/event-stream",
