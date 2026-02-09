@@ -244,3 +244,202 @@ class TestReAuthenticationRetry:
         assert response.status_code == 500
         assert not mock_token_manager.invalidate_token.called
         assert mock_make_request.call_count == 1  # No retry
+
+
+class TestSDKReAuthenticationRetry:
+    """Test re-authentication retry logic for SDK path (proxy_claude_request)."""
+
+    @pytest.fixture
+    def mock_sdk_setup(self):
+        """Setup common mocks for SDK re-authentication tests."""
+        mock_config = MagicMock()
+        mock_ctx = MagicMock()
+
+        mock_subaccount = MagicMock()
+        mock_subaccount.service_key = MagicMock()
+        mock_subaccount.service_key.identity_zone_id = "test_zone"
+        mock_config.subaccounts = {"test_subaccount": mock_subaccount}
+        mock_config.secret_authentication_tokens = []
+
+        return mock_config, mock_ctx
+
+    @patch("blueprints.messages.validate_api_key")
+    @patch("blueprints.messages.load_balance_url")
+    @patch("blueprints.messages.get_bedrock_client")
+    @patch("blueprints.messages.invalidate_bedrock_client")
+    @patch("blueprints.messages.Detector")
+    @patch("blueprints.messages.extract_deployment_id")
+    def test_proxy_claude_request_sdk_retries_on_401_non_streaming(
+        self,
+        mock_extract_id,
+        mock_detector,
+        mock_invalidate_client,
+        mock_get_client,
+        mock_load_balance,
+        mock_validate,
+        client,
+        mock_sdk_setup,
+    ):
+        """Test that SDK path retries on 401 authentication error for non-streaming."""
+        mock_config, mock_ctx = mock_sdk_setup
+
+        mock_validate.return_value = (True, None)
+        mock_load_balance.return_value = (
+            "https://test.url/deployment-id",
+            "test_subaccount",
+            "test_resource_group",
+            "anthropic--claude-4.5-sonnet",
+        )
+        mock_detector.is_claude_model.return_value = True
+        mock_extract_id.return_value = "deployment-id"
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        first_response = Mock()
+        first_response.get.return_value = {"HTTPStatusCode": 401, "body": MagicMock()}
+
+        second_response = Mock()
+        second_response.get.return_value = {"HTTPStatusCode": 200, "body": MagicMock()}
+
+        mock_body = MagicMock()
+        mock_body.read.return_value = b'{"content": [{"text": "Hello"}]}'
+
+        from handlers.bedrock_handler import read_response_body_stream
+
+        with patch("blueprints.messages.invoke_bedrock_non_streaming") as mock_invoke:
+            with patch(
+                "blueprints.messages.read_response_body_stream",
+                return_value='{"content": [{"text": "Hello"}]}',
+            ):
+                mock_invoke.side_effect = [first_response, second_response]
+
+                init_messages_blueprint(mock_config, mock_ctx)
+
+                response = client.post(
+                    "/v1/messages",
+                    json={
+                        "model": "anthropic--claude-4.5-sonnet",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "stream": False,
+                    },
+                )
+
+                assert response.status_code == 200
+                assert mock_invalidate_client.called
+                assert mock_invoke.call_count == 2
+
+    @patch("blueprints.messages.validate_api_key")
+    @patch("blueprints.messages.load_balance_url")
+    @patch("blueprints.messages.get_bedrock_client")
+    @patch("blueprints.messages.invalidate_bedrock_client")
+    @patch("blueprints.messages.Detector")
+    @patch("blueprints.messages.extract_deployment_id")
+    def test_proxy_claude_request_sdk_retries_on_403_non_streaming(
+        self,
+        mock_extract_id,
+        mock_detector,
+        mock_invalidate_client,
+        mock_get_client,
+        mock_load_balance,
+        mock_validate,
+        client,
+        mock_sdk_setup,
+    ):
+        """Test that SDK path retries on 403 authentication error for non-streaming."""
+        mock_config, mock_ctx = mock_sdk_setup
+
+        mock_validate.return_value = (True, None)
+        mock_load_balance.return_value = (
+            "https://test.url/deployment-id",
+            "test_subaccount",
+            "test_resource_group",
+            "anthropic--claude-4.5-sonnet",
+        )
+        mock_detector.is_claude_model.return_value = True
+        mock_extract_id.return_value = "deployment-id"
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        first_response = Mock()
+        first_response.get.return_value = {"HTTPStatusCode": 403, "body": MagicMock()}
+
+        second_response = Mock()
+        second_response.get.return_value = {"HTTPStatusCode": 200, "body": MagicMock()}
+
+        with patch("blueprints.messages.invoke_bedrock_non_streaming") as mock_invoke:
+            with patch(
+                "blueprints.messages.read_response_body_stream",
+                return_value='{"content": [{"text": "Hello"}]}',
+            ):
+                mock_invoke.side_effect = [first_response, second_response]
+
+                init_messages_blueprint(mock_config, mock_ctx)
+
+                response = client.post(
+                    "/v1/messages",
+                    json={
+                        "model": "anthropic--claude-4.5-sonnet",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "stream": False,
+                    },
+                )
+
+                assert response.status_code == 200
+                assert mock_invalidate_client.called
+                assert mock_invoke.call_count == 2
+
+    @patch("blueprints.messages.validate_api_key")
+    @patch("blueprints.messages.load_balance_url")
+    @patch("blueprints.messages.get_bedrock_client")
+    @patch("blueprints.messages.invalidate_bedrock_client")
+    @patch("blueprints.messages.Detector")
+    @patch("blueprints.messages.extract_deployment_id")
+    def test_proxy_claude_request_sdk_no_retry_on_other_errors(
+        self,
+        mock_extract_id,
+        mock_detector,
+        mock_invalidate_client,
+        mock_get_client,
+        mock_load_balance,
+        mock_validate,
+        client,
+        mock_sdk_setup,
+    ):
+        """Test that SDK path does not retry on non-auth errors."""
+        mock_config, mock_ctx = mock_sdk_setup
+
+        mock_validate.return_value = (True, None)
+        mock_load_balance.return_value = (
+            "https://test.url/deployment-id",
+            "test_subaccount",
+            "test_resource_group",
+            "anthropic--claude-4.5-sonnet",
+        )
+        mock_detector.is_claude_model.return_value = True
+        mock_extract_id.return_value = "deployment-id"
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        error_response = Mock()
+        error_response.get.return_value = {"HTTPStatusCode": 500, "body": MagicMock()}
+
+        with patch("blueprints.messages.invoke_bedrock_non_streaming") as mock_invoke:
+            mock_invoke.return_value = error_response
+
+            init_messages_blueprint(mock_config, mock_ctx)
+
+            response = client.post(
+                "/v1/messages",
+                json={
+                    "model": "anthropic--claude-4.5-sonnet",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": False,
+                },
+            )
+
+            assert response.status_code == 500
+            assert not mock_invalidate_client.called
+            assert mock_invoke.call_count == 1

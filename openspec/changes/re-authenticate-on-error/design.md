@@ -32,7 +32,17 @@ The SDK (`gen_ai_hub`) handles tokens internally. We need to investigate if the 
 If `AIAPIAuthenticatorException` is thrown, it indicates a failure to *get* a token. We should catch this and potentially retry if it's considered transient, or return a clear error.
 For 401/403 from the SDK call (`invoke_bedrock_streaming`), the SDK might already handle retries. If not, we might need to recreate the `bedrock_client` to force a new token fetch.
 
-### 3. Shared Logic
+### 3. Streaming Retry Implementation
+
+The streaming path (`generate_claude_streaming_response` in `handlers/streaming_generators.py`) also implements retry logic for 401/403 errors:
+- The function accepts an optional `token_manager` parameter
+- Before making the streaming request, it checks if a 401/403 response is received
+- If so, it invalidates the token and retries with a fresh token
+- The retry logic is implemented for both Claude and non-Claude (Gemini/OpenAI) model backends
+
+**Limitation**: The streaming retry only works for the original implementation path (`proxy_claude_request_original`). The SDK path (`proxy_claude_request`) handles streaming differently through the Bedrock SDK's `invoke_bedrock_streaming` function.
+
+### 4. Shared Logic
 
 To avoid code duplication, we can introduce a wrapper function or decorator, but explicit handling is preferred for clarity given the different paths (SDK vs manual).
 
@@ -44,3 +54,9 @@ To avoid code duplication, we can introduce a wrapper function or decorator, but
 ## Alternatives Considered
 
 - **Middleware**: Implementing this as a decorator or middleware. Given the explicit token management in `proxy_server.py`/`blueprints/messages.py`, a decorator might be hard to inject without refactoring `TokenManager` access.
+
+## Implementation Notes
+
+- **Retry Limit**: Currently hardcoded to 1 retry (`AUTH_RETRY_MAX = 1`) to avoid infinite loops and excessive latency.
+- **Error Message Standardization**: A helper function `_log_auth_error_retry()` is used across all retry locations to ensure consistent log formatting.
+- **Thread Safety**: Token invalidation uses existing locks (`self._lock` in TokenManager) to protect shared state.

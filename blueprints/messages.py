@@ -49,6 +49,23 @@ API_VERSION_BEDROCK_2023_05_31 = "bedrock-2023-05-31"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
 API_VERSION_2023_05_15 = "2023-05-15"
 
+AUTH_RETRY_MAX: int = 1
+
+_AUTH_ERROR_FORMAT = "Authentication error ({status_code}) for {target}, invalidating credentials and retrying..."
+
+
+def _log_auth_error_retry(status_code: int, target: str) -> str:
+    """Generate standardized auth error retry log message.
+
+    Args:
+        status_code: HTTP status code (401 or 403)
+        target: Description of what failed (e.g., model name, subaccount)
+
+    Returns:
+        Formatted log message
+    """
+    return _AUTH_ERROR_FORMAT.format(status_code=status_code, target=target)
+
 
 def init_messages_blueprint(
     proxy_config: "ProxyConfig", ctx: "ProxyGlobalContext"
@@ -305,8 +322,9 @@ def proxy_claude_request():
                 # Check for authentication errors and retry with fresh client
                 if response_status in [401, 403]:
                     logger.warning(
-                        f"Authentication error ({response_status}) from SDK for model '{model}', "
-                        f"invalidating client and retrying..."
+                        _log_auth_error_retry(
+                            response_status, f"SDK for model '{model}'"
+                        )
                     )
                     invalidate_bedrock_client(model)
                     # Get a fresh client (will force re-authentication)
@@ -368,8 +386,7 @@ def proxy_claude_request():
             # Check for authentication errors and retry with fresh client
             if response_status in [401, 403]:
                 logger.warning(
-                    f"Authentication error ({response_status}) from SDK for model '{model}', "
-                    f"invalidating client and retrying..."
+                    _log_auth_error_retry(response_status, f"SDK for model '{model}'")
                 )
                 invalidate_bedrock_client(model)
                 # Get a fresh client (will force re-authentication)
@@ -548,8 +565,9 @@ def proxy_claude_request_original():
             # Check for authentication errors and retry with fresh token
             if not result.success and result.status_code in [401, 403]:
                 logger.warning(
-                    f"Authentication error ({result.status_code}) for subaccount '{subaccount_name}', "
-                    f"invalidating token and retrying..."
+                    _log_auth_error_retry(
+                        result.status_code, f"subaccount '{subaccount_name}'"
+                    )
                 )
                 token_manager.invalidate_token()
                 # Fetch new token and update headers
@@ -597,7 +615,12 @@ def proxy_claude_request_original():
             return Response(
                 stream_with_context(
                     generate_claude_streaming_response(
-                        endpoint_url, headers, backend_payload, model, subaccount_name
+                        endpoint_url,
+                        headers,
+                        backend_payload,
+                        model,
+                        subaccount_name,
+                        token_manager,
                     )
                 ),
                 content_type="text/event-stream",

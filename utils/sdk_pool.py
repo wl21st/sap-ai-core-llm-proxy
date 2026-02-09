@@ -145,7 +145,10 @@ def invalidate_bedrock_client(model_name: str) -> None:
             logger.info(f"Invalidating cached Bedrock client for model '{model_name}'")
             del __model_client_map[model_name]
 
-    # Also invalidate the proxy client to force re-authentication
+    # Also invalidate the proxy client to force re-authentication.
+    # The proxy client holds authentication state at the subaccount level,
+    # so invalidating it ensures all models under this subaccount will
+    # use fresh credentials on their next request.
     with __session_lock:
         if __proxy_client is not None:
             logger.info("Invalidating global SAP AI Core proxy client")

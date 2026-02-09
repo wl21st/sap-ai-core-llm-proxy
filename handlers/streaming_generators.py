@@ -16,6 +16,7 @@ from typing import Any, Generator, Iterator
 import requests
 from flask import request
 
+from config import ProxyGlobalContext
 from proxy_helpers import Converters, Detector
 from handlers.streaming_handler import (
     get_claude_stop_reason_from_gemini_chunk,
@@ -25,6 +26,21 @@ from handlers.streaming_handler import (
 logger = logging.getLogger(__name__)
 transport_logger = logging.getLogger("transport")
 token_usage_logger = logging.getLogger("token_usage")
+
+_AUTH_ERROR_FORMAT = "Authentication error ({status_code}) for {target}, invalidating credentials and retrying..."
+
+
+def _log_auth_error_retry(status_code: int, target: str) -> str:
+    """Generate standardized auth error retry log message.
+
+    Args:
+        status_code: HTTP status code (401 or 403)
+        target: Description of what failed (e.g., model name)
+
+    Returns:
+        Formatted log message
+    """
+    return _AUTH_ERROR_FORMAT.format(status_code=status_code, target=target)
 
 
 def generate_bedrock_streaming_response(
@@ -690,6 +706,7 @@ def generate_claude_streaming_response(
     payload: dict,
     model: str,
     subaccount_name: str,
+    token_manager=None,
 ) -> Generator[bytes, None, None]:
     """Generate streaming response in Anthropic Claude Messages API format.
 
@@ -702,6 +719,7 @@ def generate_claude_streaming_response(
         payload: Request payload to send to backend
         model: Model name (used for format detection/conversion)
         subaccount_name: Name of the selected subAccount (for logging)
+        token_manager: Optional token manager for retry on auth errors
 
     Yields:
         SSE-formatted response bytes (event + data lines)
@@ -728,13 +746,11 @@ def generate_claude_streaming_response(
         7. Sends message_delta event with stop_reason
         8. Sends message_stop event
 
-    Claude Messages API Event Sequence:
-        - message_start: Initial message with id, role, model
-        - content_block_start: Start of content block (type: text)
-        - content_block_delta: Incremental text content (type: text_delta)
-        - content_block_stop: End of content block
-        - message_delta: Stop reason and token usage
-        - message_stop: Final event
+    Retry Logic:
+        - If the backend returns 401 or 403, the token manager (if provided)
+          will be used to invalidate the current token and fetch a fresh one
+        - The request will be retried exactly once with the new credentials
+        - This handles cases where cached tokens become invalid before expiry
 
     Notes:
         - 10-minute timeout for streaming requests
@@ -757,12 +773,41 @@ def generate_claude_streaming_response(
             f"Backend is Claude model, converting response format for '{model}'"
         )
         try:
-            with requests.post(
-                url, headers=headers, json=payload, stream=True, timeout=600
-            ) as response:
-                response.raise_for_status()
-                logger.debug(f"Claude backend response status: {response.status_code}")
+            response = None
+            for attempt in range(2):
+                with requests.post(
+                    url, headers=headers, json=payload, stream=True, timeout=600
+                ) as http_response:
+                    if http_response.status_code in [401, 403]:
+                        if attempt == 0 and token_manager is not None:
+                            logger.warning(
+                                _log_auth_error_retry(
+                                    http_response.status_code, f"model '{model}'"
+                                )
+                            )
+                            token_manager.invalidate_token()
+                            new_token = token_manager.get_token()
+                            headers["Authorization"] = f"Bearer {new_token}"
+                            continue
+                        else:
+                            logger.error(
+                                _log_auth_error_retry(
+                                    http_response.status_code, f"model '{model}'"
+                                )
+                            )
+                            http_response.raise_for_status()
 
+                    http_response.raise_for_status()
+                    logger.debug(
+                        f"Claude backend response status: {http_response.status_code}"
+                    )
+                    response = http_response
+                    break
+
+            if response is None:
+                raise Exception("Failed to get valid response for Claude streaming")
+
+            with response as response:
                 # Send message_start event
                 message_start_data = {
                     "type": "message_start",
@@ -930,10 +975,39 @@ def generate_claude_streaming_response(
     delta_count = 0
 
     try:
-        with requests.post(
-            url, headers=headers, json=payload, stream=True, timeout=600
-        ) as response:
-            response.raise_for_status()
+        response = None
+        for attempt in range(2):
+            with requests.post(
+                url, headers=headers, json=payload, stream=True, timeout=600
+            ) as http_response:
+                if http_response.status_code in [401, 403]:
+                    if attempt == 0 and token_manager is not None:
+                        logger.warning(
+                            _log_auth_error_retry(
+                                http_response.status_code, f"model '{model}'"
+                            )
+                        )
+                        token_manager.invalidate_token()
+                        new_token = token_manager.get_token()
+                        headers["Authorization"] = f"Bearer {new_token}"
+                        continue
+                    else:
+                        logger.error(
+                            _log_auth_error_retry(
+                                http_response.status_code, f"model '{model}'"
+                            )
+                        )
+                        http_response.raise_for_status()
+
+                http_response.raise_for_status()
+                logger.debug(f"Backend response status: {http_response.status_code}")
+                response = http_response
+                break
+
+        if response is None:
+            raise Exception("Failed to get valid response for streaming request")
+
+        with response as response:
             logger.debug(f"Backend response status: {response.status_code}")
             logger.debug(f"Backend response headers: {dict(response.headers)}")
 
