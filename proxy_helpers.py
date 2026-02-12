@@ -303,12 +303,96 @@ class Converters:
             raise ValueError(f"Cannot convert '{s}' to int.")
 
     @staticmethod
+    def _sanitize_content_block(content_item: dict) -> dict | None:
+        """
+        Sanitize a content block by extracting only the 'text' field and removing
+        metadata like cache_control, images, or other Anthropic-native directives.
+
+        This ensures compatibility with SAP AI Core's Claude endpoints which don't
+        understand Anthropic-native metadata fields.
+
+        Args:
+            content_item: A content block dict (e.g., {"type": "text", "text": "...", "cache_control": {...}})
+
+        Returns:
+            A sanitized content block with only the text field, or None if invalid.
+            Logs a warning if metadata is stripped.
+        """
+        if not isinstance(content_item, dict):
+            return None
+
+        # Extract text field
+        text_content = content_item.get("text")
+        if not text_content:
+            return None
+
+        # Check if we're stripping any metadata
+        metadata_fields = [k for k in content_item.keys() if k not in ["type", "text"]]
+        if metadata_fields:
+            logger.warning(
+                f"Stripping metadata from content block during Claude 3.7 conversion: {metadata_fields}. "
+                f"SAP AI Core does not support these fields."
+            )
+
+        return {"text": text_content}
+
+    @staticmethod
+    def _extract_text_from_content(content) -> str:
+        """
+        Extract plain text from content, handling both simple strings and nested arrays.
+
+        Supports:
+        - Simple string: "text" → "text"
+        - Single content block: [{"text": "...", "cache_control": {...}}] → "..."
+        - Multiple blocks: [{"text": "..."}, {"text": "..."}] → concatenated with spaces
+
+        Args:
+            content: String or list of content blocks
+
+        Returns:
+            Extracted text string, or empty string if no valid text found.
+        """
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                if isinstance(item, str):
+                    texts.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    texts.append(item["text"])
+            return " ".join(texts) if texts else ""
+
+        return ""
+
+    @staticmethod
     def convert_openai_to_claude(payload):
-        # Extract system message if present
+        """
+        Converts an OpenAI API request payload to Claude Messages API format (older models).
+
+        Handles sanitization of nested content arrays with metadata (cache_control, etc.).
+        """
+        # Extract system message if present, handling both string and nested array formats
         system_message = ""
         messages = payload["messages"]
         if messages and messages[0]["role"] == "system":
-            system_message = messages.pop(0)["content"]
+            raw_system_content = messages.pop(0)["content"]
+            # Extract text from content, handling nested arrays and stripping metadata
+            system_message = Converters._extract_text_from_content(raw_system_content)
+
+        # Sanitize all message content blocks to remove metadata
+        for msg in messages:
+            if isinstance(msg.get("content"), list):
+                sanitized_content = []
+                for item in msg["content"]:
+                    if isinstance(item, dict) and "text" in item:
+                        sanitized = Converters._sanitize_content_block(item)
+                        if sanitized:
+                            sanitized_content.append(sanitized)
+                    elif isinstance(item, str):
+                        sanitized_content.append({"text": item})
+                msg["content"] = sanitized_content
 
         # Conversion logic from OpenAI to Claude API format
         claude_payload = {
@@ -323,6 +407,12 @@ class Converters:
             #     "budget_tokens": 16000
             # },
         }
+
+        # Forward tools array if present
+        if "tools" in payload and payload["tools"]:
+            claude_payload["tools"] = payload["tools"]
+            logger.debug(f"Tools present in request: {len(payload['tools'])} tools")
+
         return claude_payload
 
     @staticmethod
@@ -330,16 +420,23 @@ class Converters:
         """
         Converts an OpenAI API request payload to the format expected by the
         Claude 3.7 /converse endpoint.
+
+        Handles:
+        - Nested content arrays with metadata (cache_control, etc.) by sanitizing
+        - Both simple string and complex content structures
+        - Tools arrays in OpenAI format (kept as-is for forwarding to SAP)
         """
         logger.debug(
             f"Original OpenAI payload for Claude 3.7 conversion: {json.dumps(payload, indent=2)}"
         )
 
-        # Extract system message if present
+        # Extract system message if present, handling both string and nested array formats
         system_message = ""
         messages = payload.get("messages", [])
         if messages and messages[0].get("role") == "system":
-            system_message = messages.pop(0).get("content", "")
+            raw_system_content = messages.pop(0).get("content", "")
+            # Extract text from content, handling nested arrays and stripping metadata
+            system_message = Converters._extract_text_from_content(raw_system_content)
 
         # Extract inference configuration parameters
         inference_config = {}
@@ -396,10 +493,14 @@ class Converters:
                         )
                     elif isinstance(content, list):
                         # Validate that each item in the list is a correctly structured block
+                        # and sanitize to remove metadata like cache_control
                         validated_content = []
                         for item in content:
                             if isinstance(item, dict) and "text" in item:
-                                validated_content.append(item)
+                                # Sanitize the content block to remove metadata
+                                sanitized = Converters._sanitize_content_block(item)
+                                if sanitized:
+                                    validated_content.append(sanitized)
                             elif isinstance(item, str):
                                 # Convert string item to block format
                                 validated_content.append({"text": item})
@@ -443,6 +544,13 @@ class Converters:
         # Add inferenceConfig only if it's not empty
         if inference_config:
             claude_payload["inferenceConfig"] = inference_config
+
+        # Forward tools array if present (SAP AI Core expects OpenAI format for tools)
+        if "tools" in payload and payload["tools"]:
+            claude_payload["tools"] = payload["tools"]
+            logger.debug(
+                f"Tools present in request: {len(payload['tools'])} tools forwarded to SAP AI Core"
+            )
 
         # Add system message if it exists
         # Claude 3.7 doesn't support the system_message as a top-level parameter
