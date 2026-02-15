@@ -29,6 +29,56 @@ transport_logger = logging.getLogger("transport")
 token_usage_logger = logging.getLogger("token_usage")
 
 
+def is_gemini_2_5_pro_format(chunk: dict[str, Any]) -> bool:
+    """Detect if a chunk matches Gemini-2.5-pro's streaming format.
+
+    Gemini-2.5-pro sends chunks with the structure:
+    {
+      candidates: [{
+        content: {
+          parts: [{text: "..."}],
+          role: "model"
+        },
+        finishReason: "...",
+        index: 0
+      }],
+      usageMetadata: {...}
+    }
+
+    This is the raw JSON format that appears on each line of the response stream.
+
+    Args:
+        chunk: The parsed chunk dictionary
+
+    Returns:
+        True if the chunk appears to be in Gemini-2.5-pro format, False otherwise
+    """
+    if not isinstance(chunk, dict):
+        return False
+
+    candidates = chunk.get("candidates", [])
+    if not candidates or not isinstance(candidates, list):
+        return False
+
+    candidate = candidates[0]
+    if not isinstance(candidate, dict):
+        return False
+
+    content = candidate.get("content", {})
+    if not isinstance(content, dict):
+        return False
+
+    parts = content.get("parts", [])
+    if not parts or not isinstance(parts, list):
+        return False
+
+    part = parts[0]
+    if not isinstance(part, dict):
+        return False
+
+    return "text" in part
+
+
 def generate_bedrock_streaming_response(
     response_body: Iterator[dict],
     tid: str,
@@ -392,6 +442,12 @@ def generate_streaming_response(
                                 logger.info(
                                     f"Gemini parsed chunk: {json.dumps(gemini_chunk, indent=2)}"
                                 )
+
+                                # Detect and log Gemini-2.5-pro format
+                                if is_gemini_2_5_pro_format(gemini_chunk):
+                                    logger.info(
+                                        "Detected Gemini-2.5-pro streaming format"
+                                    )
 
                                 # Convert chunk to OpenAI format
                                 openai_sse_chunk_str = (

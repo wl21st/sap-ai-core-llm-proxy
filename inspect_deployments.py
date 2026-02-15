@@ -26,25 +26,25 @@ def inspect_subaccount(name: str, sub_config: Any):
         name: Subaccount name
         sub_config: Subaccount configuration
     """
-    print(f"\n--- Subaccount: {name} ---")
-    print(f"Resource Group: {sub_config.resource_group}")
+    logger.info(f"\n--- Subaccount: {name} ---")
+    logger.info(f"Resource Group: {sub_config.resource_group}")
 
     try:
         deployments = fetch_all_deployments(
             service_key=sub_config.service_key,
             resource_group=sub_config.resource_group,
-            force_refresh=True
+            force_refresh=True,
         )
 
         if not deployments:
-            print("  No deployments found.")
+            logger.info("  No deployments found.")
             return
 
         # Print table header
-        print(
+        logger.info(
             f"\n  {'DEPLOYMENT ID':<35} | {'BACKEND MODEL':<30} | {'ALIASES':<30} | {'URL'}"
         )
-        print(f"  {'-' * 35} | {'-' * 30} | {'-' * 30} | {'-' * 10}")
+        logger.info(f"  {'-' * 35} | {'-' * 30} | {'-' * 30} | {'-' * 10}")
 
         for dep in deployments:
             dep_id = dep.get("id", "N/A")
@@ -58,7 +58,9 @@ def inspect_subaccount(name: str, sub_config: Any):
 
             alias_str = ", ".join(aliases) if aliases else ""
 
-            print(f"  {dep_id:<35} | {backend_model:<30} | {alias_str:<30} | {url}")
+            logger.info(
+                f"  {dep_id:<35} | {backend_model:<30} | {alias_str:<30} | {url}"
+            )
 
     except Exception as e:
         logger.error(f"  Failed to inspect subaccount {name}: {e}")
@@ -76,10 +78,10 @@ def main():
     logging.getLogger("ai_core_sdk").setLevel(logging.WARNING)
 
     try:
-        print(f"Loading configuration from {args.config}...")
+        logger.info(f"Loading configuration from {args.config}...")
         config: ProxyConfig = load_proxy_config(args.config)
 
-        print(f"Found {len(config.subaccounts)} subaccounts.")
+        logger.info(f"Found {len(config.subaccounts)} subaccounts.")
 
         for name, sub_config in config.subaccounts.items():
             inspect_subaccount(name, sub_config)
