@@ -1,4 +1,5 @@
 import pytest
+import logging
 from unittest.mock import Mock, patch, MagicMock
 from inspect_deployments import inspect_subaccount
 from config import SubAccountConfig, ServiceKey
@@ -27,7 +28,7 @@ def mock_sub_config():
 
 @patch("inspect_deployments.fetch_all_deployments")
 @patch("inspect_deployments.MODEL_ALIASES", {"gpt-4": ["gpt-4-alias"]})
-def test_inspect_subaccount(mock_fetch, mock_sub_config, capsys):
+def test_inspect_subaccount(mock_fetch, mock_sub_config, caplog):
     # Setup mock deployments
     mock_fetch.return_value = [
         {
@@ -38,18 +39,20 @@ def test_inspect_subaccount(mock_fetch, mock_sub_config, capsys):
         }
     ]
 
-    # Run function
-    inspect_subaccount("test-subaccount", mock_sub_config)
+    # Capture logs at INFO level
+    with caplog.at_level(logging.INFO):
+        # Run function
+        inspect_subaccount("test-subaccount", mock_sub_config)
 
-    # Capture output
-    captured = capsys.readouterr()
+    # Get the logged output
+    logged_text = caplog.text
 
     # Verify output contains key info
-    assert "Subaccount: test-subaccount" in captured.out
-    assert "dep-1" in captured.out
-    assert "gpt-4" in captured.out
-    assert "gpt-4-alias" in captured.out
-    assert "https://dep-1.com" in captured.out
+    assert "Subaccount: test-subaccount" in logged_text
+    assert "dep-1" in logged_text
+    assert "gpt-4" in logged_text
+    assert "gpt-4-alias" in logged_text
+    assert "https://dep-1.com" in logged_text
 
     # Verify fetch called correctly
     mock_fetch.assert_called_once_with(

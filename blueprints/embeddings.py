@@ -51,14 +51,30 @@ def handle_embedding_service_call(input_text, model, encoding_format):
 
     Args:
         input_text: The input text to embed
-        model: The embedding model to use
+        model: The embedding model to use (uses default if None)
         encoding_format: The encoding format (optional)
 
     Returns:
         Tuple of (endpoint_url, payload, subaccount_name)
+
+    Raises:
+        ValueError: If no embedding model is available (no explicit model and no default)
     """
     # Logic to prepare the request to SAP AI Core
-    selected_url, subaccount_name, _, model = load_balance_url(model, _proxy_config)
+    # If the requested model is not available, try the default model
+    resolved_model = model
+    if (
+        resolved_model not in _proxy_config.model_to_subaccounts
+        or not _proxy_config.model_to_subaccounts.get(resolved_model)
+    ):
+        logger.info(
+            f"Model '{model}' not available, attempting fallback to default '{DEFAULT_EMBEDDING_MODEL}'"
+        )
+        resolved_model = DEFAULT_EMBEDDING_MODEL
+
+    selected_url, subaccount_name, _, model = load_balance_url(
+        resolved_model, _proxy_config
+    )
 
     # Construct the URL based on the official SAP AI Core documentation
     # This is critical or it will return 404
