@@ -63,6 +63,12 @@ proxy_config: ProxyConfig = ProxyConfig()
 
 app = Flask(__name__)
 
+# Configure Flask to handle long-running requests
+# Increase timeout for large LLM requests (180 seconds = 3 minutes)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 180
+# Note: Flask development server has no timeout by default, but ensure
+# werkzeug (WSGI) and reverse proxies are configured with timeout >= 180s
+
 
 def register_blueprints(
     app: Flask, config: ProxyConfig, context: ProxyGlobalContext

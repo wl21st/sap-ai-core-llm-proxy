@@ -104,6 +104,7 @@ def get_bedrock_client(
                 },
                 max_pool_connections=50,
                 tcp_keepalive=True,
+                read_timeout=180,  # 180 seconds for long-running LLM requests
             )
 
             # Get the session and proxy client
