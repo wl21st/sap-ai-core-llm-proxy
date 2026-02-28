@@ -15,7 +15,9 @@ class TestModelsEndpoint:
     def test_list_models_returns_200(self, proxy_client, proxy_url):
         """Test that /v1/models returns 200 OK."""
         response = proxy_client.get(f"{proxy_url}/v1/models")
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.text}"
+        )
 
     def test_list_models_response_format(self, proxy_client, proxy_url):
         """Test that /v1/models returns OpenAI-compatible format."""
@@ -24,7 +26,9 @@ class TestModelsEndpoint:
 
         data = response.json()
         assert "object" in data, "Response missing 'object' field"
-        assert data["object"] == "list", f"Expected object='list', got '{data['object']}'"
+        assert data["object"] == "list", (
+            f"Expected object='list', got '{data['object']}'"
+        )
         assert "data" in data, "Response missing 'data' field"
         assert isinstance(data["data"], list), "data must be a list"
 
@@ -39,9 +43,9 @@ class TestModelsEndpoint:
         model_ids = [model["id"] for model in data["data"]]
 
         for required_model in models_to_test:
-            assert (
-                required_model in model_ids
-            ), f"Required model '{required_model}' not found in models list. Available: {model_ids}"
+            assert required_model in model_ids, (
+                f"Required model '{required_model}' not found in models list. Available: {model_ids}"
+            )
 
     def test_model_metadata(self, proxy_client, proxy_url):
         """Test that each model has required metadata fields."""
@@ -57,7 +61,9 @@ class TestModelsEndpoint:
             assert "created" in model, "Model missing 'created' field"
             assert "owned_by" in model, "Model missing 'owned_by' field"
 
-            assert model["object"] == "model", f"Expected object='model', got '{model['object']}'"
+            assert model["object"] == "model", (
+                f"Expected object='model', got '{model['object']}'"
+            )
             assert isinstance(model["id"], str), "Model id must be string"
             assert len(model["id"]) > 0, "Model id must not be empty"
             assert isinstance(model["created"], int), "Model created must be integer"
@@ -71,3 +77,25 @@ class TestModelsEndpoint:
         data = response.json()
         assert "data" in data
         assert len(data["data"]) > 0, "No models available"
+
+
+@pytest.mark.integration
+@pytest.mark.real
+class TestModelsEndpointModelFilters:
+    """Integration tests for model filtering behavior."""
+
+    def test_filtered_models_hidden_from_list(
+        self, proxy_client, proxy_url, model_filter_tests
+    ):
+        """Verify filtered models are not listed in /v1/models."""
+        if not model_filter_tests.get("enabled"):
+            pytest.skip("Model filter integration tests are disabled")
+
+        response = proxy_client.get(f"{proxy_url}/v1/models")
+        assert response.status_code == 200
+        model_ids = [model["id"] for model in response.json().get("data", [])]
+
+        for filtered_model in model_filter_tests.get("filtered_models", []):
+            assert filtered_model not in model_ids, (
+                f"Filtered model '{filtered_model}' was listed in /v1/models"
+            )

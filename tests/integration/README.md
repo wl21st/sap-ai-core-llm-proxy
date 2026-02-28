@@ -64,9 +64,33 @@ Create [`test_config.json`](test_config.json) (copy from [`test_config.json.exam
   },
   "timeout": 30,
   "max_tokens": 100,
-  "skip_if_server_not_running": true
+  "skip_if_server_not_running": true,
+  "model_filter_tests": {
+    "enabled": false,
+    "filtered_models": ["gpt-4.1-test"],
+    "allowed_models": ["gpt-4.1"],
+    "include_only": {
+      "expected_models": ["gpt-4.1", "gpt-5"],
+      "filtered_models": ["anthropic--claude-4.5-sonnet", "gemini-2.5-pro"]
+    },
+    "exclude_only": {
+      "expected_models": ["gpt-4.1", "gpt-5", "anthropic--claude-4.5-sonnet"],
+      "filtered_models": ["gpt-4.1-test"]
+    },
+    "combined": {
+      "expected_models": ["gpt-4.1"],
+      "filtered_models": ["gpt-4.1-preview", "gemini-2.5-pro"]
+    }
+  }
 }
 ```
+
+### Model Filter Integration Scenarios
+
+To run the model filter integration tests, set `model_filter_tests.enabled` to `true`
+and start the proxy with a config that applies the corresponding filter scenario.
+The fields under `model_filter_tests` are just assertions for the tests; they do not
+configure the proxy server directly.
 
 ### Option 2: Environment Variables
 
