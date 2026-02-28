@@ -12,7 +12,7 @@ from handlers.model_handlers import (
     handle_gemini_request,
     handle_default_request,
 )
-from handlers.streaming_generators import generate_streaming_response
+from handlers.streaming_generators import generate_streaming_response_sync
 from proxy_helpers import Detector
 from utils.logging_utils import get_server_logger
 
@@ -240,7 +240,7 @@ def proxy_openai_stream():
         # Handle streaming requests
         return Response(
             stream_with_context(
-                generate_streaming_response(
+                generate_streaming_response_sync(
                     endpoint_url,
                     headers,
                     modified_payload,

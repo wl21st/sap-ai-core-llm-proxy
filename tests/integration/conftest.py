@@ -11,8 +11,9 @@ Provides:
 import json
 import logging
 import os
+import httpx
 import pytest
-import requests
+import pytest_asyncio
 from pathlib import Path
 from typing import Dict, Any
 
@@ -110,106 +111,71 @@ def check_server_running(test_config, proxy_url):
         pytest.skip: If server is not running and skip_if_server_not_running is True
     """
     try:
-        response = requests.get(f"{proxy_url}/v1/models", timeout=5)
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(f"{proxy_url}/v1/models")
         if response.status_code not in [200, 401]:
             if test_config["skip_if_server_not_running"]:
                 pytest.skip(f"Proxy server not responding correctly at {proxy_url}")
             else:
                 pytest.fail(f"Proxy server not responding correctly at {proxy_url}")
-    except requests.exceptions.RequestException as e:
+    except httpx.RequestError as e:
         if test_config["skip_if_server_not_running"]:
             pytest.skip(f"Proxy server not running at {proxy_url}: {e}")
         else:
             pytest.fail(f"Proxy server not running at {proxy_url}: {e}")
 
 
-class LoggingSession(requests.Session):
-    """Session that logs requests and responses with enhanced visibility."""
-
-    def request(self, method, url, *args, **kwargs):
-        """Override request to add enhanced logging."""
-        # Prepare headers with masking
-        headers_dict = dict(self.headers)
-        masked_headers = {}
-        for key, value in headers_dict.items():
-            if (
-                isinstance(key, str)
-                and isinstance(value, str)
-                and key.lower() in ["authorization", "x-api-key"]
-            ):
-                masked_headers[key] = (
-                    f"{value[:10]}...[REDACTED]" if len(value) > 10 else "***"
-                )
-            else:
-                masked_headers[key] = value
-
-        # Enhanced request logging with prominent formatting
-        logger.info("\n🔵🔵🔵 HTTP REQUEST START 🔵🔵🔵")
-        logger.info(f"📡 METHOD: {method}")
-        logger.info(f"🌐 URL: {url}")
-        logger.info("📋 HEADERS:")
-        for key, value in masked_headers.items():
-            logger.info(f"   {key}: {value}")
-
-        if "json" in kwargs:
-            logger.info(f"📦 JSON BODY:\n{json.dumps(kwargs['json'], indent=2)}")
-        elif "data" in kwargs:
-            logger.info(f"📦 DATA BODY: {kwargs['data']}")
-        if "params" in kwargs:
-            logger.info(f"🔤 PARAMS: {kwargs['params']}")
-
-        logger.info("🔵🔵🔵 HTTP REQUEST END 🔵🔵🔵\n")
-
-        # Make request
-        response = super().request(method, url, *args, **kwargs)
-
-        # Enhanced response logging
-        response_headers = dict(response.headers)
-
-        logger.info("\n🟢🟢🟢 HTTP RESPONSE START 🟢🟢🟢")
-        logger.info(f"📊 STATUS: {response.status_code} {response.reason}")
-        logger.info(f"⏱️  RESPONSE TIME: {response.elapsed.total_seconds():.3f}s")
-        logger.info("📋 RESPONSE HEADERS:")
-        for key, value in response_headers.items():
-            logger.info(f"   {key}: {value}")
-
-        # Log response body (handle streaming vs non-streaming)
-        if kwargs.get("stream"):
-            logger.info(
-                "📡 STREAMING: [Streaming response - chunks will be logged below]"
+async def _log_request(request: httpx.Request) -> None:
+    headers_dict = dict(request.headers)
+    masked_headers = {}
+    for key, value in headers_dict.items():
+        if (
+            isinstance(key, str)
+            and isinstance(value, str)
+            and key.lower() in ["authorization", "x-api-key"]
+        ):
+            masked_headers[key] = (
+                f"{value[:10]}...[REDACTED]" if len(value) > 10 else "***"
             )
         else:
-            logger.info("📦 RESPONSE BODY:")
-            try:
-                response_json = response.json()
-                logger.info(f"{json.dumps(response_json, indent=2)}")
-            except Exception:
-                response_text = response.text
-                if len(response_text) > 1000:
-                    logger.info(f"{response_text[:1000]}...[TRUNCATED]")
-                else:
-                    logger.info(response_text)
+            masked_headers[key] = value
 
-        logger.info("🟢🟢🟢 HTTP RESPONSE END 🟢🟢🟢\n")
-
-        return response
+    logger.info("\n🔵🔵🔵 HTTP REQUEST START 🔵🔵🔵")
+    logger.info("📡 METHOD: %s", request.method)
+    logger.info("🌐 URL: %s", request.url)
+    logger.info("📋 HEADERS:")
+    for key, value in masked_headers.items():
+        logger.info("   %s: %s", key, value)
+    logger.info("🔵🔵🔵 HTTP REQUEST END 🔵🔵🔵\n")
 
 
-@pytest.fixture(scope="session")
-def proxy_client(test_config, proxy_url, auth_token, check_server_running):
+async def _log_response(response: httpx.Response) -> None:
+    logger.info("\n🟢🟢🟢 HTTP RESPONSE START 🟢🟢🟢")
+    logger.info("📊 STATUS: %s", response.status_code)
+    logger.info("📋 RESPONSE HEADERS:")
+    for key, value in dict(response.headers).items():
+        logger.info("   %s: %s", key, value)
+    logger.info("🟢🟢🟢 HTTP RESPONSE END 🟢🟢🟢\n")
+
+
+@pytest_asyncio.fixture(scope="session")
+async def proxy_client(test_config, proxy_url, auth_token, check_server_running):
     """
     Create HTTP client configured for proxy server with request/response logging.
 
     Returns:
         Configured LoggingSession
     """
-    session = LoggingSession()
-    session.headers.update({"Content-Type": "application/json"})
-
+    headers = {"Content-Type": "application/json"}
     if auth_token:
-        session.headers.update({"Authorization": f"Bearer {auth_token}"})
+        headers["Authorization"] = f"Bearer {auth_token}"
 
-    return session
+    async with httpx.AsyncClient(
+        headers=headers,
+        timeout=test_config.get("timeout", 30),
+        event_hooks={"request": [_log_request], "response": [_log_response]},
+    ) as client:
+        yield client
 
 
 @pytest.fixture

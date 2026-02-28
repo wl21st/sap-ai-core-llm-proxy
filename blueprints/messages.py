@@ -23,8 +23,8 @@ from handlers.bedrock_handler import (
 )
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
 from handlers.streaming_generators import (
-    generate_bedrock_streaming_response,
-    generate_claude_streaming_response,
+    generate_bedrock_streaming_response_sync,
+    generate_claude_streaming_response_sync,
 )
 from handlers.streaming_handler import make_backend_request
 from proxy_helpers import Detector, Converters
@@ -354,7 +354,7 @@ def proxy_claude_request():
             # Use extracted generator from handlers/streaming_generators.py (Phase 6d)
             return (
                 Response(
-                    generate_bedrock_streaming_response(response_body, tid),
+                    generate_bedrock_streaming_response_sync(response_body, tid),
                     mimetype="text/event-stream",
                 ),
                 200,
@@ -598,7 +598,7 @@ def proxy_claude_request_original():
         else:
             return Response(
                 stream_with_context(
-                    generate_claude_streaming_response(
+                    generate_claude_streaming_response_sync(
                         endpoint_url,
                         headers,
                         backend_payload,

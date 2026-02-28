@@ -7,10 +7,13 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "botocore>=1.35.0",
     "flask>=3.1.2",
+    "fastapi>=0.115.0",
+    "httpx>=0.27.0",
     "pydantic>=2.0.0",
     "sap-ai-sdk-gen>=5.10.0",
     "tenacity>=9.0.0",
     "requests>=2.32.3",
+    "uvicorn>=0.30.0",
     "diskcache>=5.6.3",
     "aioboto3>=13.0.0",
 ]
@@ -27,7 +30,7 @@ build = [
 ]
 
 [project.scripts]
-sap-ai-proxy = "proxy_server:main"
+sap-ai-proxy = "main:main"
 sap-ai-inspect = "inspect_deployments:main"
 
 [dependency-groups]

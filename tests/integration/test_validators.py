@@ -57,8 +57,6 @@ data: [DONE]
 import json
 from typing import Any
 
-import requests
-
 
 class ResponseValidator:
     """Validates API responses from the proxy server."""
@@ -143,7 +141,7 @@ class ResponseValidator:
     @staticmethod
     def validate_sse_response(
         model: str,
-        response: requests.Response,
+        response,
     ) -> tuple[int, list[str], int, list[str]]:
         event_chunk_count: int = 0
         event_chunk_list: list[str] = []
@@ -152,16 +150,16 @@ class ResponseValidator:
 
         assert response.status_code == 200
 
-        for line in response.iter_lines():
+        for line in response.text.split("\n"):
             if line:
-                line_str: str = line.decode("utf-8").strip()
+                line_str = line.strip()
                 # Validate SSE format
                 if line_str.startswith("data: "):
-                    ResponseValidator.validate_sse_data_chunk(line)
+                    ResponseValidator.validate_sse_data_chunk(line_str.encode("utf-8"))
                     data_chunk_count += 1
                     data_chunk_list.append(line_str)
                 elif line_str.startswith("event: "):
-                    ResponseValidator.validate_sse_event_chunk(line)
+                    ResponseValidator.validate_sse_event_chunk(line_str.encode("utf-8"))
                     event_chunk_count += 1
                     event_chunk_list.append(line_str)
                 else:

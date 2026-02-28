@@ -53,10 +53,25 @@ from handlers.bedrock_handler import (
 
 # Streaming generators - extracted to handlers/streaming_generators.py (Phase 6d)
 from handlers.streaming_generators import (
-    generate_bedrock_streaming_response,
-    generate_claude_streaming_response,
-    generate_streaming_response,
+    generate_bedrock_streaming_response_sync,
+    generate_claude_streaming_response_sync,
+    generate_streaming_response_sync,
 )
+
+
+# Backward-compatible alias for tests
+def generate_claude_streaming_response(
+    url: str,
+    headers: dict,
+    payload: dict,
+    model: str,
+    subaccount_name: str,
+    token_manager=None,
+):
+    return generate_claude_streaming_response_sync(
+        url, headers, payload, model, subaccount_name, token_manager
+    )
+
 
 # Global configuration
 proxy_config: ProxyConfig = ProxyConfig()
@@ -383,7 +398,7 @@ def proxy_claude_request_original():
         else:
             return Response(
                 stream_with_context(
-                    generate_claude_streaming_response(
+                    generate_claude_streaming_response_sync(
                         endpoint_url, headers, backend_payload, model, subaccount_name
                     )
                 ),
@@ -521,63 +536,13 @@ def handle_non_streaming_request(url, headers, payload, model, subaccount_name, 
 
 
 def main() -> None:
-    """Main entry point for the SAP AI Core LLM Proxy Server."""
-    args = parse_arguments()
-
-    # Setup logging using the new modular function
-    init_logging(debug=args.debug)
-
-    # Handle cache refresh flag before loading config
-    if args.refresh_cache:
-        from utils.cache_utils import clear_deployment_cache
-
-        logger.info("Clearing deployment cache due to --refresh-cache flag...")
-        clear_deployment_cache()
-        logger.info("Cache cleared successfully")
-
-    # Log version information at startup
-    version_info = get_version_string()
-    logger.info(f"SAP AI Core LLM Proxy Server - Version: {version_info}")
-
-    logger.info(f"Loading configuration from: {args.config}")
-
-    # Load the proxy config and initialize global context
-    global ctx
-    ctx = ProxyGlobalContext()
-    ctx.initialize(load_proxy_config(args.config))
-
-    global proxy_config
-    proxy_config = ctx.config
-
-    # Get server configuration
-    host = proxy_config.host
-    if args.port is not None:
-        port = args.port
-        logger.info(
-            f"Port override: Using CLI argument --port {port} (config file specifies {proxy_config.port})"
-        )
-    else:
-        port = proxy_config.port
-
-    logger.info(
-        f"Loaded multi-subAccount configuration with {len(proxy_config.subaccounts)} subAccounts"
+    """Deprecated entry point (delegates to FastAPI)."""
+    logger.warning(
+        "proxy_server.py entry point is deprecated; delegating to FastAPI app"
     )
-    logger.info(f"Available subAccounts: {', '.join(proxy_config.subaccounts.keys())}")
-    logger.info(
-        f"Available models: {', '.join(proxy_config.model_to_subaccounts.keys())}"
-    )
+    from main import main as fastapi_main
 
-    # Register all blueprints
-    register_blueprints(app, proxy_config, ctx)
-
-    logger.info(f"Starting proxy server on host {host} and port {port}...")
-    logger.info(f"API Host: http://{host}:{port}/v1")
-    logger.info("Available endpoints:")
-    logger.info(f"  - OpenAI Compatible API: http://{host}:{port}/v1/chat/completions")
-    logger.info(f"  - Anthropic Claude API: http://{host}:{port}/v1/messages")
-    logger.info(f"  - Models Listing: http://{host}:{port}/v1/models")
-    logger.info(f"  - Embeddings API: http://{host}:{port}/v1/embeddings")
-    app.run(host=host, port=port, debug=args.debug)
+    fastapi_main()
 
 
 if __name__ == "__main__":
