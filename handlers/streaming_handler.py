@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 import requests
 
+from converters.mappings import STOP_REASON_MAP
+
 logger = logging.getLogger(__name__)
 transport_logger = logging.getLogger("transport")
 
@@ -30,14 +32,7 @@ def get_claude_stop_reason_from_gemini_chunk(gemini_chunk: dict) -> str | None:
     """
     finish_reason = gemini_chunk.get("candidates", [{}])[0].get("finishReason")
     if finish_reason:
-        stop_reason_map = {
-            "STOP": "end_turn",
-            "MAX_TOKENS": "max_tokens",
-            "SAFETY": "stop_sequence",
-            "RECITATION": "stop_sequence",
-            "OTHER": "stop_sequence",
-        }
-        return stop_reason_map.get(finish_reason, "stop_sequence")
+        return STOP_REASON_MAP["gemini_to_claude"].get(finish_reason, "stop_sequence")
     return None
 
 
@@ -52,13 +47,7 @@ def get_claude_stop_reason_from_openai_chunk(openai_chunk: dict) -> str | None:
     """
     finish_reason = openai_chunk.get("choices", [{}])[0].get("finish_reason")
     if finish_reason:
-        stop_reason_map = {
-            "stop": "end_turn",
-            "length": "max_tokens",
-            "content_filter": "stop_sequence",
-            "tool_calls": "tool_use",
-        }
-        return stop_reason_map.get(finish_reason, "stop_sequence")
+        return STOP_REASON_MAP["openai_to_claude"].get(finish_reason, "stop_sequence")
     return None
 
 
