@@ -280,7 +280,7 @@ async def generate_streaming_response(
                                     continue
 
                                 openai_sse_chunk_str = (
-                                    chunk_converters.claude37_to_openai_chunk(
+                                    Converters.convert_claude37_chunk_to_openai(
                                         claude_dict_chunk, model, stream_id
                                     )
                                 )
@@ -428,7 +428,7 @@ async def generate_streaming_response(
                                     )
 
                                 openai_sse_chunk_str = (
-                                    chunk_converters.gemini_to_openai_chunk(
+                                    Converters.convert_gemini_chunk_to_openai(
                                         gemini_chunk, model
                                     )
                                 )
