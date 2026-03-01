@@ -84,37 +84,28 @@ configure the proxy server directly.
 
 #### Understanding Model Filter Configuration
 
-The `model_filter` section in test configuration describes **test assertions** about which models should be available after proxy-side filtering is applied. It does NOT configure the proxy server itself.
+The `model_filter` section in test configuration is for **enabling/disabling model filter integration tests**. To test model filtering functionality:
+
+1. Set `enabled: true` in test configuration
+2. Configure the proxy server with matching `include_filters`/`exclude_filters` in its `config.json`
+3. Run the tests to verify filtering behavior
 
 **Test Configuration Fields:**
 
 | Field | Type | Purpose | Example |
 |-------|------|---------|---------|
-| **`enabled`** | boolean | Enable/disable model filter tests | `true` or `false` |
-| **`include_filters`** | array[str] | Regex patterns for whitelist (proxy config) | `["^gpt-.*", "^claude-.*"]` |
-| **`exclude_filters`** | array[str] | Regex patterns for blacklist (proxy config) | `[".*-test$", "^experimental-.*"]` |
-| **`expected_available`** | array[str] | Models that SHOULD be available in /v1/models | `["gpt-4.1", "gpt-5", "claude-4.5-sonnet"]` |
-| **`expected_filtered`** | array[str] | Models that SHOULD be filtered out | `["gpt-4.1-test", "experimental-model"]` |
+| **`enabled`** | boolean | Enable/disable model filter integration tests | `true` or `false` |
 
-**Important**: 
-- The `include_filters` and `exclude_filters` show what patterns the proxy server config should use
-- The `expected_available` and `expected_filtered` are test assertions about the results
-- To test model filtering, configure the proxy with matching `include_filters`/`exclude_filters` and set `enabled: true`
-
-**Example workflow:**
+**Example:**
 ```json
 {
   "model_filter": {
-    "enabled": true,
-    "include_filters": ["^gpt-.*"],
-    "exclude_filters": [".*-test$"],
-    "expected_available": ["gpt-4.1", "gpt-5"],
-    "expected_filtered": ["gpt-4.1-test", "experimental-model"]
+    "enabled": false
   }
 }
 ```
 
-Then configure your proxy's `config.json` with matching filters to test the behavior.
+To enable model filter tests, set `enabled: true` and ensure your proxy server is configured with appropriate `include_filters` and `exclude_filters` patterns in its `config.json`.
 
 ### Option 2: Environment Variables
 
