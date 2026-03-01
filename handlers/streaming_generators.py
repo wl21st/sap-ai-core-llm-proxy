@@ -187,7 +187,56 @@ async def generate_streaming_response(
     subaccount_name: str,
     tid: str,
 ) -> AsyncGenerator[str | bytes, None]:
-    """Generate streaming response from backend API in OpenAI-compatible format."""
+    """Generate async streaming response from backend API in OpenAI-compatible format.
+
+    This is the main async streaming generator that handles all backend model types
+    (Claude 3.7/4, Gemini, older Claude, OpenAI) and converts their streaming
+    responses to OpenAI's Server-Sent Events (SSE) format.
+
+    Args:
+        request: FastAPI Request object for extracting client info
+        url: Backend API endpoint URL
+        headers: HTTP headers to forward to backend
+        payload: Request payload to send to backend
+        model: Model name (used for format detection/conversion)
+        subaccount_name: Name of the selected subAccount (for logging)
+        tid: Trace UUID for logging correlation
+
+    Yields:
+        SSE-formatted response chunks as strings or bytes (async iteration)
+
+    Processing Flow:
+        1. Makes async streaming HTTP request to backend via httpx (10-minute timeout)
+        2. Detects backend model type (Claude 3.7/4, Gemini, older Claude, OpenAI)
+        3. Async iterates over backend response stream (aiter_lines or aiter_bytes)
+        4. Converts chunks to OpenAI SSE format using appropriate converter
+        5. Tracks token usage from metadata/usage chunks
+        6. Yields converted SSE chunks in real-time
+        7. Sends final chunk with finish_reason and usage information
+        8. Terminates with [DONE] signal
+
+    Token Tracking:
+        - Claude 3.7/4: Extracted from metadata.usage chunk (totalTokens, inputTokens, outputTokens)
+        - Gemini: Extracted from usageMetadata (totalTokenCount, promptTokenCount, candidatesTokenCount)
+        - Older Claude: Extracted from usage field (input_tokens, output_tokens)
+        - OpenAI: Extracted from chunks with finish_reason
+
+    Error Handling:
+        - HTTP errors: Yields error payload as SSE data chunk
+        - Timeout errors: 504 Gateway Timeout after 600 seconds
+        - Connection errors: 503 Service Unavailable or 502 Bad Gateway
+        - Chunk parsing errors: Yields error payload with [PROXY ERROR] message
+        - Rate limit (429): Returns error response with retry information
+        - Generic errors: Yields error payload with proxy_error type
+
+    Notes:
+        - Uses httpx.AsyncClient for async streaming (replaces requests library)
+        - Stream-specific timeout: 600 seconds (10 minutes)
+        - Avoids duplicate [DONE] signals using done_sent flag
+        - Token usage logged to token_usage_logger at stream end
+        - Cannot change HTTP status once streaming starts
+        - Proper async generator cleanup handled by httpx context manager
+    """
     payload_json_str: str = json.dumps(payload)
     transport_logger.info(
         "OUT_REQ_CHAT_ST: tid=%s, url=%s], body=%s",
@@ -599,16 +648,60 @@ async def generate_streaming_response(
                                                 total_tokens = (
                                                     prompt_tokens + completion_tokens
                                                 )
-                                        except json.JSONDecodeError:
-                                            pass
-                                    except ValueError:
-                                        break
-                                    except Exception as e:
+                                        except json.JSONDecodeError as e:
+                                            logger.warning(
+                                                "Failed to parse Claude usage metadata from chunk, tid=%s: %s",
+                                                tid,
+                                                e,
+                                            )
+                                            # Continue with last known token values
+                                    except (ValueError, KeyError, TypeError) as e:
                                         logger.error(
-                                            "Error processing claude chunk: %s",
+                                            "Error processing claude chunk structure: %s",
                                             e,
                                             exc_info=True,
                                         )
+                                        # Send error event to client before breaking
+                                        error_payload = {
+                                            "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
+                                            "object": "chat.completion.chunk",
+                                            "created": int(time.time()),
+                                            "model": model,
+                                            "choices": [
+                                                {
+                                                    "index": 0,
+                                                    "delta": {
+                                                        "content": "[PROXY ERROR: Failed to process response chunk]"
+                                                    },
+                                                    "finish_reason": "stop",
+                                                }
+                                            ],
+                                        }
+                                        yield f"data: {json.dumps(error_payload)}\n\n"
+                                        break
+                                    except Exception as e:
+                                        logger.error(
+                                            "Unexpected error processing claude chunk: %s",
+                                            e,
+                                            exc_info=True,
+                                        )
+                                        # Send critical error event before terminating
+                                        error_payload = {
+                                            "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
+                                            "object": "chat.completion.chunk",
+                                            "created": int(time.time()),
+                                            "model": model,
+                                            "choices": [
+                                                {
+                                                    "index": 0,
+                                                    "delta": {
+                                                        "content": "[PROXY ERROR: Critical streaming error]"
+                                                    },
+                                                    "finish_reason": "stop",
+                                                }
+                                            ],
+                                        }
+                                        yield f"data: {json.dumps(error_payload)}\n\n"
                                         break
                             else:
                                 yield chunk
@@ -634,10 +727,25 @@ async def generate_streaming_response(
                                                         completion_tokens = data[
                                                             "usage"
                                                         ].get("completion_tokens", 0)
-                                                except json.JSONDecodeError:
-                                                    pass
-                                except Exception:
-                                    pass
+                                                except json.JSONDecodeError as e:
+                                                    logger.warning(
+                                                        "Failed to parse token usage from SSE chunk, tid=%s: %s",
+                                                        tid,
+                                                        e,
+                                                    )
+                                except UnicodeDecodeError as e:
+                                    logger.warning(
+                                        "Failed to decode chunk as UTF-8, tid=%s: %s",
+                                        tid,
+                                        e,
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        "Unexpected error parsing token usage, tid=%s: %s",
+                                        tid,
+                                        e,
+                                        exc_info=True,
+                                    )
 
                 if not (
                     Detector.is_claude_model(model)
@@ -708,23 +816,21 @@ async def generate_streaming_response(
                     logger.error(
                         "Error response headers: %s", dict(http_err.response.headers)
                     )
-                    logger.error("Error response body: %s", http_err.response.text)
-                    try:
-                        logger.error("Error response body: %s", error_content)
 
-                        try:
-                            error_content = json.dumps(
-                                http_err.response.json(), indent=2
-                            )
-                            logger.error("Error response JSON: %s", error_content)
-                        except json.JSONDecodeError:
-                            pass
-                    except Exception as e:
+                    # Log error response body (avoid duplicates, limit size)
+                    try:
+                        error_json = http_err.response.json()
                         logger.error(
-                            "Could not read error response content: %s",
-                            e,
-                            exc_info=True,
+                            "Error response body (JSON): %s",
+                            json.dumps(error_json, indent=2)[:1000]
                         )
+                    except json.JSONDecodeError:
+                        logger.error(
+                            "Error response body (text): %s",
+                            http_err.response.text[:1000]
+                        )
+                    except Exception as e:
+                        logger.error("Could not read error response: %s", e)
                 else:
                     status_code = 500
                     error_content = str(http_err)
@@ -744,7 +850,95 @@ async def generate_streaming_response(
                 yield f"data: {json.dumps(error_payload)}\n\n"
                 yield "data: [DONE]\n\n"
 
-            except Exception as http_err:
+            except httpx.TimeoutException as timeout_err:
+                logger.error(
+                    "Timeout during streaming for model '%s': %s",
+                    model,
+                    timeout_err,
+                    exc_info=True,
+                )
+                error_payload = {
+                    "id": f"error-{random.randint(10000000, 99999999)}",
+                    "object": "error",
+                    "created": int(time.time()),
+                    "model": model,
+                    "error": {
+                        "message": "Request timed out after 600 seconds",
+                        "type": "timeout_error",
+                        "code": 504,
+                        "subaccount": subaccount_name,
+                    },
+                }
+                yield f"data: {json.dumps(error_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            except httpx.ConnectError as conn_err:
+                logger.error(
+                    "Connection failed for model '%s': %s",
+                    model,
+                    conn_err,
+                    exc_info=True,
+                )
+                error_payload = {
+                    "id": f"error-{random.randint(10000000, 99999999)}",
+                    "object": "error",
+                    "created": int(time.time()),
+                    "model": model,
+                    "error": {
+                        "message": f"Failed to connect to backend: {str(conn_err)}",
+                        "type": "connection_error",
+                        "code": 503,
+                        "subaccount": subaccount_name,
+                    },
+                }
+                yield f"data: {json.dumps(error_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            except httpx.ReadError as read_err:
+                logger.error(
+                    "Connection dropped during streaming for model '%s': %s",
+                    model,
+                    read_err,
+                    exc_info=True,
+                )
+                error_payload = {
+                    "id": f"error-{random.randint(10000000, 99999999)}",
+                    "object": "error",
+                    "created": int(time.time()),
+                    "model": model,
+                    "error": {
+                        "message": "Connection lost during streaming",
+                        "type": "connection_error",
+                        "code": 502,
+                        "subaccount": subaccount_name,
+                    },
+                }
+                yield f"data: {json.dumps(error_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            except httpx.RequestError as request_err:
+                logger.error(
+                    "Request error for model '%s': %s",
+                    model,
+                    request_err,
+                    exc_info=True,
+                )
+                error_payload = {
+                    "id": f"error-{random.randint(10000000, 99999999)}",
+                    "object": "error",
+                    "created": int(time.time()),
+                    "model": model,
+                    "error": {
+                        "message": f"Network request failed: {str(request_err)}",
+                        "type": "network_error",
+                        "code": 503,
+                        "subaccount": subaccount_name,
+                    },
+                }
+                yield f"data: {json.dumps(error_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            except Exception as unexpected_err:
                 logger.error(
                     "Error in streaming response from '%s': %s",
                     subaccount_name,
@@ -757,7 +951,7 @@ async def generate_streaming_response(
                     "created": int(time.time()),
                     "model": model,
                     "error": {
-                        "message": str(http_err),
+                        "message": "An unexpected error occurred",
                         "type": "proxy_error",
                         "code": 500,
                         "subaccount": subaccount_name,

@@ -1,5 +1,7 @@
 """Router for /api/event_logging/batch endpoint."""
 
+import json
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -13,10 +15,23 @@ router = APIRouter()
 @router.post("/api/event_logging/batch")
 @router.options("/api/event_logging/batch")
 async def handle_event_logging(request: Request) -> JSONResponse:
-    """Dummy endpoint for Claude Code event logging to prevent 404 errors."""
-    logger.info("Received request to /api/event_logging/batch")
+    """Dummy endpoint for Claude Code event logging to prevent 404 errors.
+
+    Handles both POST and OPTIONS (CORS preflight) requests gracefully.
+    """
+    logger.info("Received %s request to /api/event_logging/batch", request.method)
     logger.debug("Request headers: %s", request.headers)
-    logger.debug("Request body: %s", await request.json())
+
+    # Only read body for POST requests (OPTIONS has empty body)
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            logger.debug("Request body: %s", body)
+        except json.JSONDecodeError:
+            logger.debug("Request body is not valid JSON")
+        except Exception as e:
+            logger.warning("Failed to read request body: %s", e)
+
     return JSONResponse(
         {"status": "success", "message": "Events logged successfully"},
         status_code=200,
