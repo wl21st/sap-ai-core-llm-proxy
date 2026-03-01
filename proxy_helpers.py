@@ -14,11 +14,6 @@ from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
 
-chunk_converters.logger = logger
-claude_converters.logger = logger
-gemini_converters.logger = logger
-openai_converters.logger = logger
-
 
 def load_model_aliases():
     """Load model aliases from config/aliases.json."""
