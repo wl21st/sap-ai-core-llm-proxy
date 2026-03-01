@@ -331,32 +331,37 @@ Now it supports the following LLM models
     ```json
     {
         "model_filters": {
-            "include": ["^gpt-.*", "^claude-.*"],
-            "exclude": [".*-test$", "^experimental-.*"]
+            "include_filters": ["^gpt-.*", "^claude-.*"],
+            "exclude_filters": [".*-test$", "^experimental-.*"]
         },
         "subAccounts": { ... }
     }
     ```
 
     **Filter Behavior:**
-    - `include`: Only models matching at least one include pattern are loaded
-    - `exclude`: Models matching any exclude pattern are filtered out
-    - **Precedence**: Include filters are applied first, then exclude filters
+    - `include_filters` (optional): Only models matching at least one include pattern are available. If not specified, all models are considered.
+    - `exclude_filters` (optional): Models matching any exclude pattern are filtered out and become unavailable.
+    - **Precedence**: Include filters are applied first (whitelist), then exclude filters (blacklist)
     - Filtered models behave as if they were never configured (return 404 when requested)
 
     **Examples:**
     ```json
     // Only expose GPT and Claude models
-    {"include": ["^gpt-.*", "^claude-.*"]}
+    {"include_filters": ["^gpt-.*", "^claude-.*"]}
 
     // Hide test/experimental models
-    {"exclude": [".*-test$", "^experimental-.*"]}
+    {"exclude_filters": [".*-test$", "^experimental-.*"]}
 
     // GPT models except preview variants
-    {"include": ["^gpt-.*"], "exclude": [".*-preview$"]}
+    {"include_filters": ["^gpt-.*"], "exclude_filters": [".*-preview$"]}
     ```
 
-    Startup logs will show which models were filtered and why. If no `model_filters` section exists, all models are loaded.
+    **Startup logs** will show:
+    - Filter configuration (patterns loaded)
+    - Models available per subaccount before and after filtering
+    - Specific models filtered out and the reason (which pattern matched)
+
+    If no `model_filters` section exists, all models are loaded.
 
 3. Get the service key files (e.g., `demokey.json`) with the following structure from the SAP AI Core Guidelines for each subAccount:
 

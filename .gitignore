@@ -241,3 +241,5 @@ releases/
 _version.txt
 logs/
 .cache/
+
+.worktrees

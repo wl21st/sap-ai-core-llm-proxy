@@ -20,10 +20,19 @@ logger: Logger = get_server_logger(__name__)
 
 @dataclass
 class ModelFilters:
-    """Model filtering configuration with include/exclude regex patterns."""
+    """Model filtering configuration with include/exclude regex patterns.
 
-    include: Optional[list[str]] = None
-    exclude: Optional[list[str]] = None
+    Simple regex-based filtering for models:
+    - include_filters: List of regex patterns to match. If provided, only models
+      matching at least one pattern are kept.
+    - exclude_filters: List of regex patterns to exclude. Models matching any
+      pattern are removed.
+
+    Precedence: include_filters applied first, then exclude_filters.
+    """
+
+    include_filters: Optional[list[str]] = None
+    exclude_filters: Optional[list[str]] = None
 
 
 @dataclass

@@ -57,8 +57,8 @@ logger: Logger = get_server_logger(__name__)
 class ModelFiltersSchema(BaseModel):
     """Pydantic model for model filters validation."""
 
-    include: Optional[list[str]] = Field(default=None)
-    exclude: Optional[list[str]] = Field(default=None)
+    include_filters: Optional[list[str]] = Field(default=None)
+    exclude_filters: Optional[list[str]] = Field(default=None)
 
 
 class SubAccountConfigSchema(BaseModel):
@@ -111,74 +111,71 @@ def validate_regex_patterns(
 
 def apply_model_filters(
     models: dict[str, list[str]], filters: ModelFilters
-) -> tuple[dict[str, list[str]], list[tuple[str, str, str]]]:
+) -> tuple[dict[str, list[str]], dict[str, str]]:
     """Apply model filters to a dictionary of models.
 
-    Filter precedence logic (per spec):
-    1. If include patterns exist, keep only models matching at least one include pattern
-    2. Then, if exclude patterns exist, remove models matching any exclude pattern
+    Filter precedence logic:
+    1. If include_filters exist, keep only models matching at least one pattern
+    2. Then, if exclude_filters exist, remove models matching any pattern
 
     Args:
         models: Dictionary mapping model names to deployment URLs
-        filters: ModelFilters object with include/exclude patterns
+        filters: ModelFilters object with include_filters/exclude_filters patterns
 
     Returns:
-        Tuple of (filtered_models_dict, filtered_info_list)
+        Tuple of (filtered_models_dict, filtered_info_dict)
         - filtered_models_dict: Models that passed filtering
-        - filtered_info_list: List of (model_name, filter_type, pattern) for filtered models
+        - filtered_info_dict: Map of model_name -> filter_reason
     """
-    if not filters or (not filters.include and not filters.exclude):
-        return models, []
+    if not filters or (not filters.include_filters and not filters.exclude_filters):
+        return models, {}
 
     # Compile regex patterns
     include_patterns: list[re.Pattern[str]] = []
     exclude_patterns: list[re.Pattern[str]] = []
 
-    if filters.include:
-        include_patterns = validate_regex_patterns(filters.include, "include")
+    if filters.include_filters:
+        include_patterns = validate_regex_patterns(
+            filters.include_filters, "include_filters"
+        )
 
-    if filters.exclude:
-        exclude_patterns = validate_regex_patterns(filters.exclude, "exclude")
+    if filters.exclude_filters:
+        exclude_patterns = validate_regex_patterns(
+            filters.exclude_filters, "exclude_filters"
+        )
 
     filtered_models: dict[str, list[str]] = {}
-    filtered_info: list[tuple[str, str, str]] = []
+    filtered_info: dict[str, str] = {}
 
     for model_name, urls in models.items():
         keep_model = True
-        filter_reason = ("", "")  # (filter_type, pattern)
+        filter_reason = ""
 
-        # Filter precedence per spec: include first, then exclude
-        # This allows exclude filters to act as exceptions to the include list
-        # Example: include ["^gpt-.*"], exclude [".*-preview$"] -> keeps gpt-4 but not gpt-4-preview
-
-        # Step 1: Apply include filters first (if present)
+        # Step 1: Apply include_filters first (if present)
         # If include patterns exist, only keep models that match at least one pattern
         if include_patterns:
             matches_include = any(
-                pattern.match(model_name) for pattern in include_patterns
+                pattern.search(model_name) for pattern in include_patterns
             )
             if not matches_include:
                 keep_model = False
-                # Find which pattern would have matched for logging
-                for pattern in include_patterns:
-                    filter_reason = ("include", pattern.pattern)
-                    break
-                if not filter_reason[1]:  # If no specific pattern, use generic message
-                    filter_reason = ("include", "no matching include pattern")
+                filter_reason = f"did not match include_filters"
 
-        # Step 2: Apply exclude filters (if model passed include or no include filters)
+        # Step 2: Apply exclude_filters (if model passed include or no include filters)
         # Remove any models that match exclude patterns
         if keep_model and exclude_patterns:
             for pattern in exclude_patterns:
-                if pattern.match(model_name):
+                if pattern.search(model_name):
                     keep_model = False
-                    filter_reason = ("exclude", pattern.pattern)
+                    filter_reason = (
+                        f"matched exclude_filters pattern: {pattern.pattern}"
+                    )
                     break
 
         if keep_model:
             filtered_models[model_name] = urls
         else:
-            filtered_info.append((model_name, filter_reason[0], filter_reason[1]))
+            filtered_info[model_name] = filter_reason
 
     return filtered_models, filtered_info
 
@@ -207,15 +204,23 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
     model_filters: Optional[ModelFilters] = None
     if config_schema.model_filters:
         model_filters = ModelFilters(
-            include=config_schema.model_filters.include,
-            exclude=config_schema.model_filters.exclude,
+            include_filters=config_schema.model_filters.include_filters,
+            exclude_filters=config_schema.model_filters.exclude_filters,
         )
         # Log filter configuration
-        include_count = len(model_filters.include) if model_filters.include else 0
-        exclude_count = len(model_filters.exclude) if model_filters.exclude else 0
-        logger.info(
-            f"Model filters configured: include={include_count} patterns, exclude={exclude_count} patterns"
+        include_count = (
+            len(model_filters.include_filters) if model_filters.include_filters else 0
         )
+        exclude_count = (
+            len(model_filters.exclude_filters) if model_filters.exclude_filters else 0
+        )
+        logger.info(
+            f"Model filters configured: {include_count} include_filters, {exclude_count} exclude_filters"
+        )
+        if model_filters.include_filters:
+            logger.info(f"  Include patterns: {model_filters.include_filters}")
+        if model_filters.exclude_filters:
+            logger.info(f"  Exclude patterns: {model_filters.exclude_filters}")
 
     # Create a proper ProxyConfig instance
     proxy_config = ProxyConfig(
@@ -231,7 +236,7 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
         models_before_filter = len(deployment_models)
 
         # Apply model filters if configured
-        filtered_model_info: list[tuple[str, str, str]] = []
+        filtered_model_info: dict[str, str] = {}
         if model_filters:
             deployment_models, filtered_model_info = apply_model_filters(
                 deployment_models, model_filters
@@ -239,23 +244,18 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
 
             # Log filtering results
             models_after_filter = len(deployment_models)
-            filtered_model_names = [info[0] for info in filtered_model_info]
 
             logger.info(
-                f"Subaccount '{sub_name}': {models_before_filter} models configured, "
-                f"{models_after_filter} after filtering"
+                f"Subaccount '{sub_name}': {models_before_filter} models available, "
+                f"{models_after_filter} models after filtering"
             )
 
-            if filtered_model_names:
+            if filtered_model_info:
                 logger.info(
-                    f"Subaccount '{sub_name}': Filtered models: {', '.join(filtered_model_names)}"
+                    f"Subaccount '{sub_name}': Filtered out {len(filtered_model_info)} models:"
                 )
-
-                # DEBUG-level logging with pattern details
-                for model_name, filter_type, pattern in filtered_model_info:
-                    logger.debug(
-                        f"Filtered model '{model_name}' by {filter_type} filter: {pattern}"
-                    )
+                for model_name, reason in filtered_model_info.items():
+                    logger.info(f"  - {model_name}: {reason}")
 
             # Warn if all models filtered out
             if models_after_filter == 0:
@@ -348,7 +348,7 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
             extra={
                 "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
                 "subaccount": sub_account_config.name,
-            }
+            },
         )
         raise ConfigValidationError(
             f"Service key not properly initialized for subaccount '{sub_account_config.name}'. "
@@ -375,13 +375,11 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
 
                 if (
                     url
-                    not in sub_account_config.model_to_deployment_urls[
-                        backend_model
-                    ]
+                    not in sub_account_config.model_to_deployment_urls[backend_model]
                 ):
-                    sub_account_config.model_to_deployment_urls[
-                        backend_model
-                    ].append(url)
+                    sub_account_config.model_to_deployment_urls[backend_model].append(
+                        url
+                    )
                     logger.debug(f"Auto-discovered: {backend_model} -> {url}")
 
                 # Register aliases
@@ -392,13 +390,11 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
 
                         if (
                             url
-                            not in sub_account_config.model_to_deployment_urls[
-                                alias
-                            ]
+                            not in sub_account_config.model_to_deployment_urls[alias]
                         ):
-                            sub_account_config.model_to_deployment_urls[
-                                alias
-                            ].append(url)
+                            sub_account_config.model_to_deployment_urls[alias].append(
+                                url
+                            )
                             logger.debug(f"Auto-aliased: {alias} -> {url}")
 
         return discovered_deployments
@@ -429,8 +425,7 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
 
 
 def _resolve_deployment_ids(
-    sub_account_config: SubAccountConfig,
-    deployment_id_to_model: dict[str, str]
+    sub_account_config: SubAccountConfig, deployment_id_to_model: dict[str, str]
 ):
     """Resolve deployment IDs to URLs using the SDK.
 
@@ -530,8 +525,7 @@ def _resolve_deployment_ids(
 
 
 def _extract_deployment_ids_from_urls(
-    sub_account_config: SubAccountConfig,
-    deployment_id_to_model: dict[str, str]
+    sub_account_config: SubAccountConfig, deployment_id_to_model: dict[str, str]
 ):
     """Extract deployment IDs from URLs for backward compatibility.
 

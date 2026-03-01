@@ -93,7 +93,7 @@ class TestApplyModelFilters:
             "claude-sonnet": ["url3"],
             "gemini-pro": ["url4"],
         }
-        filters = ModelFilters(include=["^gpt-.*"], exclude=None)
+        filters = ModelFilters(include_filters=["^gpt-.*"], exclude_filters=None)
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -103,7 +103,7 @@ class TestApplyModelFilters:
         assert "gemini-pro" not in filtered_models
 
         # Check filtered info
-        filtered_names = [info[0] for info in filtered_info]
+        filtered_names = list(filtered_info.keys())
         assert "claude-sonnet" in filtered_names
         assert "gemini-pro" in filtered_names
 
@@ -116,7 +116,7 @@ class TestApplyModelFilters:
             "gemini-1-pro": ["url4"],
             "gemini-2-pro": ["url5"],
         }
-        filters = ModelFilters(include=None, exclude=[".*-test$", "^gemini-1.*"])
+        filters = ModelFilters(include_filters=None, exclude_filters=[".*-test$", "^gemini-1.*"])
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -127,7 +127,7 @@ class TestApplyModelFilters:
         assert "gemini-1-pro" not in filtered_models
 
         # Check filtered info
-        filtered_names = [info[0] for info in filtered_info]
+        filtered_names = list(filtered_info.keys())
         assert "gpt-4-test" in filtered_names
         assert "gemini-1-pro" in filtered_names
 
@@ -139,7 +139,7 @@ class TestApplyModelFilters:
             "gpt-4-turbo": ["url3"],
             "claude-sonnet": ["url4"],
         }
-        filters = ModelFilters(include=["^gpt-.*"], exclude=[".*-preview$"])
+        filters = ModelFilters(include_filters=["^gpt-.*"], exclude_filters=[".*-preview$"])
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -151,7 +151,7 @@ class TestApplyModelFilters:
         assert "claude-sonnet" not in filtered_models
 
         # Check filtered info
-        filtered_names = [info[0] for info in filtered_info]
+        filtered_names = list(filtered_info.keys())
         assert "gpt-4-preview" in filtered_names
         assert "claude-sonnet" in filtered_names
 
@@ -162,7 +162,7 @@ class TestApplyModelFilters:
             "gpt-4-preview": ["url2"],
             "claude-sonnet": ["url3"],
         }
-        filters = ModelFilters(include=["^gpt-.*"], exclude=[".*-preview$"])
+        filters = ModelFilters(include_filters=["^gpt-.*"], exclude_filters=[".*-preview$"])
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -184,13 +184,13 @@ class TestApplyModelFilters:
         # Test with None filters
         filtered_models, filtered_info = apply_model_filters(models, None)
         assert filtered_models == models
-        assert filtered_info == []
+        assert filtered_info == {}
 
         # Test with empty include/exclude
-        empty_filters = ModelFilters(include=None, exclude=None)
+        empty_filters = ModelFilters(include_filters=None, exclude_filters=None)
         filtered_models, filtered_info = apply_model_filters(models, empty_filters)
         assert filtered_models == models
-        assert filtered_info == []
+        assert filtered_info == {}
 
     def test_all_models_filtered_out(self):
         """Test behavior when all models are filtered out."""
@@ -199,7 +199,7 @@ class TestApplyModelFilters:
             "claude-test": ["url2"],
             "gemini-test": ["url3"],
         }
-        filters = ModelFilters(include=None, exclude=[".*-test$"])
+        filters = ModelFilters(include_filters=None, exclude_filters=[".*-test$"])
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -212,7 +212,7 @@ class TestApplyModelFilters:
             "gpt-4": ["url1"],
             "claude-sonnet": ["url2"],
         }
-        filters = ModelFilters(include=["^llama-.*"], exclude=None)
+        filters = ModelFilters(include_filters=["^llama-.*"], exclude_filters=None)
 
         # Should not raise error, just filter out all models
         filtered_models, filtered_info = apply_model_filters(models, filters)
@@ -226,7 +226,7 @@ class TestApplyModelFilters:
             "gpt-4": ["url1"],
             "claude-sonnet": ["url2"],
         }
-        filters = ModelFilters(include=["^nonexistent-.*"], exclude=None)
+        filters = ModelFilters(include_filters=["^nonexistent-.*"], exclude_filters=None)
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -239,12 +239,12 @@ class TestApplyModelFilters:
             "gpt-4": ["url1"],
             "claude-sonnet": ["url2"],
         }
-        filters = ModelFilters(include=[], exclude=[])
+        filters = ModelFilters(include_filters=[], exclude_filters=[])
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
         assert filtered_models == models
-        assert filtered_info == []
+        assert filtered_info == {}
 
     def test_unicode_model_names(self):
         """Test handling of unicode characters in model names."""
@@ -253,7 +253,7 @@ class TestApplyModelFilters:
             "claude-sonnet-中文": ["url2"],
             "gemini-pro-한글": ["url3"],
         }
-        filters = ModelFilters(include=[".*日本語$"], exclude=None)
+        filters = ModelFilters(include_filters=[".*日本語$"], exclude_filters=None)
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -269,7 +269,7 @@ class TestApplyModelFilters:
             "model+test": ["url3"],
         }
         # Using \. to match literal dot
-        filters = ModelFilters(include=[r".*\.\d+.*"], exclude=None)
+        filters = ModelFilters(include_filters=[r".*\.\d+.*"], exclude_filters=None)
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -284,7 +284,7 @@ class TestApplyModelFilters:
             "gpt-4": ["url1", "url2", "url3"],
             "claude-sonnet": ["url4", "url5"],
         }
-        filters = ModelFilters(include=["^gpt-.*"], exclude=None)
+        filters = ModelFilters(include_filters=["^gpt-.*"], exclude_filters=None)
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -299,7 +299,7 @@ class TestApplyModelFilters:
             "gpt-4": ["url2"],
             "Claude-Sonnet": ["url3"],
         }
-        filters = ModelFilters(include=["^gpt-.*"], exclude=None)
+        filters = ModelFilters(include_filters=["^gpt-.*"], exclude_filters=None)
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
@@ -311,9 +311,9 @@ class TestApplyModelFilters:
     def test_empty_model_dict(self):
         """Test filtering with empty model dictionary."""
         models = {}
-        filters = ModelFilters(include=["^gpt-.*"], exclude=[".*-test$"])
+        filters = ModelFilters(include_filters=["^gpt-.*"], exclude_filters=[".*-test$"])
 
         filtered_models, filtered_info = apply_model_filters(models, filters)
 
         assert filtered_models == {}
-        assert filtered_info == []
+        assert filtered_info == {}
