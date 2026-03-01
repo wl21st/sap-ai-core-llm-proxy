@@ -7,8 +7,8 @@ from converters.chunks import (
 )
 from converters.claude import (
     from_openai as claude_from_openai,
-    from_openai_messages,
-    to_bedrock,
+    claude_converse_from_openai,
+    claude_bedrock_from_claude,
 )
 from converters.gemini import (
     from_claude as gemini_from_claude,
@@ -25,8 +25,8 @@ __all__ = [
     "openai_from_claude37",
     "openai_from_gemini",
     "claude_from_openai",
-    "from_openai_messages",
-    "to_bedrock",
+    "claude_converse_from_openai",
+    "claude_bedrock_from_claude",
     "gemini_from_openai",
     "gemini_from_claude",
     "claude_to_openai_chunk",

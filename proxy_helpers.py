@@ -313,7 +313,7 @@ class Converters:
 
     @staticmethod
     def convert_openai_to_claude37(payload):
-        return claude_converters.from_openai_messages(payload)
+        return claude_converters.claude_converse_from_openai(payload)
 
     @staticmethod
     def convert_claude_request_to_openai(payload):
@@ -368,7 +368,7 @@ class Converters:
 
     @staticmethod
     def convert_claude_request_for_bedrock(payload):
-        return claude_converters.to_bedrock(payload)
+        return claude_converters.claude_bedrock_from_claude(payload)
 
     @staticmethod
     def convert_claude_to_openai(response, model):

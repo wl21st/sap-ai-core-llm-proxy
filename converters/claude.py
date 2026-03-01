@@ -82,7 +82,7 @@ def from_openai(payload: dict) -> dict:
     return claude_payload
 
 
-def from_openai_messages(payload: dict) -> dict:
+def claude_converse_from_openai(payload: dict) -> dict:
     """Convert OpenAI chat completion request to Claude /converse format."""
     logger.debug(
         "Original OpenAI payload for Claude 3.7 conversion: %s",
@@ -209,7 +209,7 @@ def from_openai_messages(payload: dict) -> dict:
     return claude_payload
 
 
-def to_bedrock(payload: dict) -> dict:
+def claude_bedrock_from_claude(payload: dict) -> dict:
     """Convert a Claude Messages API request to Bedrock Claude format."""
     logger.debug(
         "Original Claude payload for Bedrock conversion: %s",
