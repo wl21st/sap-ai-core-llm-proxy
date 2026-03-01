@@ -731,7 +731,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             "max_tokens": "invalid",
         }
 
-        with patch("converters.claude.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
             # Should not have maxTokens in inferenceConfig due to invalid value
@@ -746,7 +746,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             "max_tokens": None,
         }
 
-        with patch("converters.claude.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
 
@@ -757,7 +757,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             "temperature": "hot",
         }
 
-        with patch("converters.claude.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
             assert "inferenceConfig" not in result or "temperature" not in result.get(
@@ -775,7 +775,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
         """Test stop sequences with invalid type."""
         payload = {"messages": [{"role": "user", "content": "Test"}], "stop": 123}
 
-        with patch("converters.claude.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
             assert "stopSequences" not in result.get("inferenceConfig", {})
@@ -802,7 +802,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             ]
         }
 
-        with patch("converters.claude.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
             # Should only include valid block
@@ -819,7 +819,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             ]
         }
 
-        with patch("converters.claude.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
             # Message should be skipped
@@ -833,7 +833,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             ]
         }
 
-        with patch("converters.claude.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
 
@@ -992,7 +992,7 @@ class TestConvertersClaude37Streaming:
         """Test handling of unknown chunk type."""
         chunk = {"unknownType": {}}
 
-        with patch("converters.chunks.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_claude37_chunk_to_openai(
                 chunk, "claude-3.7-sonnet"
             )
@@ -1014,7 +1014,7 @@ class TestConvertersClaude37Streaming:
         """Test handling of invalid JSON string."""
         chunk_str = "{invalid json}"
 
-        with patch("converters.chunks.logger.error") as mock_error:
+        with patch("proxy_helpers.logger.error") as mock_error:
             result = Converters.convert_claude37_chunk_to_openai(
                 chunk_str, "claude-3.7-sonnet"
             )
@@ -1025,7 +1025,7 @@ class TestConvertersClaude37Streaming:
         """Test handling of empty chunk."""
         chunk = {}
 
-        with patch("converters.chunks.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_claude37_chunk_to_openai(
                 chunk, "claude-3.7-sonnet"
             )
@@ -1036,7 +1036,7 @@ class TestConvertersClaude37Streaming:
         """Test error handling returns error SSE."""
         chunk = {"messageStart": None}  # Will cause error
 
-        with patch("converters.chunks.logger.error") as mock_error:
+        with patch("proxy_helpers.logger.error") as mock_error:
             result = Converters.convert_claude37_chunk_to_openai(
                 chunk, "claude-3.7-sonnet"
             )
@@ -1108,7 +1108,7 @@ class TestConvertersOpenAIToGeminiEdgeCases:
             ]
         }
 
-        with patch("converters.gemini.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_gemini(payload)
             mock_warning.assert_called()
 
@@ -1127,7 +1127,7 @@ class TestConvertersOpenAIToGeminiEdgeCases:
             "top_p": "invalid",
         }
 
-        with patch("converters.gemini.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_openai_to_gemini(payload)
             mock_warning.assert_called()
 
@@ -1286,7 +1286,7 @@ class TestConvertersClaude37ResponseEdgeCases:
             "stopReason": "end_turn",
         }
 
-        with patch("converters.openai.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as mock_warning:
             result = Converters.convert_claude37_to_openai(response)
             mock_warning.assert_called()
             assert result["usage"]["prompt_tokens"] == 0
@@ -1357,7 +1357,7 @@ class TestConvertersStreamingEdgeCases:
         """Test handling of invalid chunk type."""
         chunk = "not a dict"
 
-        with patch("converters.chunks.logger.error") as mock_error:
+        with patch("proxy_helpers.logger.error") as mock_error:
             result = Converters.convert_gemini_chunk_to_openai(chunk, "gemini-pro")
             # The function logs an error when JSON parsing fails
             assert result is None or mock_error.called
@@ -1394,7 +1394,7 @@ class TestConvertersResponseErrorHandling:
             "usage": {"inputTokens": 10, "outputTokens": 20},
         }
 
-        with patch("converters.openai.logger.info") as mock_info:
+        with patch("proxy_helpers.logger.info") as mock_info:
             result = Converters.convert_claude_to_openai(response, "claude-3.7-sonnet")
             # Should log that it's using claude37 conversion
             assert any("3.7/4" in str(call) for call in mock_info.call_args_list)
