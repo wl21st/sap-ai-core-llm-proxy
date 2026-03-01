@@ -75,13 +75,13 @@ class TestChatCompletionsNonStreaming:
         assert len(content) > 0, f"Response content has zero length for model {model}"
 
     def test_non_filtered_model_succeeds(
-        self, proxy_client, proxy_url, model, max_tokens, model_filter_tests
+        self, proxy_client, proxy_url, model, max_tokens, model_filter
     ):
         """Verify non-filtered models continue working with filters enabled."""
-        if not model_filter_tests.get("enabled"):
+        if not model_filter.get("enabled"):
             pytest.skip("Model filter integration tests are disabled")
 
-        allowed_models = model_filter_tests.get("allowed_models", [])
+        allowed_models = model_filter.get("allowed_models", [])
         if model not in allowed_models:
             pytest.skip(f"Model {model} not in allowed_models configuration")
 

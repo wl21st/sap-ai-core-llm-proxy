@@ -85,17 +85,17 @@ class TestModelsEndpointModelFilters:
     """Integration tests for model filtering behavior."""
 
     def test_filtered_models_hidden_from_list(
-        self, proxy_client, proxy_url, model_filter_tests
+        self, proxy_client, proxy_url, model_filter
     ):
         """Verify filtered models are not listed in /v1/models."""
-        if not model_filter_tests.get("enabled"):
+        if not model_filter.get("enabled"):
             pytest.skip("Model filter integration tests are disabled")
 
         response = proxy_client.get(f"{proxy_url}/v1/models")
         assert response.status_code == 200
         model_ids = [model["id"] for model in response.json().get("data", [])]
 
-        for filtered_model in model_filter_tests.get("filtered_models", []):
+        for filtered_model in model_filter.get("filtered_models", []):
             assert filtered_model not in model_ids, (
                 f"Filtered model '{filtered_model}' was listed in /v1/models"
             )
