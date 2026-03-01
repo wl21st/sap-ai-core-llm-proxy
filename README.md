@@ -1,6 +1,6 @@
 # sap-ai-core LLM Proxy Server
 
-This project establishes a proxy server to interface with SAP AI Core services, it transform the SAP AI Core LLM API to Open AI Compatible API, no matter it's gpt-4o or claude sonnet 4.
+This project establishes a proxy server to interface with SAP AI Core services, it transforms the SAP AI Core LLM API to Open AI Compatible API, no matter it's gpt-4o or claude sonnet 4.
 
 So it is compatible with any application that supports the OpenAI API, so you can use the SAP AI Core in other Applications, e.g.
 
