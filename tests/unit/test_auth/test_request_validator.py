@@ -4,7 +4,6 @@ Unit tests for RequestValidator class.
 
 import pytest
 from unittest.mock import Mock
-from flask import Request
 from auth import RequestValidator
 
 
@@ -23,8 +22,8 @@ class TestRequestValidator:
 
     @pytest.fixture
     def mock_request(self):
-        """Create a mock Flask request."""
-        request = Mock(spec=Request)
+        """Create a mock request object."""
+        request = Mock()
         request.headers = {}
         return request
 
@@ -80,7 +79,7 @@ class TestRequestValidator:
         """Test that Authorization header takes precedence over x-api-key."""
         mock_request.headers = {
             "Authorization": "Bearer valid_token_1",
-            "x-api-key": "invalid_token"
+            "x-api-key": "invalid_token",
         }
 
         assert validator.validate(mock_request) is True
@@ -110,7 +109,7 @@ class TestRequestValidator:
         """Test token extraction precedence (Authorization over x-api-key)."""
         mock_request.headers = {
             "Authorization": "Bearer auth_token",
-            "x-api-key": "api_key_token"
+            "x-api-key": "api_key_token",
         }
 
         token = validator._extract_token(mock_request)

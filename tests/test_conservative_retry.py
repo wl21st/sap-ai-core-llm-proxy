@@ -6,7 +6,7 @@ Test script to verify the retry logic with 4 attempts using mixed strategy (2 re
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, wait_chain
 from botocore.exceptions import ClientError
-from blueprints.messages import retry_on_rate_limit
+from utils.retry import retry_on_rate_limit
 
 # Create a mixed retry strategy: 2 fixed wait attempts + 2 exponential wait attempts
 # This gives us: 0.1s (fixed) + 0.2s (fixed) + 0.3s (exp) + 0.6s (exp) = 1.2s total max

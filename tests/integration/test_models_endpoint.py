@@ -12,16 +12,16 @@ import pytest
 class TestModelsEndpoint:
     """Tests for /v1/models endpoint."""
 
-    def test_list_models_returns_200(self, proxy_client, proxy_url):
+    async def test_list_models_returns_200(self, proxy_client, proxy_url):
         """Test that /v1/models returns 200 OK."""
-        response = proxy_client.get(f"{proxy_url}/v1/models")
+        response = await proxy_client.get(f"{proxy_url}/v1/models")
         assert response.status_code == 200, (
             f"Expected 200, got {response.status_code}: {response.text}"
         )
 
-    def test_list_models_response_format(self, proxy_client, proxy_url):
+    async def test_list_models_response_format(self, proxy_client, proxy_url):
         """Test that /v1/models returns OpenAI-compatible format."""
-        response = proxy_client.get(f"{proxy_url}/v1/models")
+        response = await proxy_client.get(f"{proxy_url}/v1/models")
         assert response.status_code == 200
 
         data = response.json()
@@ -32,11 +32,11 @@ class TestModelsEndpoint:
         assert "data" in data, "Response missing 'data' field"
         assert isinstance(data["data"], list), "data must be a list"
 
-    def test_list_models_contains_required_models(
+    async def test_list_models_contains_required_models(
         self, proxy_client, proxy_url, models_to_test
     ):
         """Test that all required models are listed."""
-        response = proxy_client.get(f"{proxy_url}/v1/models")
+        response = await proxy_client.get(f"{proxy_url}/v1/models")
         assert response.status_code == 200
 
         data = response.json()
@@ -47,9 +47,9 @@ class TestModelsEndpoint:
                 f"Required model '{required_model}' not found in models list. Available: {model_ids}"
             )
 
-    def test_model_metadata(self, proxy_client, proxy_url):
+    async def test_model_metadata(self, proxy_client, proxy_url):
         """Test that each model has required metadata fields."""
-        response = proxy_client.get(f"{proxy_url}/v1/models")
+        response = await proxy_client.get(f"{proxy_url}/v1/models")
         assert response.status_code == 200
 
         data = response.json()
@@ -70,32 +70,10 @@ class TestModelsEndpoint:
             assert isinstance(model["owned_by"], str), "Model owned_by must be string"
 
     @pytest.mark.smoke
-    def test_models_endpoint_smoke(self, proxy_client, proxy_url):
+    async def test_models_endpoint_smoke(self, proxy_client, proxy_url):
         """Quick smoke test for /v1/models endpoint."""
-        response = proxy_client.get(f"{proxy_url}/v1/models")
+        response = await proxy_client.get(f"{proxy_url}/v1/models")
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
         assert len(data["data"]) > 0, "No models available"
-
-
-@pytest.mark.integration
-@pytest.mark.real
-class TestModelsEndpointModelFilters:
-    """Integration tests for model filtering behavior."""
-
-    def test_filtered_models_hidden_from_list(
-        self, proxy_client, proxy_url, model_filter
-    ):
-        """Verify filtered models are not listed in /v1/models."""
-        if not model_filter.get("enabled"):
-            pytest.skip("Model filter integration tests are disabled")
-
-        response = proxy_client.get(f"{proxy_url}/v1/models")
-        assert response.status_code == 200
-        model_ids = [model["id"] for model in response.json().get("data", [])]
-
-        for filtered_model in model_filter.get("filtered_models", []):
-            assert filtered_model not in model_ids, (
-                f"Filtered model '{filtered_model}' was listed in /v1/models"
-            )

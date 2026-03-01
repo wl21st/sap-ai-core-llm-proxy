@@ -6,7 +6,8 @@ This module provides request validation against configured authentication tokens
 
 from logging import Logger
 
-from flask import Request
+from fastapi import Header, HTTPException, Request
+from starlette.status import HTTP_401_UNAUTHORIZED
 
 from utils.logging_utils import get_client_logger
 
@@ -34,7 +35,7 @@ class RequestValidator:
         """Validate request authentication.
 
         Args:
-            request: Flask request object
+            request: Request object with headers
 
         Returns:
             True if request is authenticated, False otherwise
@@ -60,17 +61,34 @@ class RequestValidator:
 
     @staticmethod
     def _extract_token(request: Request) -> str | None:
-        """Extract token from request headers.
-
-        Args:
-            request: Flask request object
-
-        Returns:
-            Token string or None if not found
-        """
+        """Extract token from request headers."""
         token = request.headers.get("Authorization") or request.headers.get("x-api-key")
 
         if token:
             logger.debug("Token extracted: %s...", token[:15])
 
         return token
+
+
+def verify_request_token(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+) -> None:
+    token = authorization or x_api_key
+    if token:
+        logger.debug("Token extracted: %s...", token[:15])
+
+    config = request.app.state.proxy_config
+    validator = RequestValidator(config.secret_authentication_tokens)
+    if not validator.validate(request):
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail={
+                "type": "error",
+                "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API Key provided.",
+                },
+            },
+        )

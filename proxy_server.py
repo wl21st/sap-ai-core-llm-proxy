@@ -1,20 +1,14 @@
-import json
-import uuid
 from logging import Logger
 
-import requests
+import requests  # noqa: F401 - used by tests via proxy_server.requests.post
 from botocore.exceptions import ClientError  # noqa: F401 - used in bedrock_handler
-from flask import Flask, Response, jsonify, request, stream_with_context
-from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
 
-from auth import RequestValidator
-from auth.token_manager import TokenManager
+from auth import RequestValidator  # noqa: F401 - re-exported for tests
+from auth.token_manager import TokenManager  # noqa: F401 - used by tests via proxy_server.TokenManager
 
 # Import from new modular structure
-from config import ProxyConfig, ProxyGlobalContext, ServiceKey, load_proxy_config
-from proxy_helpers import Converters, Detector
-from utils.error_handlers import handle_http_429_error
-from utils.logging_utils import get_server_logger, get_transport_logger, init_logging
+from config import ProxyConfig, ProxyGlobalContext
+from utils.logging_utils import get_server_logger, get_transport_logger
 
 # Initialize token logger (will be configured on first use)
 logger: Logger = get_server_logger(__name__)
@@ -23,7 +17,7 @@ token_usage_logger: Logger = get_server_logger("token_usage")
 
 ctx: ProxyGlobalContext
 
-from utils.sdk_pool import get_bedrock_client  # noqa: E402
+from utils.sdk_pool import get_bedrock_client  # noqa: F401,E402 - re-exported for downstream use
 
 API_VERSION_2023_05_15 = "2023-05-15"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
@@ -35,80 +29,33 @@ DEFAULT_EMBEDDING_MODEL: str = "text-embedding-3-small"
 DEFAULT_GPT_MODEL = "gpt-4.1"
 
 # Retry configuration - now unified in utils/retry.py
-from utils.retry import (
-    RETRY_MAX_ATTEMPTS,
-    RETRY_MAX_WAIT,
-    RETRY_MIN_WAIT,
-    RETRY_MULTIPLIER,
-)
 
 """SAP API Reference are documented at https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/example-payloads-for-inferencing-third-party-models"""
 
 # Bedrock handler - extracted to handlers/bedrock_handler.py
-from handlers.bedrock_handler import (
-    invoke_bedrock_non_streaming,
-    invoke_bedrock_streaming,
-    read_response_body_stream,
-)
 
 # Streaming generators - extracted to handlers/streaming_generators.py (Phase 6d)
 from handlers.streaming_generators import (
-    generate_bedrock_streaming_response,
-    generate_claude_streaming_response,
-    generate_streaming_response,
+    generate_claude_streaming_response_sync,
 )
+
+
+# Backward-compatible alias for tests
+def generate_claude_streaming_response(
+    url: str,
+    headers: dict,
+    payload: dict,
+    model: str,
+    subaccount_name: str,
+    token_manager=None,
+):
+    return generate_claude_streaming_response_sync(
+        url, headers, payload, model, subaccount_name, token_manager
+    )
+
 
 # Global configuration
 proxy_config: ProxyConfig = ProxyConfig()
-
-app = Flask(__name__)
-
-# Configure Flask to handle long-running requests
-# Increase timeout for large LLM requests (180 seconds = 3 minutes)
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 180
-# Note: Flask development server has no timeout by default, but ensure
-# werkzeug (WSGI) and reverse proxies are configured with timeout >= 180s
-
-
-def register_blueprints(
-    app: Flask, config: ProxyConfig, context: ProxyGlobalContext
-) -> None:
-    """Register all Flask blueprints with the application.
-
-    Args:
-        app: The Flask application instance
-        config: The proxy configuration
-        context: The global context
-    """
-    from blueprints import (
-        chat_completions_bp,
-        embeddings_bp,
-        event_logging_bp,
-        init_chat_completions_blueprint,
-        init_embeddings_blueprint,
-        init_messages_blueprint,
-        init_models_blueprint,
-        messages_bp,
-        models_bp,
-    )
-
-    # Initialize blueprints with config and context
-    init_chat_completions_blueprint(config, context)
-    init_messages_blueprint(config, context)
-    init_embeddings_blueprint(config, context)
-    init_models_blueprint(config, context)
-
-    # Register blueprints
-    app.register_blueprint(chat_completions_bp)
-    app.register_blueprint(messages_bp)
-    app.register_blueprint(embeddings_bp)
-    app.register_blueprint(models_bp)
-    app.register_blueprint(event_logging_bp)
-
-    logger.info("Registered all blueprints successfully")
-
-
-# Embeddings endpoint moved to blueprints/embeddings.py
 
 
 def handle_embedding_service_call(input_text, model, encoding_format):
@@ -144,7 +91,6 @@ def format_embedding_response(response, model):
 
 # Version utilities - extracted to version.py
 # CLI argument parsing - extracted to cli.py
-from cli import parse_arguments
 from load_balancer import (
     load_balance_url as _load_balance_url,
 )
@@ -153,7 +99,6 @@ from load_balancer import (
 from load_balancer import (
     resolve_model_name as _resolve_model_name,
 )
-from version import get_git_hash, get_version, get_version_info, get_version_string
 
 
 def resolve_model_name(model_name):
@@ -170,15 +115,15 @@ def load_balance_url(model):
     return _load_balance_url(model, proxy_config)
 
 
+# CLI helpers - re-exported for backward-compatible test imports
+from cli import parse_arguments  # noqa: F401 - re-exported for tests
+
+
 # Streaming helpers - extracted to handlers/streaming_handler.py
 from handlers.streaming_handler import (
-    BackendRequestResult,
-    get_claude_stop_reason_from_gemini_chunk,
-    get_claude_stop_reason_from_openai_chunk,
-    make_backend_request,
-)
-from handlers.streaming_handler import (
     parse_sse_response_to_claude_json as _parse_sse_response_to_claude_json,
+    get_claude_stop_reason_from_gemini_chunk,  # noqa: F401 - re-exported for tests
+    get_claude_stop_reason_from_openai_chunk,  # noqa: F401 - re-exported for tests
 )
 
 
@@ -226,358 +171,17 @@ def handle_default_request(payload, model=DEFAULT_GPT_MODEL):
     return _handle_default_request(payload, model, proxy_config)
 
 
-# Models endpoint moved to blueprints/models.py
-# Event logging endpoint moved to blueprints/event_logging.py
-
-
-content_type = "Application/json"
-
-
-# Chat completions endpoint moved to blueprints/chat_completions.py
-
-
-# Messages endpoint moved to blueprints/messages.py
-
-
-def proxy_claude_request_original():
-    """Original implementation preserved as fallback."""
-    logger.info("Using original Claude request implementation")
-
-    validator = RequestValidator(proxy_config.secret_authentication_tokens)
-    if not validator.validate(request):
-        return jsonify(
-            {
-                "type": "error",
-                "error": {
-                    "type": "authentication_error",
-                    "message": "Invalid API Key provided.",
-                },
-            }
-        ), 401
-
-    payload = request.json
-    model = payload.get("model")
-    if not model:
-        return jsonify(
-            {
-                "type": "error",
-                "error": {
-                    "type": "invalid_request_error",
-                    "message": "Missing 'model' parameter",
-                },
-            }
-        ), 400
-
-    is_stream = payload.get("stream", False)
-    logger.info(f"Claude API request for model: {model}, Streaming: {is_stream}")
-
-    try:
-        base_url, subaccount_name, resource_group, model = load_balance_url(model)
-        token_manager = ctx.get_token_manager(subaccount_name)
-        subaccount_token = token_manager.get_token()
-
-        # Convert incoming Claude payload to the format expected by the backend model
-        if Detector.is_gemini_model(model):
-            backend_payload = Converters.convert_claude_request_to_gemini(payload)
-            endpoint_path = (
-                f"/models/{model}:streamGenerateContent"
-                if is_stream
-                else f"/models/{model}:generateContent"
-            )
-        elif Detector.is_claude_model(model):
-            backend_payload = Converters.convert_claude_request_for_bedrock(payload)
-            if is_stream:
-                endpoint_path = (
-                    "/converse-stream"
-                    if Detector.is_claude_37_or_4(model)
-                    else "/invoke-with-response-stream"
-                )
-            else:
-                endpoint_path = (
-                    "/converse" if Detector.is_claude_37_or_4(model) else "/invoke"
-                )
-        else:  # Assume OpenAI-compatible
-            backend_payload = Converters.convert_claude_request_to_openai(payload)
-            api_version = (
-                API_VERSION_2024_12_01_PREVIEW
-                if any(m in model for m in ["o3", "o4-mini", "o3-mini"])
-                else API_VERSION_2023_05_15
-            )
-            endpoint_path = f"/chat/completions?api-version={api_version}"
-
-        endpoint_url = f"{base_url.rstrip('/')}{endpoint_path}"
-
-        service_key: ServiceKey | None = proxy_config.subaccounts[
-            subaccount_name
-        ].service_key
-        headers = {
-            "AI-Resource-Group": resource_group,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {subaccount_token}",
-            "AI-Tenant-Id": service_key.identity_zone_id,
-        }
-
-        # Handle anthropic-specific headers
-        for h in ["anthropic-version", "anthropic-beta"]:
-            if h in request.headers:
-                headers[h] = request.headers[h]
-
-        # Add default anthropic-beta header for Claude streaming if not already present
-        if Detector.is_claude_model(model) and is_stream:
-            existing_beta = request.headers.get("anthropic-beta", "")
-            if "fine-grained-tool-streaming-2025-05-14" not in existing_beta:
-                if existing_beta:
-                    # Append to existing anthropic-beta header
-                    headers["anthropic-beta"] = (
-                        f"{existing_beta},fine-grained-tool-streaming-2025-05-14"
-                    )
-                else:
-                    # Set new anthropic-beta header
-                    headers["anthropic-beta"] = "fine-grained-tool-streaming-2025-05-14"
-
-        logger.info(
-            f"Forwarding converted request to {endpoint_url} for subAccount '{subaccount_name}'"
-        )
-
-        if not is_stream:
-            # Generate TID for logging (internal to this fallback function)
-            tid = str(uuid.uuid4())
-
-            result = make_backend_request(
-                endpoint_url,
-                headers=headers,
-                payload=backend_payload,
-                model=model,
-                tid=tid,
-                is_claude_model_fn=Detector.is_claude_model,
-            )
-
-            if not result.success:
-                logger.error(
-                    f"Error in Claude request({model}): {result.error_message}"
-                )
-                if result.response_data:
-                    return jsonify(result.response_data), result.status_code
-                else:
-                    return jsonify({"error": result.error_message}), result.status_code
-
-            backend_json = result.response_data
-
-            if Detector.is_gemini_model(model):
-                final_response = Converters.convert_gemini_response_to_claude(
-                    backend_json, model
-                )
-            elif Detector.is_claude_model(model):
-                final_response = backend_json
-            else:
-                final_response = Converters.convert_openai_response_to_claude(
-                    backend_json
-                )
-
-            # Log the response for debug purposes
-            logger.info(
-                f"Final response to client: {json.dumps(final_response, indent=2)}"
-            )
-
-            return jsonify(final_response), result.status_code
-        else:
-            return Response(
-                stream_with_context(
-                    generate_claude_streaming_response(
-                        endpoint_url, headers, backend_payload, model, subaccount_name
-                    )
-                ),
-                content_type="text/event-stream",
-            )
-
-    except ValueError as err:
-        logger.error(
-            f"Value error during Claude request handling: {err}", exc_info=True
-        )
-        return jsonify(
-            {
-                "type": "error",
-                "error": {"type": "invalid_request_error", "message": str(err)},
-            }
-        ), 400
-    except requests.exceptions.HTTPError as err:
-        logger.error(f"HTTP error in Claude request({model}): {err}", exc_info=True)
-        try:
-            return jsonify(err.response.json()), err.response.status_code
-        except Exception as json_err:
-            return jsonify(
-                {"error": str(err)}
-            ), err.response.status_code if err.response else 500
-    except Exception as err:
-        logger.error(
-            f"Unexpected error during Claude request handling: {err}", exc_info=True
-        )
-        return jsonify(
-            {
-                "type": "error",
-                "error": {
-                    "type": "api_error",
-                    "message": "An unexpected error occurred.",
-                },
-            }
-        ), 500
-
-
-def handle_non_streaming_request(url, headers, payload, model, subaccount_name, tid):
-    """Handle non-streaming request to backend API.
-
-    Args:
-        url: Backend API endpoint URL
-        headers: Request headers
-        payload: Request payload
-        model: Model name
-        subaccount_name: Name of the selected subAccount
-        tid: Trace UUID for logging correlation
-
-    Returns:
-        Flask response with the API result
-    """
-    # Make request using shared backend request function
-    result = make_backend_request(
-        url=url,
-        headers=headers,
-        payload=payload,
-        model=model,
-        tid=tid,
-        is_claude_model_fn=Detector.is_claude_model,
-    )
-
-    # Handle failed requests
-    if not result.success:
-        # Check for 429 error (rate limiting)
-        if result.status_code == 429:
-            # Create a mock HTTPError for the 429 handler
-            class MockResponse:
-                def __init__(self, status_code, text, data, headers):
-                    self.status_code = status_code
-                    self.text = text
-                    self._data = data
-                    self.headers = headers if headers else {}
-
-                def json(self):
-                    return self._data if self._data else {}
-
-            mock_response = MockResponse(
-                429, result.error_message or "", result.response_data, result.headers
-            )
-            mock_error = requests.exceptions.HTTPError(response=mock_response)
-            return handle_http_429_error(
-                mock_error, f"non-streaming request for {model}"
-            )
-
-        # Return error response
-        if result.response_data:
-            return jsonify(result.response_data), result.status_code
-        else:
-            return jsonify(
-                {"error": result.error_message or "Unknown error"}
-            ), result.status_code
-
-    # Process successful response
-    response_data = result.response_data
-
-    # Log SSE parsing if applicable
-    if result.is_sse_response:
-        logger.info(
-            "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
-        )
-
-    # Convert response based on model type
-    if Detector.is_claude_model(model):
-        final_response = Converters.convert_claude_to_openai(response_data, model)
-    elif Detector.is_gemini_model(model):
-        final_response = Converters.convert_gemini_to_openai(response_data, model)
-    else:
-        final_response = response_data
-
-    # Extract token usage
-    total_tokens = final_response.get("usage", {}).get("total_tokens", 0)
-    prompt_tokens = final_response.get("usage", {}).get("prompt_tokens", 0)
-    completion_tokens = final_response.get("usage", {}).get("completion_tokens", 0)
-
-    # Log token usage with subAccount information
-    user_id = request.headers.get("Authorization", "unknown")
-    if user_id and len(user_id) > 20:
-        user_id = f"{user_id[:20]}..."
-    ip_address = request.remote_addr or request.headers.get(
-        "X-Forwarded-For", "unknown_ip"
-    )
-    logger.info(
-        f"CHAT_RSP: tid={tid}, user={user_id}, ip={ip_address}, model={model}, sub_account={subaccount_name}, "
-        f"prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, total_tokens={total_tokens}"
-    )
-
-    # Log response being sent to client
-    transport_logger.info(
-        f"RSP: tid={tid}, status=200, body={json.dumps(final_response)}"
-    )
-
-    return jsonify(final_response), 200
+# All endpoints have been migrated to FastAPI routers (routers/).
 
 
 def main() -> None:
-    """Main entry point for the SAP AI Core LLM Proxy Server."""
-    args = parse_arguments()
-
-    # Setup logging using the new modular function
-    init_logging(debug=args.debug)
-
-    # Handle cache refresh flag before loading config
-    if args.refresh_cache:
-        from utils.cache_utils import clear_deployment_cache
-
-        logger.info("Clearing deployment cache due to --refresh-cache flag...")
-        clear_deployment_cache()
-        logger.info("Cache cleared successfully")
-
-    # Log version information at startup
-    version_info = get_version_string()
-    logger.info(f"SAP AI Core LLM Proxy Server - Version: {version_info}")
-
-    logger.info(f"Loading configuration from: {args.config}")
-
-    # Load the proxy config and initialize global context
-    global ctx
-    ctx = ProxyGlobalContext()
-    ctx.initialize(load_proxy_config(args.config))
-
-    global proxy_config
-    proxy_config = ctx.config
-
-    # Get server configuration
-    host = proxy_config.host
-    if args.port is not None:
-        port = args.port
-        logger.info(
-            f"Port override: Using CLI argument --port {port} (config file specifies {proxy_config.port})"
-        )
-    else:
-        port = proxy_config.port
-
-    logger.info(
-        f"Loaded multi-subAccount configuration with {len(proxy_config.subaccounts)} subAccounts"
+    """Deprecated entry point (delegates to FastAPI)."""
+    logger.warning(
+        "proxy_server.py entry point is deprecated; delegating to FastAPI app"
     )
-    logger.info(f"Available subAccounts: {', '.join(proxy_config.subaccounts.keys())}")
-    logger.info(
-        f"Available models: {', '.join(proxy_config.model_to_subaccounts.keys())}"
-    )
+    from main import main as fastapi_main
 
-    # Register all blueprints
-    register_blueprints(app, proxy_config, ctx)
-
-    logger.info(f"Starting proxy server on host {host} and port {port}...")
-    logger.info(f"API Host: http://{host}:{port}/v1")
-    logger.info("Available endpoints:")
-    logger.info(f"  - OpenAI Compatible API: http://{host}:{port}/v1/chat/completions")
-    logger.info(f"  - Anthropic Claude API: http://{host}:{port}/v1/messages")
-    logger.info(f"  - Models Listing: http://{host}:{port}/v1/models")
-    logger.info(f"  - Embeddings API: http://{host}:{port}/v1/embeddings")
-    app.run(host=host, port=port, debug=args.debug)
+    fastapi_main()
 
 
 if __name__ == "__main__":

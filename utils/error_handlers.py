@@ -5,26 +5,25 @@ This module provides consistent error handling across all endpoints.
 """
 
 import logging
-from flask import jsonify, Response
 from requests.exceptions import HTTPError
 from utils.logging_utils import get_server_logger
 
 logger: logging.Logger = get_server_logger(__name__)
 
 
-def handle_http_429_error(http_err: HTTPError, context: str = "request") -> Response:
+def handle_http_429_error(http_err: HTTPError, context: str = "request") -> tuple:
     """Handle HTTP 429 (Too Many Requests) errors consistently across all endpoints.
 
     This function logs detailed information about rate limit errors and returns
-    a properly formatted Flask response with retry information.
+    a plain tuple of (response_dict, status_code) suitable for use in any framework.
 
     Args:
         http_err: The HTTPError exception from the requests library.
         context: Description of the request context for logging (e.g., "embedding request").
 
     Returns:
-        A Flask response object with status code 429.
-        
+        A tuple of (dict, int) — error body and status code 429.
+
     Example:
         >>> try:
         ...     response = requests.post(url, ...)
@@ -52,19 +51,7 @@ def handle_http_429_error(http_err: HTTPError, context: str = "request") -> Resp
         "error": "Rate limit exceeded",
         "status_code": 429,
         "message": "Too many requests. Please retry after some time.",
-        "headers": dict(http_err.response.headers)
+        "headers": dict(http_err.response.headers),
     }
 
-    # Create Flask response with the original 429 headers copied
-    flask_response = jsonify(error_response)
-    flask_response.status_code = 429
-
-    # Map both x-retry-after and Retry-After headers to retry-after in response
-    for header_name, header_value in http_err.response.headers.items():
-        header_lower = header_name.lower()
-        if header_lower in ['x-retry-after', 'retry-after']:
-            flask_response.headers['Retry-After'] = header_value
-            logger.info(f"Set Retry-After header to: {header_value}")
-            break
-
-    return flask_response
+    return error_response, 429

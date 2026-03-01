@@ -15,7 +15,35 @@ from dataclasses import dataclass
 
 import requests
 
-from converters.mappings import STOP_REASON_MAP
+# Stop reason mapping constants
+STOP_REASON_MAP = {
+    "claude_to_openai": {
+        "end_turn": "stop",
+        "max_tokens": "length",
+        "stop_sequence": "stop",
+        "tool_use": "tool_calls",
+    },
+    "openai_to_claude": {
+        "stop": "end_turn",
+        "length": "max_tokens",
+        "content_filter": "stop_sequence",
+        "tool_calls": "tool_use",
+    },
+    "gemini_to_openai": {
+        "STOP": "stop",
+        "MAX_TOKENS": "length",
+        "SAFETY": "content_filter",
+        "RECITATION": "content_filter",
+        "OTHER": "stop",
+    },
+    "gemini_to_claude": {
+        "STOP": "end_turn",
+        "MAX_TOKENS": "max_tokens",
+        "SAFETY": "stop_sequence",
+        "RECITATION": "stop_sequence",
+        "OTHER": "stop_sequence",
+    },
+}
 
 logger = logging.getLogger(__name__)
 transport_logger = logging.getLogger("transport")

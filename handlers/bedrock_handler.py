@@ -8,6 +8,7 @@ This module provides:
 """
 
 import logging
+
 from utils.retry import unified_retry
 
 logger = logging.getLogger("proxy_server")
@@ -59,6 +60,8 @@ def read_response_body_stream(response_body) -> str:
     Returns:
         String containing the full response data
     """
+    chunk_data = ""
+
     chunk_data = ""
     for event in response_body:
         if isinstance(event, bytes):
