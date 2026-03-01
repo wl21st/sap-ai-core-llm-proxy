@@ -1,16 +1,13 @@
-import json
 from logging import Logger
 
 import requests  # noqa: F401 - used by tests via proxy_server.requests.post
 from botocore.exceptions import ClientError  # noqa: F401 - used in bedrock_handler
-from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
 
 from auth import RequestValidator  # noqa: F401 - re-exported for tests
 from auth.token_manager import TokenManager  # noqa: F401 - used by tests via proxy_server.TokenManager
-
 # Import from new modular structure
-from config import ProxyConfig, ProxyGlobalContext, load_proxy_config
-from utils.logging_utils import get_server_logger, get_transport_logger, init_logging
+from config import ProxyConfig, ProxyGlobalContext
+from utils.logging_utils import get_server_logger, get_transport_logger
 
 # Initialize token logger (will be configured on first use)
 logger: Logger = get_server_logger(__name__)
@@ -31,27 +28,14 @@ DEFAULT_EMBEDDING_MODEL: str = "text-embedding-3-small"
 DEFAULT_GPT_MODEL = "gpt-4.1"
 
 # Retry configuration - now unified in utils/retry.py
-from utils.retry import (
-    RETRY_MAX_ATTEMPTS,
-    RETRY_MAX_WAIT,
-    RETRY_MIN_WAIT,
-    RETRY_MULTIPLIER,
-)
 
 """SAP API Reference are documented at https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/example-payloads-for-inferencing-third-party-models"""
 
 # Bedrock handler - extracted to handlers/bedrock_handler.py
-from handlers.bedrock_handler import (
-    invoke_bedrock_non_streaming,
-    invoke_bedrock_streaming,
-    read_response_body_stream,
-)
 
 # Streaming generators - extracted to handlers/streaming_generators.py (Phase 6d)
 from handlers.streaming_generators import (
-    generate_bedrock_streaming_response_sync,
     generate_claude_streaming_response_sync,
-    generate_streaming_response_sync,
 )
 
 
@@ -106,7 +90,6 @@ def format_embedding_response(response, model):
 
 # Version utilities - extracted to version.py
 # CLI argument parsing - extracted to cli.py
-from cli import parse_arguments
 from load_balancer import (
     load_balance_url as _load_balance_url,
 )
@@ -115,7 +98,6 @@ from load_balancer import (
 from load_balancer import (
     resolve_model_name as _resolve_model_name,
 )
-from version import get_git_hash, get_version, get_version_info, get_version_string
 
 
 def resolve_model_name(model_name):
@@ -133,12 +115,6 @@ def load_balance_url(model):
 
 
 # Streaming helpers - extracted to handlers/streaming_handler.py
-from handlers.streaming_handler import (
-    BackendRequestResult,
-    get_claude_stop_reason_from_gemini_chunk,
-    get_claude_stop_reason_from_openai_chunk,
-    make_backend_request,
-)
 from handlers.streaming_handler import (
     parse_sse_response_to_claude_json as _parse_sse_response_to_claude_json,
 )
