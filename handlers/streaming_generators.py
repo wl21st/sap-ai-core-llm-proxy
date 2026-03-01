@@ -17,6 +17,8 @@ import requests
 from flask import request
 
 from config import ProxyGlobalContext
+from converters.mappings import STOP_REASON_MAP
+from converters import chunks as chunk_converters
 from proxy_helpers import Converters, Detector
 from handlers.streaming_handler import (
     get_claude_stop_reason_from_gemini_chunk,
@@ -327,7 +329,7 @@ def generate_streaming_response(
 
                                 # Convert chunk to OpenAI format, passing the consistent stream_id
                                 openai_sse_chunk_str = (
-                                    Converters.convert_claude37_chunk_to_openai(
+                                    chunk_converters.claude37_to_openai_chunk(
                                         claude_dict_chunk, model, stream_id
                                     )
                                 )
@@ -366,13 +368,9 @@ def generate_streaming_response(
                 # Send final chunk with BOTH finish_reason and usage information
                 if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
                     # Map Claude stop reason to OpenAI finish_reason
-                    stop_reason_map = {
-                        "end_turn": "stop",
-                        "max_tokens": "length",
-                        "stop_sequence": "stop",
-                        "tool_use": "tool_calls",
-                    }
-                    finish_reason = stop_reason_map.get(stop_reason_received, "stop")
+                    finish_reason = STOP_REASON_MAP["claude_to_openai"].get(
+                        stop_reason_received or "", "stop"
+                    )
 
                     # Use the same stream_id for the final usage chunk
                     final_usage_chunk = {
@@ -451,7 +449,7 @@ def generate_streaming_response(
 
                                 # Convert chunk to OpenAI format
                                 openai_sse_chunk_str = (
-                                    Converters.convert_gemini_chunk_to_openai(
+                                    chunk_converters.gemini_to_openai_chunk(
                                         gemini_chunk, model
                                     )
                                 )
@@ -499,7 +497,8 @@ def generate_streaming_response(
                                     exc_info=True,
                                 )
                                 logger.error(
-                                    f"Problematic chunk: {gemini_chunk} if 'gemini_chunk' in locals() else 'Failed to parse'"
+                                    "Problematic chunk: %s",
+                                    locals().get("gemini_chunk", "Failed to parse"),
                                 )
                                 error_payload = {
                                     "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
@@ -578,7 +577,7 @@ def generate_streaming_response(
 
                                     # Convert Claude chunk to OpenAI format
                                     openai_sse_chunk_str = (
-                                        Converters.convert_claude_chunk_to_openai(
+                                        chunk_converters.claude_to_openai_chunk(
                                             json_chunk_str, model
                                         )
                                     )
