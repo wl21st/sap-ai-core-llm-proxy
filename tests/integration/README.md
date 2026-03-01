@@ -65,7 +65,7 @@ Create [`test_config.json`](test_config.json) (copy from [`test_config.json.exam
   "timeout": 30,
   "max_tokens": 100,
   "skip_if_server_not_running": true,
-  "model_filter_tests": {
+  "model_filter": {
     "enabled": false,
     "filtered_models": ["gpt-4.1-test"],
     "allowed_models": ["gpt-4.1"],
@@ -87,10 +87,34 @@ Create [`test_config.json`](test_config.json) (copy from [`test_config.json.exam
 
 ### Model Filter Integration Scenarios
 
-To run the model filter integration tests, set `model_filter_tests.enabled` to `true`
+To run the model filter integration tests, set `model_filter.enabled` to `true`
 and start the proxy with a config that applies the corresponding filter scenario.
-The fields under `model_filter_tests` are just assertions for the tests; they do not
+The fields under `model_filter` are just assertions for the tests; they do not
 configure the proxy server directly.
+
+#### Understanding Model Filter Terminology
+
+The `model_filter` configuration uses several terms that describe different aspects of filtering:
+
+| Term | Meaning | Example |
+|------|---------|---------|
+| **`filtered_models`** | Models **removed** from availability (user cannot access) | `["gpt-4.1-test"]` |
+| **`allowed_models`** | Models **remaining** after filters applied (user can access) | `["gpt-4.1"]` |
+| **`include_only`** | Test scenario: only include filters, no exclude patterns | Config block with `expected_models` and `filtered_models` |
+| **`exclude_only`** | Test scenario: only exclude filters, no include patterns | Config block with `expected_models` and `filtered_models` |
+| **`combined`** | Test scenario: both include AND exclude patterns applied (include first, then exclude) | Config block with `expected_models` and `filtered_models` |
+| **`expected_models`** | Models that **should be available** in a specific scenario | `["gpt-4.1", "gpt-5"]` |
+
+**Key insight:** Each scenario (`include_only`, `exclude_only`, `combined`) has its own nested `expected_models` and `filtered_models` that describe results **for that filter configuration**. These are test assertions, not proxy configuration.
+
+**Example interpretation:**
+```json
+"include_only": {
+  "expected_models": ["gpt-4.1", "gpt-5"],
+  "filtered_models": ["anthropic--claude-4.5-sonnet", "gemini-2.5-pro"]
+}
+```
+This means: "When running the include-only filter scenario, we expect `gpt-4.1` and `gpt-5` to be available, and these models should be filtered out."
 
 ### Option 2: Environment Variables
 

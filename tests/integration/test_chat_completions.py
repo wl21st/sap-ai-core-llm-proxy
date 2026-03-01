@@ -29,13 +29,13 @@ class TestChatCompletionsNonStreaming:
     """Tests for non-streaming chat completions."""
 
     def test_filtered_model_returns_not_found(
-        self, proxy_client, proxy_url, model, max_tokens, model_filter_tests
+        self, proxy_client, proxy_url, model, max_tokens, model_filter
     ):
         """Verify filtered models return 404 not_found_error."""
-        if not model_filter_tests.get("enabled"):
+        if not model_filter.get("enabled"):
             pytest.skip("Model filter integration tests are disabled")
 
-        filtered_models = model_filter_tests.get("filtered_models", [])
+        filtered_models = model_filter.get("filtered_models", [])
         if not filtered_models:
             pytest.skip("No filtered models configured for integration tests")
 
@@ -58,13 +58,13 @@ class TestChatCompletionsNonStreaming:
         assert data.get("error", {}).get("type") == "not_found_error"
 
     def test_include_only_filters_expose_expected_models(
-        self, proxy_client, proxy_url, model, model_filter_tests
+        self, proxy_client, proxy_url, model, model_filter
     ):
         """Verify include-only filters keep only expected models."""
-        if not model_filter_tests.get("enabled"):
+        if not model_filter.get("enabled"):
             pytest.skip("Model filter integration tests are disabled")
 
-        include_only = model_filter_tests.get("include_only", {})
+        include_only = model_filter.get("include_only", {})
         if not include_only:
             pytest.skip("Include-only filter scenario not configured")
 
@@ -86,13 +86,13 @@ class TestChatCompletionsNonStreaming:
             )
 
     def test_exclude_only_filters_hide_expected_models(
-        self, proxy_client, proxy_url, model, model_filter_tests
+        self, proxy_client, proxy_url, model, model_filter
     ):
         """Verify exclude-only filters hide configured models."""
-        if not model_filter_tests.get("enabled"):
+        if not model_filter.get("enabled"):
             pytest.skip("Model filter integration tests are disabled")
 
-        exclude_only = model_filter_tests.get("exclude_only", {})
+        exclude_only = model_filter.get("exclude_only", {})
         if not exclude_only:
             pytest.skip("Exclude-only filter scenario not configured")
 
@@ -114,13 +114,13 @@ class TestChatCompletionsNonStreaming:
             )
 
     def test_combined_filters_expose_expected_models(
-        self, proxy_client, proxy_url, model, model_filter_tests
+        self, proxy_client, proxy_url, model, model_filter
     ):
         """Verify combined include+exclude filters apply precedence correctly."""
-        if not model_filter_tests.get("enabled"):
+        if not model_filter.get("enabled"):
             pytest.skip("Model filter integration tests are disabled")
 
-        combined = model_filter_tests.get("combined", {})
+        combined = model_filter.get("combined", {})
         if not combined:
             pytest.skip("Combined filter scenario not configured")
 
@@ -188,13 +188,13 @@ class TestChatCompletionsNonStreaming:
         assert len(content) > 0, f"Response content has zero length for model {model}"
 
     def test_non_filtered_model_succeeds(
-        self, proxy_client, proxy_url, model, max_tokens, model_filter_tests
+        self, proxy_client, proxy_url, model, max_tokens, model_filter
     ):
         """Verify non-filtered models continue working with filters enabled."""
-        if not model_filter_tests.get("enabled"):
+        if not model_filter.get("enabled"):
             pytest.skip("Model filter integration tests are disabled")
 
-        allowed_models = model_filter_tests.get("allowed_models", [])
+        allowed_models = model_filter.get("allowed_models", [])
         if model not in allowed_models:
             pytest.skip(f"Model {model} not in allowed_models configuration")
 
