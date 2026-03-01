@@ -64,9 +64,48 @@ Create [`test_config.json`](test_config.json) (copy from [`test_config.json.exam
   },
   "timeout": 30,
   "max_tokens": 100,
-  "skip_if_server_not_running": true
+  "skip_if_server_not_running": true,
+  "model_filter": {
+    "enabled": false,
+    "include_filters": ["^gpt-.*", "^claude-.*"],
+    "exclude_filters": [".*-test$", "^experimental-.*"],
+    "expected_available": ["gpt-4.1", "gpt-5", "anthropic--claude-4.5-sonnet", "sonnet-4.5", "gemini-2.5-pro"],
+    "expected_filtered": []
+  }
 }
 ```
+
+### Model Filter Integration Scenarios
+
+To run the model filter integration tests, set `model_filter.enabled` to `true`
+and start the proxy with a config that applies the corresponding filter scenario.
+The fields under `model_filter` are just assertions for the tests; they do not
+configure the proxy server directly.
+
+#### Understanding Model Filter Configuration
+
+The `model_filter` section in test configuration is for **enabling/disabling model filter integration tests**. To test model filtering functionality:
+
+1. Set `enabled: true` in test configuration
+2. Configure the proxy server with matching `include_filters`/`exclude_filters` in its `config.json`
+3. Run the tests to verify filtering behavior
+
+**Test Configuration Fields:**
+
+| Field | Type | Purpose | Example |
+|-------|------|---------|---------|
+| **`enabled`** | boolean | Enable/disable model filter integration tests | `true` or `false` |
+
+**Example:**
+```json
+{
+  "model_filter": {
+    "enabled": false
+  }
+}
+```
+
+To enable model filter tests, set `enabled: true` and ensure your proxy server is configured with appropriate `include_filters` and `exclude_filters` patterns in its `config.json`.
 
 ### Option 2: Environment Variables
 

@@ -173,6 +173,125 @@ class TestChatCompletionsNonStreaming:
 
 @pytest.mark.integration
 @pytest.mark.real
+class TestChatCompletionsModelFilters:
+    """Integration tests for chat completions model filters."""
+
+    def test_filtered_model_returns_not_found(
+        self, proxy_client, proxy_url, max_tokens, model_filter_tests
+    ):
+        """Verify filtered models return 404 not_found_error."""
+        if not model_filter_tests.get("enabled"):
+            pytest.skip("Model filter integration tests are disabled")
+
+        filtered_models = model_filter_tests.get("filtered_models", [])
+        if not filtered_models:
+            pytest.skip("No filtered models configured for integration tests")
+
+        filtered_model = filtered_models[0]
+
+        response = proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json={
+                "model": filtered_model,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+
+        assert response.status_code == 404, (
+            f"Expected 404 for filtered model '{filtered_model}', got {response.status_code}"
+        )
+        data = response.json()
+        assert data.get("error", {}).get("type") == "not_found_error"
+
+    def test_include_only_filters_expose_expected_models(
+        self, proxy_client, proxy_url, model_filter_tests
+    ):
+        """Verify include-only filters keep only expected models."""
+        if not model_filter_tests.get("enabled"):
+            pytest.skip("Model filter integration tests are disabled")
+
+        include_only = model_filter_tests.get("include_only", {})
+        if not include_only:
+            pytest.skip("Include-only filter scenario not configured")
+
+        response = proxy_client.get(f"{proxy_url}/v1/models")
+        assert response.status_code == 200
+        model_ids = [model["id"] for model in response.json().get("data", [])]
+
+        expected_models = include_only.get("expected_models", [])
+        filtered_models = include_only.get("filtered_models", [])
+
+        for expected_model in expected_models:
+            assert expected_model in model_ids, (
+                f"Expected model '{expected_model}' missing from /v1/models"
+            )
+
+        for filtered_model in filtered_models:
+            assert filtered_model not in model_ids, (
+                f"Filtered model '{filtered_model}' was listed in /v1/models"
+            )
+
+    def test_exclude_only_filters_hide_expected_models(
+        self, proxy_client, proxy_url, model_filter_tests
+    ):
+        """Verify exclude-only filters hide configured models."""
+        if not model_filter_tests.get("enabled"):
+            pytest.skip("Model filter integration tests are disabled")
+
+        exclude_only = model_filter_tests.get("exclude_only", {})
+        if not exclude_only:
+            pytest.skip("Exclude-only filter scenario not configured")
+
+        response = proxy_client.get(f"{proxy_url}/v1/models")
+        assert response.status_code == 200
+        model_ids = [model["id"] for model in response.json().get("data", [])]
+
+        expected_models = exclude_only.get("expected_models", [])
+        filtered_models = exclude_only.get("filtered_models", [])
+
+        for expected_model in expected_models:
+            assert expected_model in model_ids, (
+                f"Expected model '{expected_model}' missing from /v1/models"
+            )
+
+        for filtered_model in filtered_models:
+            assert filtered_model not in model_ids, (
+                f"Filtered model '{filtered_model}' was listed in /v1/models"
+            )
+
+    def test_combined_filters_expose_expected_models(
+        self, proxy_client, proxy_url, model_filter_tests
+    ):
+        """Verify combined include+exclude filters apply precedence correctly."""
+        if not model_filter_tests.get("enabled"):
+            pytest.skip("Model filter integration tests are disabled")
+
+        combined = model_filter_tests.get("combined", {})
+        if not combined:
+            pytest.skip("Combined filter scenario not configured")
+
+        response = proxy_client.get(f"{proxy_url}/v1/models")
+        assert response.status_code == 200
+        model_ids = [model["id"] for model in response.json().get("data", [])]
+
+        expected_models = combined.get("expected_models", [])
+        filtered_models = combined.get("filtered_models", [])
+
+        for expected_model in expected_models:
+            assert expected_model in model_ids, (
+                f"Expected model '{expected_model}' missing from /v1/models"
+            )
+
+        for filtered_model in filtered_models:
+            assert filtered_model not in model_ids, (
+                f"Filtered model '{filtered_model}' was listed in /v1/models"
+            )
+
+
+@pytest.mark.integration
+@pytest.mark.real
 @pytest.mark.streaming
 @pytest.mark.parametrize(
     "model",

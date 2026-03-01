@@ -81,6 +81,8 @@ def load_test_config() -> Dict[str, Any]:
     if skip_env:
         config["skip_if_server_not_running"] = skip_env.lower() == "true"
 
+    config.setdefault("model_filter", {"enabled": False})
+
     return config
 
 
@@ -188,6 +190,12 @@ def simple_prompts(test_config):
 def models_to_test(test_config):
     """Get list of models to test."""
     return test_config["models_to_test"]
+
+
+@pytest.fixture(scope="session")
+def model_filter(test_config):
+    """Get optional model filter test configuration."""
+    return test_config.get("model_filter") or {}
 
 
 @pytest.fixture

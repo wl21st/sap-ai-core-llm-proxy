@@ -280,7 +280,7 @@ async def generate_streaming_response(
                                     continue
 
                                 openai_sse_chunk_str = (
-                                    Converters.convert_claude37_chunk_to_openai(
+                                    chunk_converters.claude37_to_openai_chunk(
                                         claude_dict_chunk, model, stream_id
                                     )
                                 )
@@ -428,7 +428,7 @@ async def generate_streaming_response(
                                     )
 
                                 openai_sse_chunk_str = (
-                                    Converters.convert_gemini_chunk_to_openai(
+                                    chunk_converters.gemini_to_openai_chunk(
                                         gemini_chunk, model
                                     )
                                 )
@@ -481,6 +481,10 @@ async def generate_streaming_response(
                                     subaccount_name,
                                     e,
                                     exc_info=True,
+                                )
+                                logger.error(
+                                    "Problematic chunk: %s",
+                                    locals().get("gemini_chunk", "Failed to parse"),
                                 )
                                 error_payload = {
                                     "id": f"chatcmpl-error-{random.randint(10000000, 99999999)}",
