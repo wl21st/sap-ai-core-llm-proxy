@@ -10,7 +10,6 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 import proxy_server
 from proxy_server import (
-    app,
     format_embedding_response,
     handle_embedding_service_call,
     load_balance_url,
@@ -20,12 +19,29 @@ from proxy_server import (
     get_claude_stop_reason_from_gemini_chunk,
     get_claude_stop_reason_from_openai_chunk,
 )
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from config import SubAccountConfig, ServiceKey
+
+
+def _make_fastapi_app(config, ctx):
+    """Create a minimal FastAPI app with all routers and injected state."""
+    from routers import chat, embeddings, logging as logging_router, messages, models
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    app.include_router(messages.router)
+    app.include_router(embeddings.router)
+    app.include_router(models.router)
+    app.include_router(logging_router.router)
+    app.state.proxy_config = config
+    app.state.proxy_context = ctx
+    return app
 
 
 @pytest.fixture
 def client():
-    """Create a test client for the Flask app."""
+    """Create a FastAPI test client."""
     from config import ProxyConfig, ProxyGlobalContext
 
     # Initialize global context with empty config
@@ -36,26 +52,8 @@ def client():
     proxy_server.ctx = ctx
     proxy_server.proxy_config = ctx.config
 
-    # Register blueprints only if not already registered
-    if "chat_completions" not in app.blueprints:
-        proxy_server.register_blueprints(app, ctx.config, ctx)
-    else:
-        # Re-initialize blueprints with current config
-        from blueprints import (
-            init_chat_completions_blueprint,
-            init_messages_blueprint,
-            init_embeddings_blueprint,
-            init_models_blueprint,
-        )
-
-        init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-        init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-        init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-        init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-
-    app.config["TESTING"] = True
-    with app.test_client() as client:
-        yield client
+    fastapi_app = _make_fastapi_app(proxy_server.proxy_config, proxy_server.ctx)
+    yield TestClient(fastapi_app, raise_server_exceptions=False)
 
 
 @pytest.fixture
@@ -79,19 +77,6 @@ def setup_test_config():
     original_ctx = getattr(proxy_server, "ctx", None)
     proxy_server.ctx = ProxyGlobalContext()
     proxy_server.ctx.initialize(proxy_server.proxy_config)
-
-    # Re-initialize blueprints with current config
-    from blueprints import (
-        init_chat_completions_blueprint,
-        init_messages_blueprint,
-        init_embeddings_blueprint,
-        init_models_blueprint,
-    )
-
-    init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
 
     # Save original config
     original_subaccounts = proxy_server.proxy_config.subaccounts.copy()
@@ -155,9 +140,9 @@ class TestEmbeddingEndpoint:
             headers={"Authorization": "Bearer test-token-123"},
         )
         assert response.status_code == 400
-        assert "error" in response.json
+        assert "error" in response.json()
 
-    @patch("blueprints.embeddings.load_balance_url")
+    @patch("routers.embeddings.load_balance_url")
     @patch("proxy_server.handle_embedding_service_call")
     @patch("proxy_server.requests.post")
     def test_embedding_endpoint_array_input(
@@ -328,7 +313,7 @@ class TestParseArguments:
 class TestProxyOpenAIStreamEndpoint:
     """Test cases for proxy_openai_stream endpoint."""
 
-    @patch("proxy_server.RequestValidator.validate")
+    @patch("auth.request_validator.RequestValidator.validate")
     @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_claude_model_success(
         self, mock_post, mock_validate, client, setup_test_config
@@ -366,10 +351,10 @@ class TestProxyOpenAIStreamEndpoint:
         )
 
         assert response.status_code == 200
-        data = response.get_json()
+        data = response.json()
         assert "choices" in data
 
-    @patch("proxy_server.RequestValidator.validate")
+    @patch("auth.request_validator.RequestValidator.validate")
     @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_gemini_model_success(
         self, mock_post, mock_validate, client, setup_test_config
@@ -408,10 +393,10 @@ class TestProxyOpenAIStreamEndpoint:
         )
 
         assert response.status_code == 200
-        data = response.get_json()
+        data = response.json()
         assert "choices" in data
 
-    @patch("proxy_server.RequestValidator.validate")
+    @patch("auth.request_validator.RequestValidator.validate")
     def test_proxy_openai_stream_unauthorized(
         self, mock_validate, client, setup_test_config
     ):
@@ -428,7 +413,7 @@ class TestProxyOpenAIStreamEndpoint:
 
         assert response.status_code == 401
 
-    @patch("proxy_server.RequestValidator.validate")
+    @patch("auth.request_validator.RequestValidator.validate")
     @patch("proxy_server.TokenManager")
     def test_proxy_openai_stream_model_not_found(
         self, mock_token_manager, mock_validate, client
@@ -477,7 +462,7 @@ class TestProxyOpenAIStreamEndpoint:
         # Should return 404 for unavailable model
         assert response.status_code == 404
 
-    @patch("proxy_server.RequestValidator.validate")
+    @patch("auth.request_validator.RequestValidator.validate")
     @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_streaming_response(
         self, mock_post, mock_validate, client, setup_test_config
@@ -510,61 +495,14 @@ class TestProxyOpenAIStreamEndpoint:
         )
 
         assert response.status_code == 200
-        assert response.content_type == "text/event-stream"
-
-
-class TestProxyClaudeRequestOriginal:
-    """Test cases for proxy_claude_request_original fallback function."""
-
-    @patch("proxy_server.RequestValidator.validate")
-    @patch("proxy_server.requests.post")
-    def test_proxy_claude_request_original_success(
-        self, mock_post, mock_validate, client, setup_test_config
-    ):
-        """Test successful fallback Claude request."""
-        mock_validate.return_value = True
-
-        mock_token = Mock()
-        mock_token.get_token.return_value = "test-token"
-        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
-
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "id": "msg_123",
-            "type": "message",
-            "content": [{"text": "Hello from fallback"}],
-        }
-        mock_response.status_code = 200
-        mock_response.headers = {"content-type": "application/json"}
-        mock_response.text = '{"id": "msg_123", "type": "message", "content": [{"text": "Hello from fallback"}]}'
-        mock_response.raise_for_status = Mock()
-        mock_post.return_value = mock_response
-
-        # Call the original function directly since it's not exposed as endpoint
-        from proxy_server import proxy_claude_request_original
-
-        with client.application.test_request_context(
-            "/v1/messages",
-            json={
-                "model": "claude-3.5-sonnet",
-                "messages": [{"role": "user", "content": "Hello"}],
-            },
-            headers={"Authorization": "Bearer test-token-123"},
-        ):
-            response = proxy_claude_request_original()
-
-            assert response[1] == 200
-            data = response[0].get_json()
-            assert data["content"][0]["text"] == "Hello from fallback"
+        assert "text/event-stream" in response.headers["content-type"]
 
 
 class TestGenerateClaudeStreamingResponse:
-    """Test cases for generate_claude_streaming_response function."""
+    """Test cases for generate_claude_streaming_response function (no Flask context needed)."""
 
     @patch("proxy_server.requests.post")
-    def test_generate_claude_streaming_response_success(
-        self, mock_post, client, setup_test_config
-    ):
+    def test_generate_claude_streaming_response_success(self, mock_post):
         """Test successful Claude streaming response generation."""
         from proxy_server import generate_claude_streaming_response
 
@@ -578,29 +516,22 @@ class TestGenerateClaudeStreamingResponse:
         mock_response.__exit__ = Mock(return_value=None)
         mock_post.return_value = mock_response
 
-        with client.application.test_request_context(
-            "/test",
-            json={"messages": [{"role": "user", "content": "test"}]},
-            headers={"Authorization": "Bearer test-token"},
-        ):
-            result = generate_claude_streaming_response(
-                "https://test.com/api",
-                {"Authorization": "Bearer token"},
-                {"messages": [{"role": "user", "content": "test"}]},
-                "claude-3.5-sonnet",
-                "test-sub",
-            )
+        result = generate_claude_streaming_response(
+            "https://test.com/api",
+            {"Authorization": "Bearer token"},
+            {"messages": [{"role": "user", "content": "test"}]},
+            "claude-3.5-sonnet",
+            "test-sub",
+        )
 
-            # Should be a generator
-            assert result is not None
-            # Convert to list to test content
-            chunks = list(result)
-            assert len(chunks) > 0
+        # Should be a generator
+        assert result is not None
+        # Convert to list to test content
+        chunks = list(result)
+        assert len(chunks) > 0
 
     @patch("proxy_server.requests.post")
-    def test_generate_claude_streaming_response_error_handling(
-        self, mock_post, client, setup_test_config
-    ):
+    def test_generate_claude_streaming_response_error_handling(self, mock_post):
         """Test error handling in Claude streaming response."""
         from proxy_server import generate_claude_streaming_response
         import requests
@@ -613,114 +544,17 @@ class TestGenerateClaudeStreamingResponse:
         )
         mock_post.return_value = mock_response
 
-        with client.application.test_request_context(
-            "/test",
-            json={"messages": [{"role": "user", "content": "test"}]},
-            headers={"Authorization": "Bearer test-token"},
-        ):
-            result = generate_claude_streaming_response(
-                "https://test.com/api",
-                {"Authorization": "Bearer token"},
-                {"messages": [{"role": "user", "content": "test"}]},
-                "claude-3.5-sonnet",
-                "test-sub",
-            )
+        result = generate_claude_streaming_response(
+            "https://test.com/api",
+            {"Authorization": "Bearer token"},
+            {"messages": [{"role": "user", "content": "test"}]},
+            "claude-3.5-sonnet",
+            "test-sub",
+        )
 
-            # Should raise exception on HTTP error
-            with pytest.raises(requests.exceptions.HTTPError):
-                list(result)
-
-
-class TestMainExecution:
-    """Test cases for main execution block."""
-
-    @patch("proxy_server.parse_arguments")
-    @patch("proxy_server.load_proxy_config")
-    @patch("proxy_server.init_logging")
-    @patch("proxy_server.app.run")
-    def test_main_execution_new_format_config(
-        self, mock_app_run, mock_init_logging, mock_load_config, mock_parse_args
-    ):
-        """Test main execution with new format config."""
-        # Mock arguments
-        mock_args = Mock()
-        mock_args.config = "config.json"
-        mock_args.debug = False
-        mock_parse_args.return_value = mock_args
-
-        # Mock config
-        mock_config = Mock()
-        mock_config.host = "127.0.0.1"
-        mock_config.port = 3001
-        mock_config.subaccounts = {"sub1": Mock()}
-        mock_config.model_to_subaccounts = {"gpt-4": ["sub1"]}
-        mock_load_config.return_value = mock_config
-
-        # Mock main execution by directly calling logic
-        import proxy_server
-
-        proxy_server.parse_arguments = mock_parse_args
-        proxy_server.load_proxy_config = mock_load_config
-        proxy_server.init_logging = mock_init_logging
-        proxy_server.app.run = mock_app_run
-
-        # Simulate the main block logic
-        args = proxy_server.parse_arguments()
-        config = proxy_server.load_proxy_config(args.proxy_config)
-        proxy_server.init_logging(debug=args.debug)
-
-        proxy_config = config
-        host = proxy_config.host
-        port = proxy_config.port
-
-        proxy_server.app.run(host=host, port=port, debug=args.debug)
-
-        mock_init_logging.assert_called_once_with(debug=False)
-        mock_app_run.assert_called_once_with(host="127.0.0.1", port=3001, debug=False)
-
-    @patch("proxy_server.parse_arguments")
-    @patch("proxy_server.load_proxy_config")
-    @patch("proxy_server.init_logging")
-    @patch("proxy_server.app.run")
-    def test_main_execution_legacy_config(
-        self, mock_app_run, mock_init_logging, mock_load_config, mock_parse_args
-    ):
-        """Test main execution with legacy config."""
-        # Mock arguments
-        mock_args = Mock()
-        mock_args.config = "config.json"
-        mock_args.debug = True
-        mock_parse_args.return_value = mock_args
-
-        # Mock config - current main block always uses ProxyConfig
-        mock_config = Mock()
-        mock_config.host = "0.0.0.0"
-        mock_config.port = 3002
-        mock_config.subaccounts = {"sub1": Mock()}
-        mock_config.model_to_subaccounts = {"gpt-4": ["sub1"]}
-        mock_load_config.return_value = mock_config
-
-        # Mock main execution by directly calling logic
-        import proxy_server
-
-        proxy_server.parse_arguments = mock_parse_args
-        proxy_server.load_proxy_config = mock_load_config
-        proxy_server.init_logging = mock_init_logging
-        proxy_server.app.run = mock_app_run
-
-        # Simulate the main block logic
-        args = proxy_server.parse_arguments()
-        config = proxy_server.load_proxy_config(args.proxy_config)
-        proxy_server.init_logging(debug=args.debug)
-
-        proxy_config = config
-        host = proxy_config.host
-        port = proxy_config.port
-
-        proxy_server.app.run(host=host, port=port, debug=args.debug)
-
-        mock_init_logging.assert_called_once_with(debug=True)
-        mock_app_run.assert_called_once_with(host="0.0.0.0", port=3002, debug=True)
+        # Should raise exception on HTTP error
+        with pytest.raises(requests.exceptions.HTTPError):
+            list(result)
 
 
 if __name__ == "__main__":

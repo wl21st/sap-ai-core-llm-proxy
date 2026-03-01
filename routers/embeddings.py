@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from auth.request_validator import verify_request_token
@@ -83,7 +84,8 @@ async def handle_embedding_request(request: Request) -> JSONResponse:
             "AI-Tenant-Id": subaccount.service_key.identity_zone_id,
         }
 
-        result = await make_backend_request(
+        result = await run_in_threadpool(
+            make_backend_request,
             url=vendor_endpoint_url,
             headers=headers,
             payload=upstream_payload,

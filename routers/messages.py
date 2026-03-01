@@ -21,6 +21,7 @@ from handlers.streaming_generators import (
 from handlers.streaming_handler import make_backend_request
 from load_balancer import load_balance_url
 from proxy_helpers import Converters, Detector
+from utils.auth_retry import log_auth_error_retry
 from utils.logging_utils import get_server_logger, get_transport_logger
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
@@ -201,20 +202,133 @@ async def proxy_claude_request(request: Request):
         body_json = json.dumps(body)
 
         if stream:
-            response = invoke_bedrock_streaming(bedrock_client, body_json)
+            try:
+                response = invoke_bedrock_streaming(bedrock_client, body_json)
+                response_status = response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
+                response_body = response.get("body")
+
+                # Check for authentication errors and retry with fresh client
+                if response_status in [401, 403]:
+                    logger.warning(
+                        log_auth_error_retry(
+                            response_status, f"SDK for model '{model}'"
+                        )
+                    )
+                    invalidate_bedrock_client(model)
+                    bedrock_client = get_bedrock_client(
+                        sub_account_config=proxy_config.subaccounts[subaccount_name],
+                        model_name=model,
+                        deployment_id=extract_deployment_id(selected_url),
+                    )
+                    response = invoke_bedrock_streaming(bedrock_client, body_json)
+                    response_status = response.get("ResponseMetadata", {}).get(
+                        "HTTPStatusCode"
+                    )
+                    response_body = response.get("body")
+
+                if response_status is None:
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "Malformed response from backend API",
+                            },
+                        },
+                        status_code=500,
+                    )
+
+                if response_status != 200:
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": f"Backend API returned status {response_status}",
+                            },
+                        },
+                        status_code=response_status,
+                    )
+
+                if response_body is None:
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "Empty response body from backend API",
+                            },
+                        },
+                        status_code=500,
+                    )
+            except Exception as e:
+                logger.error("Error before streaming: %s", e, exc_info=True)
+                return JSONResponse(
+                    {
+                        "type": "error",
+                        "error": {"type": "api_error", "message": str(e)},
+                    },
+                    status_code=500,
+                )
+
             return StreamingResponse(
-                generate_bedrock_streaming_response(response.get("body"), tid),
+                generate_bedrock_streaming_response(response_body, tid),
                 media_type="text/event-stream",
             )
 
         response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+        response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
         response_body = response.get("body")
-        chunk_data = read_response_body_stream(response_body)
-        response_json = json.loads(chunk_data)
 
-        logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
+        # Check for authentication errors and retry with fresh client
+        if response_status in [401, 403]:
+            logger.warning(
+                log_auth_error_retry(response_status, f"SDK for model '{model}'")
+            )
+            invalidate_bedrock_client(model)
+            bedrock_client = get_bedrock_client(
+                sub_account_config=proxy_config.subaccounts[subaccount_name],
+                model_name=model,
+                deployment_id=extract_deployment_id(selected_url),
+            )
+            response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+            response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            response_body = response.get("body")
 
-        return JSONResponse(response_json, status_code=200)
+        # Check for malformed response
+        if response_status is None:
+            return JSONResponse(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "Malformed response from backend API",
+                    },
+                },
+                status_code=500,
+            )
+
+        if response_body is not None:
+            chunk_data = read_response_body_stream(response_body)
+            response_json = json.loads(chunk_data)
+
+            logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
+
+            return JSONResponse(response_json, status_code=response_status)
+        else:
+            error_status = response_status if response_status >= 400 else 500
+            return JSONResponse(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "Empty response body from backend API",
+                    },
+                },
+                status_code=error_status,
+            )
 
     except RetryError as err:
         logger.error("RetryError in Claude request: %s", err, exc_info=True)

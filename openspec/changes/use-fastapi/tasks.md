@@ -23,5 +23,5 @@
 
 - [x] 4.1 Update `proxy_server.py` to be a thin wrapper or deprecate it
 - [x] 4.2 Update tests to use `httpx.AsyncClient` for integration testing
-- [ ] 4.3 Verify all endpoints with existing test suite
-- [ ] 4.4 Remove `flask` dependency and cleanup old blueprint files
+- [x] 4.3 Verify all endpoints with existing test suite
+- [x] 4.4 Remove `flask` dependency and cleanup old blueprint files

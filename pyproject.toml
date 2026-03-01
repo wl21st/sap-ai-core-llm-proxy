@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "botocore>=1.35.0",
-    "flask>=3.1.2",
     "fastapi>=0.115.0",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
@@ -57,7 +56,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["auth", "config", "utils", "handlers", "blueprints"]
+packages = ["auth", "config", "utils", "handlers", "routers"]
 py-modules = ["proxy_server", "proxy_helpers", "version", "cli", "load_balancer", "inspect_deployments"]
 
 [tool.ruff]

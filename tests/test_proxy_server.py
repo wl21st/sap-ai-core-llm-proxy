@@ -21,7 +21,8 @@ import requests.exceptions
 # Import the module under test
 import proxy_server
 from proxy_helpers import Detector, Converters
-from proxy_server import app
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from load_balancer import resolve_model_name, load_balance_url, reset_counters
 
 # Create convenience aliases for the test functions
@@ -184,39 +185,41 @@ def mock_service_key_file(sample_service_key, tmp_path):
     return str(key_file)
 
 
+def _make_fastapi_app(config, ctx):
+    """Create a minimal FastAPI app with all routers and injected state."""
+    from routers import chat, embeddings, logging as logging_router, messages, models
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    app.include_router(messages.router)
+    app.include_router(embeddings.router)
+    app.include_router(models.router)
+    app.include_router(logging_router.router)
+    app.state.proxy_config = config
+    app.state.proxy_context = ctx
+    return app
+
+
 @pytest.fixture
 def flask_client():
-    """Flask test client."""
+    """FastAPI test client (replaces Flask test client).
+
+    Creates a FastAPI app using the CURRENT proxy_server.proxy_config object so
+    that tests which also use reset_proxy_config can mutate the shared config
+    object and have the changes reflected in the test client's app state.
+    """
     from config import ProxyGlobalContext
 
-    # Initialize global context with empty config
-    ctx = ProxyGlobalContext()
-    ctx.initialize(ProxyConfig())
+    # Ensure proxy_server globals are initialised but keep the existing
+    # proxy_config object so that reset_proxy_config (if used in the same test)
+    # can mutate it in-place and the FastAPI app will see the changes.
+    if not hasattr(proxy_server, "ctx") or proxy_server.ctx is None:
+        ctx = ProxyGlobalContext()
+        ctx.initialize(proxy_server.proxy_config)
+        proxy_server.ctx = ctx
 
-    # Set proxy_server globals
-    proxy_server.ctx = ctx
-    proxy_server.proxy_config = ctx.config
-
-    # Register blueprints only if not already registered
-    if "chat_completions" not in app.blueprints:
-        proxy_server.register_blueprints(app, ctx.config, ctx)
-    else:
-        # Re-initialize blueprints with current config
-        from blueprints import (
-            init_chat_completions_blueprint,
-            init_messages_blueprint,
-            init_embeddings_blueprint,
-            init_models_blueprint,
-        )
-
-        init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-        init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-        init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-        init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-
-    app.config["TESTING"] = True
-    with app.test_client() as client:
-        yield client
+    app = _make_fastapi_app(proxy_server.proxy_config, proxy_server.ctx)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 @pytest.fixture
@@ -226,37 +229,30 @@ def reset_proxy_config():
 
     # Store original state
     original_ctx = getattr(proxy_server, "ctx", None)
-    original_config = proxy_server.proxy_config
-
-    # Reset to clean state
-    proxy_server.ctx = ProxyGlobalContext()
-    proxy_server.ctx.initialize(ProxyConfig())
-    proxy_server.proxy_config = proxy_server.ctx.config
-
-    # Re-initialize blueprints with new config
-    from blueprints import (
-        init_chat_completions_blueprint,
-        init_messages_blueprint,
-        init_embeddings_blueprint,
-        init_models_blueprint,
+    original_subaccounts = proxy_server.proxy_config.subaccounts.copy()
+    original_model_mapping = proxy_server.proxy_config.model_to_subaccounts.copy()
+    original_tokens = (
+        proxy_server.proxy_config.secret_authentication_tokens.copy()
+        if proxy_server.proxy_config.secret_authentication_tokens
+        else []
     )
 
-    init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    # Reset to clean state by mutating in-place (preserves object identity for flask_client)
+    proxy_server.proxy_config.subaccounts = {}
+    proxy_server.proxy_config.model_to_subaccounts = {}
+    proxy_server.proxy_config.secret_authentication_tokens = []
+
+    proxy_server.ctx = ProxyGlobalContext()
+    proxy_server.ctx.initialize(proxy_server.proxy_config)
 
     yield
 
     # Restore original state
     if original_ctx is not None:
         proxy_server.ctx = original_ctx
-    proxy_server.proxy_config = original_config
-    # Re-initialize blueprints with restored config
-    init_chat_completions_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_messages_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_embeddings_blueprint(proxy_server.proxy_config, proxy_server.ctx)
-    init_models_blueprint(proxy_server.proxy_config, proxy_server.ctx)
+    proxy_server.proxy_config.subaccounts = original_subaccounts
+    proxy_server.proxy_config.model_to_subaccounts = original_model_mapping
+    proxy_server.proxy_config.secret_authentication_tokens = original_tokens
 
 
 # ============================================================================
@@ -341,7 +337,10 @@ class TestSubAccountConfig:
 
     def test_normalize_model_names(self, mocker, sample_service_key_raw, tmp_path):
         """Test model name normalization."""
-        from config.config_parser import _build_mapping_for_subaccount, _load_service_key_for_subaccount
+        from config.config_parser import (
+            _build_mapping_for_subaccount,
+            _load_service_key_for_subaccount,
+        )
 
         # Create temp key file
         key_file = tmp_path / "test_key.json"
@@ -640,12 +639,11 @@ class TestHTTP429Handler:
         mock_error = Mock()
         mock_error.response = mock_response
 
-        # Need Flask app context for jsonify
-        with app.app_context():
-            result = handle_http_429_error(mock_error, "test request")
+        result_body, status_code = handle_http_429_error(mock_error, "test request")
 
-            assert result.status_code == 429
-            assert "Retry-After" in result.headers
+        assert status_code == 429
+        assert result_body["error"] == "Rate limit exceeded"
+        assert "Retry-After" in result_body["headers"]
 
 
 # ============================================================================
@@ -942,7 +940,7 @@ class TestFlaskEndpoints:
         response = flask_client.get("/v1/models")
 
         assert response.status_code == 200
-        data = json.loads(response.data)
+        data = response.json()
         assert data["object"] == "list"
         assert len(data["data"]) == 2
         model_ids = [m["id"] for m in data["data"]]
@@ -956,7 +954,7 @@ class TestFlaskEndpoints:
         )
 
         assert response.status_code == 200
-        data = json.loads(response.data)
+        data = response.json()
         assert data["status"] == "success"
 
     @patch("auth.request_validator.RequestValidator.validate")
@@ -1151,7 +1149,7 @@ class TestIntegration:
         )
 
         assert response.status_code == 200
-        data = json.loads(response.data)
+        data = response.json()
         assert data["choices"][0]["message"]["content"] == "Hello!"
 
 
@@ -1398,7 +1396,7 @@ class TestFlaskEndpointsEdgeCases:
         response = flask_client.get("/v1/models")
 
         assert response.status_code == 200
-        data = json.loads(response.data)
+        data = response.json()
         assert data["object"] == "list"
         assert len(data["data"]) == 0
 
@@ -1416,7 +1414,7 @@ class TestFlaskEndpointsEdgeCases:
         )
 
         assert response.status_code == 400
-        data = json.loads(response.data)
+        data = response.json()
         assert "error" in data
 
     @patch("auth.request_validator.RequestValidator.validate")
@@ -1436,9 +1434,8 @@ class TestFlaskEndpointsEdgeCases:
         """Test OPTIONS request to chat completions."""
         response = flask_client.options("/v1/chat/completions")
 
-        # Note: /v1/chat/completions doesn't explicitly handle OPTIONS
-        # Flask returns 200 with Allow header showing supported methods
-        assert response.status_code == 200
+        # FastAPI returns 405 for OPTIONS on a POST-only route (unlike Flask which returned 200)
+        assert response.status_code == 405
 
 
 class TestStreamingHelpersExtended:
@@ -1921,12 +1918,12 @@ class TestStreamingHelpers:
 
 
 # ============================================================================
-# REQUEST HANDLER TESTS
+# REQUEST HANDLER TESTS (EXTENDED)
 # ============================================================================
 
 
-class TestRequestHandlers:
-    """Tests for request handler functions."""
+class TestRequestHandlersExtended:
+    """Additional tests for request handler functions (streaming variants)."""
 
     def test_handle_claude_request_streaming(self, reset_proxy_config):
         """Test handle_claude_request with streaming."""

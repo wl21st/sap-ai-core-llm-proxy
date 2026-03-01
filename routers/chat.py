@@ -4,6 +4,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from auth.request_validator import verify_request_token
@@ -36,7 +37,8 @@ async def _handle_non_streaming_request(
 ) -> JSONResponse:
     transport_logger = get_transport_logger(__name__)
 
-    result = await make_backend_request(
+    result = await run_in_threadpool(
+        make_backend_request,
         url=url,
         headers=headers,
         payload=payload,
