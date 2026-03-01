@@ -228,9 +228,9 @@ async def generate_streaming_response(
                         if line.startswith("data: "):
                             line_content = line.replace("data: ", "").strip()
                             try:
-                                if line_content.startswith("{"):
+                                try:
                                     claude_dict_chunk = json.loads(line_content)
-                                else:
+                                except json.JSONDecodeError:
                                     claude_dict_chunk = ast.literal_eval(line_content)
 
                                 if "messageStart" in claude_dict_chunk:

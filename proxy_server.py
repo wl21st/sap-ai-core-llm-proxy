@@ -5,6 +5,7 @@ from botocore.exceptions import ClientError  # noqa: F401 - used in bedrock_hand
 
 from auth import RequestValidator  # noqa: F401 - re-exported for tests
 from auth.token_manager import TokenManager  # noqa: F401 - used by tests via proxy_server.TokenManager
+
 # Import from new modular structure
 from config import ProxyConfig, ProxyGlobalContext
 from utils.logging_utils import get_server_logger, get_transport_logger
@@ -114,9 +115,15 @@ def load_balance_url(model):
     return _load_balance_url(model, proxy_config)
 
 
+# CLI helpers - re-exported for backward-compatible test imports
+from cli import parse_arguments  # noqa: F401 - re-exported for tests
+
+
 # Streaming helpers - extracted to handlers/streaming_handler.py
 from handlers.streaming_handler import (
     parse_sse_response_to_claude_json as _parse_sse_response_to_claude_json,
+    get_claude_stop_reason_from_gemini_chunk,  # noqa: F401 - re-exported for tests
+    get_claude_stop_reason_from_openai_chunk,  # noqa: F401 - re-exported for tests
 )
 
 
