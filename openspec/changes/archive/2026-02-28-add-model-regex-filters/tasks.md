@@ -50,13 +50,13 @@
 
 ## 8. Integration Testing
 
-- [ ] 8.1 Create test config file with `model_filters` that excludes test models
-- [ ] 8.2 Verify `/v1/models` endpoint does not return filtered models
-- [ ] 8.3 Verify requests to filtered models return 404 Not Found with "not_found_error" type
-- [ ] 8.4 Verify requests to non-filtered models work normally
-- [ ] 8.5 Test include filter only scenario (only GPT models exposed)
-- [ ] 8.6 Test exclude filter only scenario (test models hidden)
-- [ ] 8.7 Test combined include+exclude scenario (GPT models except preview variants)
+- [x] 8.1 Create test config file with `model_filters` that excludes test models
+- [x] 8.2 Verify `/v1/models` endpoint does not return filtered models
+- [x] 8.3 Verify requests to filtered models return 404 Not Found with "not_found_error" type
+- [x] 8.4 Verify requests to non-filtered models work normally
+- [x] 8.5 Test include filter only scenario (only GPT models exposed)
+- [x] 8.6 Test exclude filter only scenario (test models hidden)
+- [x] 8.7 Test combined include+exclude scenario (GPT models except preview variants)
 
 ## 9. Documentation Updates
 

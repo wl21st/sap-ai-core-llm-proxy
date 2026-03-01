@@ -14,6 +14,11 @@ from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
 
+chunk_converters.logger = logger
+claude_converters.logger = logger
+gemini_converters.logger = logger
+openai_converters.logger = logger
+
 
 def load_model_aliases():
     """Load model aliases from config/aliases.json."""
@@ -313,7 +318,7 @@ class Converters:
 
     @staticmethod
     def convert_openai_to_claude37(payload):
-        return claude_converters.claude_converse_from_openai(payload)
+        return claude_converters.from_openai_messages(payload)
 
     @staticmethod
     def convert_claude_request_to_openai(payload):
@@ -368,7 +373,7 @@ class Converters:
 
     @staticmethod
     def convert_claude_request_for_bedrock(payload):
-        return claude_converters.claude_bedrock_from_claude(payload)
+        return claude_converters.to_bedrock(payload)
 
     @staticmethod
     def convert_claude_to_openai(response, model):

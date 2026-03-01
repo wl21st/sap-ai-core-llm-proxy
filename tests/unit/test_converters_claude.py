@@ -22,7 +22,7 @@ def test_from_openai_basic():
     assert result["temperature"] == 0.2
 
 
-def test_claude_converse_from_openai_stop_sequences():
+def test_from_openai_messages_stop_sequences():
     payload = {
         "messages": [
             {"role": "user", "content": "Hi"},
@@ -31,14 +31,14 @@ def test_claude_converse_from_openai_stop_sequences():
         "max_tokens": 50,
     }
 
-    result = claude_converters.claude_converse_from_openai(payload)
+    result = claude_converters.from_openai_messages(payload)
 
     assert result["messages"][0]["content"][0]["text"] == "Hi"
     assert result["inferenceConfig"]["stopSequences"] == ["END"]
     assert result["inferenceConfig"]["maxTokens"] == 50
 
 
-def test_claude_bedrock_from_claude_removes_cache_control():
+def test_to_bedrock_removes_cache_control():
     payload = {
         "messages": [
             {
@@ -48,7 +48,7 @@ def test_claude_bedrock_from_claude_removes_cache_control():
         ]
     }
 
-    result = claude_converters.claude_bedrock_from_claude(payload)
+    result = claude_converters.to_bedrock(payload)
 
     content_item = result["messages"][0]["content"][0]
     assert "cache_control" not in content_item

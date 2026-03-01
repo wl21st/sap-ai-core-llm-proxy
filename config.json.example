@@ -1,11 +1,11 @@
 {
     "model_filters": {
-        "include": [
+        "include_filters": [
             "^gpt-.*",
             "^claude-.*",
             ".*-sonnet$"
         ],
-        "exclude": [
+        "exclude_filters": [
             ".*-test$",
             "^experimental-.*"
         ]

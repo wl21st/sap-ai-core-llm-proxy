@@ -16,5 +16,8 @@
   },
   "timeout": 30,
   "max_tokens": 100,
-  "skip_if_server_not_running": true
+  "skip_if_server_not_running": true,
+  "model_filter": {
+    "enabled": false
+  }
 }
