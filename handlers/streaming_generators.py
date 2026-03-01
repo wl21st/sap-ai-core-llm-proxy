@@ -254,10 +254,10 @@ async def generate_streaming_response(
 
     timeout_config = httpx.Timeout(600)
     async with httpx.AsyncClient(timeout=timeout_config) as client:
-        async with client.stream(
-            "POST", url, headers=headers, json=payload
-        ) as response:
-            try:
+        try:
+            async with client.stream(
+                "POST", url, headers=headers, json=payload
+            ) as response:
                 response.raise_for_status()
 
                 # --- Claude 3.7/4 Streaming Logic ---
@@ -779,186 +779,183 @@ async def generate_streaming_response(
                 if not done_sent:
                     yield "data: [DONE]\n\n"
 
-            except httpx.HTTPStatusError as http_err:
+        except httpx.HTTPStatusError as http_err:
+            logger.error(
+                "HTTP Error in streaming response:(%s): %s",
+                model,
+                http_err,
+                exc_info=True,
+            )
+
+            error_content: str = ""
+
+            if http_err.response is not None:
+                status_code = http_err.response.status_code
+                error_content = http_err.response.text
+
+                if status_code == 429:
+                    error_payload = {
+                        "id": f"error-{random.randint(10000000, 99999999)}",
+                        "object": "error",
+                        "created": int(time.time()),
+                        "model": model,
+                        "error": {
+                            "message": error_content,
+                            "type": "rate_limit_error",
+                            "code": status_code,
+                            "subaccount": subaccount_name,
+                        },
+                    }
+                    yield f"data: {json.dumps(error_payload)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+                logger.error("Error response status: %s", http_err.response.status_code)
                 logger.error(
-                    "HTTP Error in streaming response:(%s): %s",
-                    model,
-                    http_err,
-                    exc_info=True,
+                    "Error response headers: %s", dict(http_err.response.headers)
                 )
 
-                error_content: str = ""
-
-                if http_err.response is not None:
-                    status_code = http_err.response.status_code
-                    error_content = http_err.response.text
-
-                    if status_code == 429:
-                        error_payload = {
-                            "id": f"error-{random.randint(10000000, 99999999)}",
-                            "object": "error",
-                            "created": int(time.time()),
-                            "model": model,
-                            "error": {
-                                "message": error_content,
-                                "type": "rate_limit_error",
-                                "code": status_code,
-                                "subaccount": subaccount_name,
-                            },
-                        }
-                        yield f"data: {json.dumps(error_payload)}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-
+                # Log error response body (avoid duplicates, limit size)
+                try:
+                    error_json = http_err.response.json()
                     logger.error(
-                        "Error response status: %s", http_err.response.status_code
+                        "Error response body (JSON): %s",
+                        json.dumps(error_json, indent=2)[:1000],
                     )
+                except json.JSONDecodeError:
                     logger.error(
-                        "Error response headers: %s", dict(http_err.response.headers)
+                        "Error response body (text): %s", http_err.response.text[:1000]
                     )
+                except Exception as e:
+                    logger.error("Could not read error response: %s", e)
+            else:
+                status_code = 500
+                error_content = str(http_err)
 
-                    # Log error response body (avoid duplicates, limit size)
-                    try:
-                        error_json = http_err.response.json()
-                        logger.error(
-                            "Error response body (JSON): %s",
-                            json.dumps(error_json, indent=2)[:1000]
-                        )
-                    except json.JSONDecodeError:
-                        logger.error(
-                            "Error response body (text): %s",
-                            http_err.response.text[:1000]
-                        )
-                    except Exception as e:
-                        logger.error("Could not read error response: %s", e)
-                else:
-                    status_code = 500
-                    error_content = str(http_err)
+            error_payload = {
+                "id": f"error-{random.randint(10000000, 99999999)}",
+                "object": "error",
+                "created": int(time.time()),
+                "model": model,
+                "error": {
+                    "message": error_content,
+                    "type": "http_error",
+                    "code": status_code,
+                    "subaccount": subaccount_name,
+                },
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
 
-                error_payload = {
-                    "id": f"error-{random.randint(10000000, 99999999)}",
-                    "object": "error",
-                    "created": int(time.time()),
-                    "model": model,
-                    "error": {
-                        "message": error_content,
-                        "type": "http_error",
-                        "code": status_code,
-                        "subaccount": subaccount_name,
-                    },
-                }
-                yield f"data: {json.dumps(error_payload)}\n\n"
-                yield "data: [DONE]\n\n"
+        except httpx.TimeoutException as timeout_err:
+            logger.error(
+                "Timeout during streaming for model '%s': %s",
+                model,
+                timeout_err,
+                exc_info=True,
+            )
+            error_payload = {
+                "id": f"error-{random.randint(10000000, 99999999)}",
+                "object": "error",
+                "created": int(time.time()),
+                "model": model,
+                "error": {
+                    "message": "Request timed out after 600 seconds",
+                    "type": "timeout_error",
+                    "code": 504,
+                    "subaccount": subaccount_name,
+                },
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
 
-            except httpx.TimeoutException as timeout_err:
-                logger.error(
-                    "Timeout during streaming for model '%s': %s",
-                    model,
-                    timeout_err,
-                    exc_info=True,
-                )
-                error_payload = {
-                    "id": f"error-{random.randint(10000000, 99999999)}",
-                    "object": "error",
-                    "created": int(time.time()),
-                    "model": model,
-                    "error": {
-                        "message": "Request timed out after 600 seconds",
-                        "type": "timeout_error",
-                        "code": 504,
-                        "subaccount": subaccount_name,
-                    },
-                }
-                yield f"data: {json.dumps(error_payload)}\n\n"
-                yield "data: [DONE]\n\n"
+        except httpx.ConnectError as conn_err:
+            logger.error(
+                "Connection failed for model '%s': %s",
+                model,
+                conn_err,
+                exc_info=True,
+            )
+            error_payload = {
+                "id": f"error-{random.randint(10000000, 99999999)}",
+                "object": "error",
+                "created": int(time.time()),
+                "model": model,
+                "error": {
+                    "message": f"Failed to connect to backend: {str(conn_err)}",
+                    "type": "connection_error",
+                    "code": 503,
+                    "subaccount": subaccount_name,
+                },
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
 
-            except httpx.ConnectError as conn_err:
-                logger.error(
-                    "Connection failed for model '%s': %s",
-                    model,
-                    conn_err,
-                    exc_info=True,
-                )
-                error_payload = {
-                    "id": f"error-{random.randint(10000000, 99999999)}",
-                    "object": "error",
-                    "created": int(time.time()),
-                    "model": model,
-                    "error": {
-                        "message": f"Failed to connect to backend: {str(conn_err)}",
-                        "type": "connection_error",
-                        "code": 503,
-                        "subaccount": subaccount_name,
-                    },
-                }
-                yield f"data: {json.dumps(error_payload)}\n\n"
-                yield "data: [DONE]\n\n"
+        except httpx.ReadError as read_err:
+            logger.error(
+                "Connection dropped during streaming for model '%s': %s",
+                model,
+                read_err,
+                exc_info=True,
+            )
+            error_payload = {
+                "id": f"error-{random.randint(10000000, 99999999)}",
+                "object": "error",
+                "created": int(time.time()),
+                "model": model,
+                "error": {
+                    "message": "Connection lost during streaming",
+                    "type": "connection_error",
+                    "code": 502,
+                    "subaccount": subaccount_name,
+                },
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
 
-            except httpx.ReadError as read_err:
-                logger.error(
-                    "Connection dropped during streaming for model '%s': %s",
-                    model,
-                    read_err,
-                    exc_info=True,
-                )
-                error_payload = {
-                    "id": f"error-{random.randint(10000000, 99999999)}",
-                    "object": "error",
-                    "created": int(time.time()),
-                    "model": model,
-                    "error": {
-                        "message": "Connection lost during streaming",
-                        "type": "connection_error",
-                        "code": 502,
-                        "subaccount": subaccount_name,
-                    },
-                }
-                yield f"data: {json.dumps(error_payload)}\n\n"
-                yield "data: [DONE]\n\n"
+        except httpx.RequestError as request_err:
+            logger.error(
+                "Request error for model '%s': %s",
+                model,
+                request_err,
+                exc_info=True,
+            )
+            error_payload = {
+                "id": f"error-{random.randint(10000000, 99999999)}",
+                "object": "error",
+                "created": int(time.time()),
+                "model": model,
+                "error": {
+                    "message": f"Network request failed: {str(request_err)}",
+                    "type": "network_error",
+                    "code": 503,
+                    "subaccount": subaccount_name,
+                },
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
 
-            except httpx.RequestError as request_err:
-                logger.error(
-                    "Request error for model '%s': %s",
-                    model,
-                    request_err,
-                    exc_info=True,
-                )
-                error_payload = {
-                    "id": f"error-{random.randint(10000000, 99999999)}",
-                    "object": "error",
-                    "created": int(time.time()),
-                    "model": model,
-                    "error": {
-                        "message": f"Network request failed: {str(request_err)}",
-                        "type": "network_error",
-                        "code": 503,
-                        "subaccount": subaccount_name,
-                    },
-                }
-                yield f"data: {json.dumps(error_payload)}\n\n"
-                yield "data: [DONE]\n\n"
-
-            except Exception as unexpected_err:
-                logger.error(
-                    "Error in streaming response from '%s': %s",
-                    subaccount_name,
-                    http_err,
-                    exc_info=True,
-                )
-                error_payload = {
-                    "id": f"error-{random.randint(10000000, 99999999)}",
-                    "object": "error",
-                    "created": int(time.time()),
-                    "model": model,
-                    "error": {
-                        "message": "An unexpected error occurred",
-                        "type": "proxy_error",
-                        "code": 500,
-                        "subaccount": subaccount_name,
-                    },
-                }
-                yield f"data: {json.dumps(error_payload)}\n\n"
-                yield "data: [DONE]\n\n"
+        except Exception as unexpected_err:
+            logger.error(
+                "Error in streaming response from '%s': %s",
+                subaccount_name,
+                unexpected_err,
+                exc_info=True,
+            )
+            error_payload = {
+                "id": f"error-{random.randint(10000000, 99999999)}",
+                "object": "error",
+                "created": int(time.time()),
+                "model": model,
+                "error": {
+                    "message": "An unexpected error occurred",
+                    "type": "proxy_error",
+                    "code": 500,
+                    "subaccount": subaccount_name,
+                },
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
 
 
 async def generate_claude_streaming_response(

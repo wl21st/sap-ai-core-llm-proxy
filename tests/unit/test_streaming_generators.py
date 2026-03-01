@@ -23,9 +23,7 @@ class TestGenerateStreamingResponseLifecycle:
         # Mock httpx response
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.aiter_lines = AsyncMock(
-            return_value=iter(["data: [DONE]"])
-        )
+        mock_response.aiter_lines = AsyncMock(return_value=iter(["data: [DONE]"]))
 
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
@@ -63,7 +61,7 @@ class TestGenerateStreamingResponseLifecycle:
 
         async def mock_lines():
             for i in range(100):
-                yield f"data: {{\"chunk\": {i}}}\n\n"
+                yield f'data: {{"chunk": {i}}}\n\n'
 
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
@@ -108,9 +106,11 @@ class TestGenerateStreamingResponseLifecycle:
         mock_request.client = Mock(host="127.0.0.1")
 
         mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError(
-            "Error", request=Mock(), response=Mock(status_code=500, text="Error")
-        ))
+        mock_response.raise_for_status = Mock(
+            side_effect=httpx.HTTPStatusError(
+                "Error", request=Mock(), response=Mock(status_code=500, text="Error")
+            )
+        )
 
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
@@ -229,19 +229,22 @@ class TestHttpxExceptionHandling:
         mock_response.raise_for_status = Mock()
 
         async def failing_lines():
-            yield "data: {\"test\": 1}\n\n"
+            yield 'data: {"test": 1}\n\n'
             raise httpx.ReadError("Connection lost")
 
-        mock_response.aiter_lines = Mock(return_value=failing_lines())
+        def aiter_lines_impl():
+            return failing_lines()
+
+        mock_response.aiter_lines = Mock(side_effect=aiter_lines_impl)
 
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_stream = AsyncMock()
             mock_stream.__aenter__ = AsyncMock(return_value=mock_response)
-            mock_stream.__aexit__ = AsyncMock()
+            mock_stream.__aexit__ = AsyncMock(return_value=False)
             mock_client.stream = Mock(return_value=mock_stream)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock()
+            mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_class.return_value = mock_client
 
             chunks = []
@@ -249,8 +252,10 @@ class TestHttpxExceptionHandling:
                 request=mock_request,
                 url="http://test.com",
                 headers={},
-                payload={"model": "gpt-4"},
-                model="gpt-4",
+                payload={
+                    "model": "claude-4"
+                },  # Use Claude model that uses aiter_lines()
+                model="claude-4",
                 subaccount_name="test",
                 tid="test-123",
             ):
@@ -277,23 +282,28 @@ class TestConcurrentStreaming:
 
         async def create_stream(model_name: str, chunk_count: int):
             """Helper to create a mock stream."""
+
             async def mock_lines():
                 for i in range(chunk_count):
-                    yield f"data: {{\"model\": \"{model_name}\", \"chunk\": {i}}}\n\n"
+                    yield f'data: {{"model": "{model_name}", "chunk": {i}}}\n\n'
                 yield "data: [DONE]"
 
             mock_response = AsyncMock()
             mock_response.raise_for_status = Mock()
-            mock_response.aiter_lines = Mock(return_value=mock_lines())
+
+            def aiter_lines_impl():
+                return mock_lines()
+
+            mock_response.aiter_lines = Mock(side_effect=aiter_lines_impl)
 
             with patch("httpx.AsyncClient") as mock_client_class:
                 mock_client = AsyncMock()
                 mock_stream = AsyncMock()
                 mock_stream.__aenter__ = AsyncMock(return_value=mock_response)
-                mock_stream.__aexit__ = AsyncMock()
+                mock_stream.__aexit__ = AsyncMock(return_value=False)
                 mock_client.stream = Mock(return_value=mock_stream)
                 mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_client.__aexit__ = AsyncMock()
+                mock_client.__aexit__ = AsyncMock(return_value=False)
                 mock_client_class.return_value = mock_client
 
                 chunks = []
@@ -311,8 +321,8 @@ class TestConcurrentStreaming:
 
         # Run 3 concurrent streams
         results = await asyncio.gather(
-            create_stream("gpt-4", 5),
-            create_stream("claude-4", 7),
+            create_stream("claude-4", 5),
+            create_stream("claude-37", 7),
             create_stream("gemini", 3),
         )
 
@@ -372,7 +382,9 @@ class TestTokenUsageTracking:
             mock_client_class.return_value = mock_client
 
             chunks = []
-            with patch("handlers.streaming_generators.token_usage_logger") as mock_logger:
+            with patch(
+                "handlers.streaming_generators.token_usage_logger"
+            ) as mock_logger:
                 async for chunk in generate_streaming_response(
                     request=mock_request,
                     url="http://test.com",
@@ -388,8 +400,8 @@ class TestTokenUsageTracking:
                 mock_logger.info.assert_called()
                 call_args = str(mock_logger.info.call_args)
                 assert "100" in call_args  # total tokens
-                assert "20" in call_args   # prompt tokens
-                assert "80" in call_args   # completion tokens
+                assert "20" in call_args  # prompt tokens
+                assert "80" in call_args  # completion tokens
 
 
 class TestStreamingErrorNotification:
@@ -406,7 +418,7 @@ class TestStreamingErrorNotification:
             yield 'data: {"messageStart": {"message": {"id": "msg_123"}}}'
             yield 'data: {"contentBlockStart": {"index": 0}}'
             # Invalid JSON will trigger error
-            yield 'data: {invalid json here'
+            yield "data: {invalid json here"
 
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
