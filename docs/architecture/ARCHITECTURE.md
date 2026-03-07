@@ -1,7 +1,7 @@
 # SAP AI Core LLM Proxy - Architecture Documentation
 
 **Version**: 1.2.4
-**Last Updated**: 2025-12-27
+**Last Updated**: 2026-03-07
 **Status**: Production
 
 ---
@@ -18,7 +18,7 @@
 
 ## System Overview
 
-The SAP AI Core LLM Proxy is a modular Flask-based proxy server that transforms SAP AI Core LLM APIs into OpenAI-compatible APIs. It supports multiple model providers (Claude, Gemini, OpenAI) and implements load balancing across multiple SAP AI Core subaccounts. The system has been refactored from a monolithic architecture into focused modules following SOLID principles.
+The SAP AI Core LLM Proxy is a modular FastAPI-based proxy server that transforms SAP AI Core LLM APIs into OpenAI-compatible APIs. It supports multiple model providers (Claude, Gemini, OpenAI) and implements load balancing across multiple SAP AI Core subaccounts. The system has been refactored from a monolithic architecture into focused modules following SOLID principles, utilizing a `ProxyGlobalContext` for centralized service management.
 
 ### Key Features
 
@@ -45,8 +45,8 @@ graph TB
         E[Custom Apps]
     end
 
-    subgraph "Proxy Server - proxy_server.py"
-        F[Flask Application]
+    subgraph "Proxy Server - main.py & proxy_server.py"
+        F[FastAPI Application]
         G[Authentication Layer]
         H[Load Balancer]
         I[Token Manager]
@@ -98,7 +98,7 @@ graph TB
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Flask as Flask App
+    participant Flask as FastAPI App
     participant Auth as Authentication
     participant Router as Load Balancer
     participant Token as Token Manager
@@ -134,7 +134,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Flask as Flask App
+    participant Flask as FastAPI App
     participant Stream as Streaming Handler
     participant SAP as SAP AI Core
     
@@ -206,65 +206,63 @@ classDiagram
 ```mermaid
 graph LR
     subgraph "Core Modules"
-        subgraph "proxy_server.py - ~2,492 lines"
-            A[Main Application<br/>& Routing]
+        subgraph "main.py & proxy_server.py - ~330 lines"
+            A[FastAPI App &<br/>Lifespan Context]
         end
 
-        subgraph "auth/ - ~520 lines"
+        subgraph "routers/ - ~760 lines"
+            R[API Endpoints]
+        end
+
+        subgraph "handlers/ - ~1,860 lines"
+            H[Provider Handlers<br/>& Streaming]
+        end
+
+        subgraph "auth/ - ~240 lines"
             B1[Token Manager]
             B2[Request Validator]
         end
 
-        subgraph "config/ - ~510 lines"
-            C1[Config Models]
+        subgraph "config/ - ~820 lines"
+            C1[Global Context]
             C2[Config Parser]
-            C3[Pydantic Loader]
         end
 
-        subgraph "utils/ - ~850 lines"
-            D1[Error Handlers]
-            D2[Logging Utils]
-            D3[SDK Pool]
-            D4[API Logging]
+        subgraph "utils/ - ~1,380 lines"
+            D[Utilities & Logging]
         end
 
-        subgraph "proxy_helpers.py - ~1,407 lines"
+        subgraph "proxy_helpers.py - ~1,780 lines"
             E[Converters &<br/>Model Detection]
         end
     end
 
     subgraph "External Dependencies"
-        F[Flask]
-        G[Requests]
-        H[SAP AI SDK]
-        I[Threading]
-        J[Tenenacity]
-        K[Pydantic]
+        F[FastAPI & Uvicorn]
+        G[Requests & HTTPX]
+        I[SAP AI SDK & Boto3]
+        J[Tenacity]
     end
 
-    A --> B1
-    A --> B2
+    A --> R
     A --> C1
-    A --> E
-    A --> D1
-
-    B1 --> D2
-    B2 --> D2
-    C1 --> C2
-    C1 --> C3
-    E --> D3
+    R --> B2
+    R --> H
+    H --> B1
+    H --> E
+    H --> D
 
     A --> F
-    A --> G
-    A --> H
-    B1 --> I
-    A --> J
-    C1 --> K
+    H --> G
+    H --> I
+    H --> J
 
     style A fill:#FFE082
+    style R fill:#FFCC80
+    style H fill:#FFAB91
     style B1 fill:#81C784
     style C1 fill:#64B5F6
-    style D1 fill:#FF8A65
+    style D fill:#FF8A65
     style E fill:#BA68C8
 ```
 
@@ -396,16 +394,17 @@ graph LR
 
 ### 1. Ongoing Modular Refactoring (HIGH)
 
-**Location**: Multiple modules in progress
+**Location**: `proxy_helpers.py` to `handlers/` and `routers/`
 
-**Issue**: Phase 5 converter module extraction is 60% complete. Streaming and cross-model converters need to be fully extracted from [`proxy_helpers.py`](../proxy_helpers.py).
+**Issue**: While the proxy has been successfully migrated to FastAPI with a centralized `ProxyGlobalContext`, Phase 5 converter module extraction is still ongoing. Some legacy conversion logic still needs to be extracted from [`proxy_helpers.py`](../proxy_helpers.py).
 
 **Impact**:
+
 - Some legacy conversion logic still embedded in proxy_helpers.py
 - Not all SOLID principles fully implemented
 - Testing coverage could be improved for new modules
 
-**Status**: Phase 5 in progress - converters being extracted to dedicated modules
+**Status**: FastAPI migration completed. Phase 5 in progress - legacy converters being extracted to dedicated modules.
 
 ### 2. Hardcoded Model Normalization (HIGH)
 
@@ -424,6 +423,7 @@ def normalize_model_names(self):
 ```
 
 **Impact**:
+
 - Cannot normalize model names without code changes
 - Inconsistent model naming across deployments
 - Requires code modification for different naming conventions
@@ -435,6 +435,7 @@ def normalize_model_names(self):
 **Issue**: Previously no automated testing; now comprehensive test coverage implemented.
 
 **Status**: RESOLVED - Extensive test suite implemented:
+
 - **Unit Tests**: 295+ tests covering core functionality
 - **Integration Tests**: Full API endpoint testing
 - **Model Detection**: All converter logic tested
@@ -451,6 +452,7 @@ def normalize_model_names(self):
 **Issue**: Previously inconsistent naming; now standardized configuration approach.
 
 **Status**: RESOLVED - Configuration naming standardized:
+
 - `config.json` used consistently
 - Clear documentation provided
 - Pydantic models for validation
@@ -463,6 +465,7 @@ def normalize_model_names(self):
 **Issue**: Previously hardcoded logging; now configurable logging system implemented.
 
 **Status**: RESOLVED - Advanced logging implemented:
+
 - Configurable log levels
 - Transport logging with UUID trace IDs
 - Structured logging with proper formatting
@@ -476,6 +479,7 @@ def normalize_model_names(self):
 **Issue**: Previously no connection management; now robust retry and connection handling implemented.
 
 **Status**: RESOLVED - Advanced connection management:
+
 - Tenacity-based retry logic with exponential backoff
 - Configurable retry attempts (4 total, 1 original + 3 retries)
 - Connection pooling via requests sessions
@@ -489,6 +493,7 @@ def normalize_model_names(self):
 **Issue**: Previously sensitive data could be logged; now secure logging practices implemented.
 
 **Status**: RESOLVED - Security-focused logging:
+
 - Automatic token redaction in logs
 - Secure logging utilities
 - Compliance with security best practices
@@ -501,6 +506,7 @@ def normalize_model_names(self):
 **Issue**: Limited health monitoring; basic functionality exists but could be enhanced.
 
 **Status**: IN PROGRESS - Monitoring capabilities:
+
 - Basic health check endpoints
 - Performance monitoring in development
 - Token usage logging implemented
@@ -515,32 +521,38 @@ def normalize_model_names(self):
 **Severity**: LOW (was HIGH)
 **Effort Completed**: 8+ weeks of refactoring
 
-**Status**: MOSTLY RESOLVED - Major SOLID refactoring completed:
+**Status**: RESOLVED - Major SOLID and architectural refactoring completed:
 
 1. **Single Responsibility Principle (SRP)** ✅ IMPLEMENTED
-    - `proxy_server.py` reduced from 2,991 to ~2,492 lines
-    - Separate modules: `auth/`, `config/`, `utils/`
+    - FastAPI migration split routing layer into `routers/` directory (~760 lines)
+    - Provider implementations extracted to `handlers/` (~1,860 lines)
+    - `proxy_server.py` and `main.py` serve as a thin entrypoint (~330 lines)
+    - Separate modules: `auth/`, `config/`, `utils/` with clear boundaries.
     - Focused responsibilities in each module
 
-2. **Open/Closed Principle (OCP)** 🟡 MOSTLY IMPLEMENTED
+2. **Open/Closed Principle (OCP)** ✅ IMPLEMENTED
     - Converter factory pattern implemented
     - New model providers can be added without modifying existing code
     - Plugin architecture for converters in progress
 
 3. **Dependency Inversion Principle (DIP)** ✅ IMPLEMENTED
-    - Abstract interfaces for converters and streaming
-    - Dependency injection patterns used
-    - Testable abstractions throughout
+    - Abstract interfaces for streaming
+    - `ProxyGlobalContext` introduced for dependency injection and singleton service management
+    - Explicit configuration passing throughout handlers
 
 **Current Architecture**:
+
 ```
 src/
-├── proxy_server.py    # Main application & routing (~2,492 lines)
-├── auth/               # Authentication & tokens (~520 lines)
-├── config/             # Configuration management (~510 lines)
-├── utils/              # Utilities & helpers (~850 lines)
-├── proxy_helpers.py    # Converters & detection (~1,407 lines)
-└── tests/              # Comprehensive test suite (295+ tests)
+├── main.py            # FastAPI entrypoint (~140 lines)
+├── proxy_server.py    # Legacy entrypoint/adapter (~190 lines)
+├── routers/           # FastAPI Endpoints (~760 lines)
+├── handlers/          # Provider handlers and streaming (~1,860 lines)
+├── auth/              # Authentication & tokens (~240 lines)
+├── config/            # System config and context (~820 lines)
+├── utils/             # Utilities & helpers (~1,380 lines)
+├── proxy_helpers.py   # Legacy logic and detection (~1,780 lines)
+└── tests/             # Comprehensive test suite (295+ tests)
 ```
 
 ### 2. Global State Management (RESOLVED ✅)
@@ -707,6 +719,7 @@ graph TD
 ### Recommended Implementation Order
 
 **Phase 1: Foundation (Weeks 1-4)** ✅ COMPLETED
+
 1. ✅ Add automated test framework and initial tests
 2. ✅ Make logging configurable
 3. ✅ Fix model name normalization
@@ -738,17 +751,19 @@ graph TD
 
 ### Current State (v1.2.4)
 
-- **Lines of Code**: ~5,779 total (modular architecture)
-  - `proxy_server.py`: ~2,492 lines (main application)
-  - `auth/`: ~520 lines (authentication module)
-  - `config/`: ~510 lines (configuration module)
-  - `utils/`: ~850 lines (utilities)
-  - `proxy_helpers.py`: ~1,407 lines (converters)
+- **Lines of Code**: ~7,180 total (modular FastAPI architecture)
+  - `main.py` & `proxy_server.py`: ~330 lines (entrypoint)
+  - `routers/`: ~760 lines (FastAPI routes)
+  - `handlers/`: ~1,860 lines (Provider implementations)
+  - `auth/`: ~240 lines (authentication module)
+  - `config/`: ~820 lines (configuration & global context module)
+  - `utils/`: ~1,380 lines (utilities)
+  - `proxy_helpers.py`: ~1,780 lines (legacy converters)
 - **Test Coverage**: >85% (295+ tests passing)
 - **Cyclomatic Complexity**: Medium (functions <50 lines average)
 - **Technical Debt Ratio**: ~15% (estimated, significantly reduced)
 - **SOLID Compliance**: High (major refactoring completed)
-- **Module Count**: 15+ modules (was 1 monolithic file)
+- **Module Count**: 32 files across core directories
 
 ### Target State (Achieved ✅)
 
@@ -772,11 +787,13 @@ The SAP AI Core LLM Proxy is a functional system that successfully bridges multi
 4. ✅ **Observability**: Advanced logging, transport tracing, and monitoring capabilities
 
 **Current Focus**:
+
 - Complete Phase 5 converter module extraction (60% complete)
 - Add metrics and monitoring endpoints
 - Implement rate limiting and caching features
 
 **Success Criteria - ACHIEVED**:
+
 - ✅ All critical paths have test coverage
 - ✅ Code is organized into logical modules
 - ✅ Performance is monitored and optimized
@@ -785,5 +802,5 @@ The SAP AI Core LLM Proxy is a functional system that successfully bridges multi
 ---
 
 **Document Version**: 1.0  
-**Next Review**: 2025-01-13  
+**Next Review**: 2026-04-07  
 **Maintained By**: Architecture Team
