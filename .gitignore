@@ -243,3 +243,5 @@ logs/
 .cache/
 
 .worktrees
+.gitnexus
+.claude/skills/gitnexus
