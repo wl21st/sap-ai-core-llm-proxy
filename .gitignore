@@ -243,3 +243,4 @@ logs/
 .cache/
 
 .worktrees
+.gitnexus

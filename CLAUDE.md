@@ -402,3 +402,29 @@ make release-github
 - **UVX Usage Guide:** `docs/UVX_USAGE.md` - Running with uvx (recommended method)
 - **Python Conventions:** `PYTHON_CONVENTIONS.md` - Naming and style guide
 - **Integration Tests:** `tests/integration/README.md` - Real integration test guide
+
+<!-- gitnexus:start -->
+# GitNexus MCP
+
+This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (1231 symbols, 2677 relationships, 52 execution flows).
+
+## Always Start Here
+
+1. **Read `gitnexus://repo/{name}/context`** — codebase overview + check index freshness
+2. **Match your task to a skill below** and **read that skill file**
+3. **Follow the skill's workflow and checklist**
+
+> If step 1 warns the index is stale, run `npx gitnexus analyze` in the terminal first.
+
+## Skills
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->
