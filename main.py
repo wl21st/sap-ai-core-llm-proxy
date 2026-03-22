@@ -8,8 +8,10 @@ from fastapi.responses import JSONResponse
 
 from cli import parse_arguments
 from config import ProxyConfig, ProxyGlobalContext, load_proxy_config
-from routers import chat, embeddings, logging as logging_router, messages, models
+from routers import chat, embeddings, logging as logging_router, messages, models, status
 from utils.logging_utils import init_logging
+from utils.metrics import MetricsCollector
+from utils.metrics_middleware import MetricsMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     context.initialize(config)
     app.state.proxy_config = config
     app.state.proxy_context = context
+    app.state.metrics = MetricsCollector()
     yield
     context.shutdown()
 
@@ -113,11 +116,14 @@ def create_app(config_path: str) -> FastAPI:
             },
         )
 
+    app.add_middleware(MetricsMiddleware)
+
     app.include_router(chat.router)
     app.include_router(messages.router)
     app.include_router(embeddings.router)
     app.include_router(models.router)
     app.include_router(logging_router.router)
+    app.include_router(status.router)
     return app
 
 
