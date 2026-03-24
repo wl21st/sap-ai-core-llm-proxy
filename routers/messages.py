@@ -22,6 +22,7 @@ from handlers.streaming_handler import make_backend_request
 from load_balancer import load_balance_url
 from proxy_helpers import Converters, Detector
 from utils.auth_retry import log_auth_error_retry
+from utils.cert_errors import is_certificate_error
 from utils.logging_utils import get_server_logger, get_transport_logger
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
@@ -268,40 +269,130 @@ async def proxy_claude_request(request: Request):
                         status_code=500,
                     )
             except Exception as e:
-                logger.error("Error before streaming: %s", e, exc_info=True)
-                return JSONResponse(
-                    {
-                        "type": "error",
-                        "error": {"type": "api_error", "message": str(e)},
-                    },
-                    status_code=500,
-                )
+                if is_certificate_error(e):
+                    logger.warning(
+                        "Certificate error in streaming: invalidating and retrying",
+                        exc_info=True,
+                    )
+                    invalidate_bedrock_client(model)
+                    try:
+                        ca_cert_bundle = getattr(proxy_context, "ca_cert_bundle", None)
+                        bedrock_client = get_bedrock_client(
+                            sub_account_config=proxy_config.subaccounts[
+                                subaccount_name
+                            ],
+                            model_name=model,
+                            deployment_id=extract_deployment_id(selected_url),
+                            ca_cert_bundle=ca_cert_bundle,
+                        )
+                        response = invoke_bedrock_streaming(bedrock_client, body_json)
+                        response_status = response.get("ResponseMetadata", {}).get(
+                            "HTTPStatusCode"
+                        )
+                        response_body = response.get("body")
+                        if response_status != 200 or response_body is None:
+                            return JSONResponse(
+                                {
+                                    "type": "error",
+                                    "error": {
+                                        "type": "api_error",
+                                        "message": "Bedrock request failed after certificate recovery",
+                                    },
+                                },
+                                status_code=response_status or 500,
+                            )
+                    except Exception as retry_error:
+                        logger.error(
+                            "Retry after cert error failed: %s",
+                            retry_error,
+                            exc_info=True,
+                        )
+                        return JSONResponse(
+                            {
+                                "type": "error",
+                                "error": {
+                                    "type": "api_error",
+                                    "message": "Certificate error recovery failed",
+                                },
+                            },
+                            status_code=500,
+                        )
+                else:
+                    logger.error("Error before streaming: %s", e, exc_info=True)
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {"type": "api_error", "message": str(e)},
+                        },
+                        status_code=500,
+                    )
 
             return StreamingResponse(
                 generate_bedrock_streaming_response(response_body, tid),
                 media_type="text/event-stream",
             )
 
-        response = invoke_bedrock_non_streaming(bedrock_client, body_json)
-        response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        response_body = response.get("body")
-
-        # Check for authentication errors and retry with fresh client
-        if response_status in [401, 403]:
-            logger.warning(
-                log_auth_error_retry(response_status, f"SDK for model '{model}'")
-            )
-            invalidate_bedrock_client(model)
-            ca_cert_bundle = getattr(proxy_context, "ca_cert_bundle", None)
-            bedrock_client = get_bedrock_client(
-                sub_account_config=proxy_config.subaccounts[subaccount_name],
-                model_name=model,
-                deployment_id=extract_deployment_id(selected_url),
-                ca_cert_bundle=ca_cert_bundle,
-            )
+        try:
             response = invoke_bedrock_non_streaming(bedrock_client, body_json)
             response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             response_body = response.get("body")
+
+            # Check for authentication errors and retry with fresh client
+            if response_status in [401, 403]:
+                logger.warning(
+                    log_auth_error_retry(response_status, f"SDK for model '{model}'")
+                )
+                invalidate_bedrock_client(model)
+                ca_cert_bundle = getattr(proxy_context, "ca_cert_bundle", None)
+                bedrock_client = get_bedrock_client(
+                    sub_account_config=proxy_config.subaccounts[subaccount_name],
+                    model_name=model,
+                    deployment_id=extract_deployment_id(selected_url),
+                    ca_cert_bundle=ca_cert_bundle,
+                )
+                response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+                response_status = response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
+                response_body = response.get("body")
+        except Exception as e:
+            if is_certificate_error(e):
+                logger.warning(
+                    "Certificate error in non-streaming: invalidating and retrying",
+                    exc_info=True,
+                )
+                invalidate_bedrock_client(model)
+                try:
+                    ca_cert_bundle = getattr(proxy_context, "ca_cert_bundle", None)
+                    bedrock_client = get_bedrock_client(
+                        sub_account_config=proxy_config.subaccounts[subaccount_name],
+                        model_name=model,
+                        deployment_id=extract_deployment_id(selected_url),
+                        ca_cert_bundle=ca_cert_bundle,
+                    )
+                    response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+                    response_status = response.get("ResponseMetadata", {}).get(
+                        "HTTPStatusCode"
+                    )
+                    response_body = response.get("body")
+                except Exception as retry_error:
+                    logger.error(
+                        "Retry after cert error failed: %s",
+                        retry_error,
+                        exc_info=True,
+                    )
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "Certificate error recovery failed",
+                            },
+                        },
+                        status_code=500,
+                    )
+            else:
+                raise
 
         # Check for malformed response
         if response_status is None:

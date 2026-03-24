@@ -66,12 +66,26 @@ python -c "import certifi; print(certifi.where())"
 
 ### Retry and Fallback Behavior
 
-The proxy implements smart retry logic:
+The proxy implements comprehensive certificate error handling:
+
+**For Token Fetching**:
 1. **First Attempt**: Uses configured or discovered certificate bundle
 2. **If Certificate Error**: Automatically retries with default verification
 3. **If Both Fail**: Returns detailed error with troubleshooting steps
 
-This means even if the configured certificate fails, the proxy will attempt fallback verification.
+**For Bedrock SDK Calls**:
+1. **Certificate Error Detected**: Session is invalidated to force fresh initialization
+2. **New Client Created**: Uses updated certificate configuration
+3. **Request Retried**: Bedrock call is automatically retried with fresh client
+4. **If Retry Fails**: Returns error but preserves system stability
+
+**Session Invalidation Strategy**:
+- When a certificate error occurs in a Bedrock call, the SDK session is invalidated
+- This forces the next request to create a fresh session with current certificate configuration
+- Handles certificate rotation/expiry scenarios automatically
+- No manual restart needed even after certificate changes
+
+This means even if the configured certificate fails or rotates, the proxy will automatically recover without manual intervention.
 
 ### Verification
 

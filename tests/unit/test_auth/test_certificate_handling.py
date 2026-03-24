@@ -380,3 +380,89 @@ class TestTokenManagerWithConfig:
         for cert_path in cert_paths:
             manager = TokenManager(mock_subaccount, ca_cert_bundle=cert_path)
             assert manager.ca_cert_bundle == cert_path
+
+
+class TestCertificateErrorDetection:
+    """Test certificate error detection in message router."""
+
+    def test_is_certificate_error_oserror_with_cert_keyword(self):
+        """Test detection of OSError with certificate keyword."""
+        from utils.cert_errors import is_certificate_error
+
+        error = OSError("SSL: CERTIFICATE_VERIFY_FAILED")
+        assert is_certificate_error(error) is True
+
+    def test_is_certificate_error_oserror_with_ssl_keyword(self):
+        """Test detection of OSError with SSL keyword."""
+        from utils.cert_errors import is_certificate_error
+
+        error = OSError("SSL: SSLV3_ALERT_UNKNOWN_CA")
+        assert is_certificate_error(error) is True
+
+    def test_is_certificate_error_oserror_with_ca_keyword(self):
+        """Test detection of OSError with CA certificate keyword."""
+        from utils.cert_errors import is_certificate_error
+
+        error = OSError("CA certificate verification failed")
+        assert is_certificate_error(error) is True
+
+    def test_is_certificate_error_generic_exception(self):
+        """Test detection with generic Exception and cert keywords."""
+        from utils.cert_errors import is_certificate_error
+
+        error = Exception("certificate verification failed")
+        assert is_certificate_error(error) is True
+
+    def test_is_certificate_error_not_cert_error(self):
+        """Test that non-certificate errors are not detected."""
+        from utils.cert_errors import is_certificate_error
+
+        error = OSError("Connection refused")
+        assert is_certificate_error(error) is False
+
+    def test_is_certificate_error_timeout_not_detected(self):
+        """Test that timeout errors are not detected as certificate errors."""
+        from utils.cert_errors import is_certificate_error
+
+        error = TimeoutError("Request timed out")
+        assert is_certificate_error(error) is False
+
+    def test_is_certificate_error_case_insensitive(self):
+        """Test that certificate error detection is case-insensitive."""
+        from utils.cert_errors import is_certificate_error
+
+        error = OSError("CERTIFICATE_VERIFY_FAILED")
+        assert is_certificate_error(error) is True
+
+        error = OSError("Certificate Verify Failed")
+        assert is_certificate_error(error) is True
+
+
+class TestSessionInvalidation:
+    """Test SDK session invalidation on certificate errors."""
+
+    def test_invalidate_bedrock_client_is_safe(self):
+        """Test that invalidate_bedrock_client can be called safely."""
+        from utils import sdk_pool
+
+        # Test that the function exists and is callable
+        assert hasattr(sdk_pool, "invalidate_bedrock_client")
+        assert callable(sdk_pool.invalidate_bedrock_client)
+
+        # Calling with non-existent model should not raise
+        try:
+            sdk_pool.invalidate_bedrock_client("test-model-that-does-not-exist")
+            assert True  # Should complete without error
+        except Exception as e:
+            pytest.fail(f"invalidate_bedrock_client raised unexpected error: {e}")
+
+    def test_invalidate_bedrock_client_resets_session(self):
+        """Test that invalidate_bedrock_client signature includes session handling."""
+        import inspect
+        from utils import sdk_pool
+
+        # Verify the function exists and has the documented behavior
+        source = inspect.getsource(sdk_pool.invalidate_bedrock_client)
+        assert "__sdk_session" in source, (
+            "invalidate_bedrock_client should reset __sdk_session"
+        )

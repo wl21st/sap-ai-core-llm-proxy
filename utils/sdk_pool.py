@@ -247,13 +247,14 @@ def invalidate_bedrock_client(model_name: str) -> None:
     """Invalidate the cached Bedrock client for a given model.
 
     This removes the client from the cache, forcing a new client to be created
-    on the next request. Should be called when authentication errors (401/403)
-    occur, indicating the cached credentials may be invalid.
+    on the next request. Also invalidates the SDK session to ensure fresh
+    certificate handling and authentication state. Should be called when
+    authentication errors (401/403) or certificate errors occur.
 
     Args:
         model_name: Model name whose client should be invalidated
     """
-    global __model_client_map, __proxy_client
+    global __model_client_map, __proxy_client, __sdk_session
 
     with __clients_lock:
         if model_name in __model_client_map:
@@ -268,3 +269,13 @@ def invalidate_bedrock_client(model_name: str) -> None:
         if __proxy_client is not None:
             logger.info("Invalidating global SAP AI Core proxy client")
             __proxy_client = None
+
+        # Also invalidate the SDK session to ensure certificate updates are picked up.
+        # The session caches the certificate configuration, so invalidating it
+        # forces a fresh session with the current certificate on next use.
+        # This is critical for handling certificate rotation/expiry scenarios.
+        if __sdk_session is not None:
+            logger.info(
+                "Invalidating global SDK session to force fresh certificate handling"
+            )
+            __sdk_session = None
