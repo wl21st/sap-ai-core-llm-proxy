@@ -50,11 +50,11 @@
             }
         }
     },
-    \"secret_authentication_tokens\": [
-        \"<authentication_token_1>\",
-        \"<authentication_token_2>\"
+    "secret_authentication_tokens": [
+        "<authentication_token_1>",
+        "<authentication_token_2>"
     ],
-    \"port\": 3001,
-    \"host\": \"0.0.0.0\",
-    \"ca_cert_bundle\": null
+    "port": 3001,
+    "host": "0.0.0.0",
+    "ca_cert_bundle": null
 }

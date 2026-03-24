@@ -243,16 +243,18 @@ def get_bedrock_client(
     return bedrock_client
 
 
-def invalidate_bedrock_client(model_name: str) -> None:
+def invalidate_bedrock_client(model_name: str, invalidate_session: bool = True) -> None:
     """Invalidate the cached Bedrock client for a given model.
 
     This removes the client from the cache, forcing a new client to be created
-    on the next request. Also invalidates the SDK session to ensure fresh
-    certificate handling and authentication state. Should be called when
-    authentication errors (401/403) or certificate errors occur.
+    on the next request. Optionally invalidates the SDK session and proxy client.
 
     Args:
         model_name: Model name whose client should be invalidated
+        invalidate_session: Whether to also invalidate the SDK session and proxy client.
+            Set to False for authentication errors (401/403) where only client/proxy
+            invalidation is needed. Set to True for certificate errors where full
+            session reset is required.
     """
     global __model_client_map, __proxy_client, __sdk_session
 
@@ -265,17 +267,29 @@ def invalidate_bedrock_client(model_name: str) -> None:
     # The proxy client holds authentication state at the subaccount level,
     # so invalidating it ensures all models under this subaccount will
     # use fresh credentials on their next request.
-    with __session_lock:
-        if __proxy_client is not None:
-            logger.info("Invalidating global SAP AI Core proxy client")
-            __proxy_client = None
+    if invalidate_session:
+        with __session_lock:
+            if __proxy_client is not None:
+                logger.info("Invalidating global SAP AI Core proxy client")
+                __proxy_client = None
 
-        # Also invalidate the SDK session to ensure certificate updates are picked up.
-        # The session caches the certificate configuration, so invalidating it
-        # forces a fresh session with the current certificate on next use.
-        # This is critical for handling certificate rotation/expiry scenarios.
-        if __sdk_session is not None:
-            logger.info(
-                "Invalidating global SDK session to force fresh certificate handling"
-            )
-            __sdk_session = None
+            # Also invalidate the SDK session to ensure certificate updates are picked up.
+            # The session caches the certificate configuration, so invalidating it
+            # forces a fresh session with the current certificate on next use.
+            # This is critical for handling certificate rotation/expiry scenarios.
+            if __sdk_session is not None:
+                logger.info(
+                    "Invalidating global SDK session to force fresh certificate handling"
+                )
+                # Clean up AWS_CA_BUNDLE environment variable when invalidating session
+                if "AWS_CA_BUNDLE" in os.environ:
+                    del os.environ["AWS_CA_BUNDLE"]
+                    logger.info("Cleaned up AWS_CA_BUNDLE environment variable")
+                __sdk_session = None
+    else:
+        # For auth errors, only invalidate proxy client (not session) to avoid
+        # expensive session recreation for all models
+        with __session_lock:
+            if __proxy_client is not None:
+                logger.info("Invalidating global SAP AI Core proxy client (auth error)")
+                __proxy_client = None
