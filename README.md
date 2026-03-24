@@ -212,9 +212,47 @@ Now it supports the following LLM models
     cp config.json.example config.json
     ```
 
-2. Edit `config.json` to include your specific details. The file supports multi-account configurations for different model types:
+    2. Edit `config.json` to include your specific details. The file supports multi-account configurations for different model types:
 
-   ### Multi-Account Configuration
+    ### TLS Certificate Configuration (Optional)
+
+    If you encounter TLS certificate verification errors when connecting to SAP AI Core, you can optionally specify a custom CA certificate bundle path in your configuration:
+
+    ```json
+    {
+        "ca_cert_bundle": "/path/to/ca-bundle.pem",
+        "subAccounts": { ... }
+    }
+    ```
+
+    **How certificate verification works:**
+    1. If `ca_cert_bundle` is specified, that certificate bundle is used for all HTTPS connections
+    2. If `ca_cert_bundle` is not specified (or `null`), the proxy automatically discovers the CA bundle using:
+       - `certifi` package (Python's standard CA bundle)
+       - System certificate paths (`/etc/ssl/certs/` on Linux, `/usr/local/etc/openssl/` on macOS)
+       - Python's SSL module defaults
+
+    **Common certificate bundle locations:**
+    ```
+    # Linux (Ubuntu/Debian)
+    /etc/ssl/certs/ca-certificates.crt
+
+    # Linux (CentOS/RHEL)
+    /etc/ssl/certs/ca-bundle.crt
+
+    # macOS
+    /usr/local/etc/openssl/cert.pem
+
+    # Using certifi (Python package)
+    $(python -c 'import certifi; print(certifi.where())')
+    ```
+
+    **Troubleshooting certificate errors:**
+    - If you see "CA certificate verification failed", ensure your network allows HTTPS connections to SAP AI Core
+    - Check that your certificate bundle is current: `openssl x509 -in /path/to/cert.pem -noout -dates`
+    - For self-signed certificates in development, you can skip verification by setting `ca_cert_bundle: false` (not recommended for production)
+
+    ### Multi-Account Configuration
 
    You can configure deployments using either **deployment URLs** (full URLs) or **deployment IDs** (simplified). The proxy will automatically resolve deployment IDs to URLs using the SAP AI Core SDK.
 

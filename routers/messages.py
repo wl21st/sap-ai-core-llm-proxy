@@ -116,10 +116,12 @@ async def proxy_claude_request(request: Request):
             subaccount_name,
         )
 
+        ca_cert_bundle = getattr(proxy_context, "ca_cert_bundle", None)
         bedrock_client: ClientWrapper = get_bedrock_client(
             sub_account_config=proxy_config.subaccounts[subaccount_name],
             model_name=model,
             deployment_id=extract_deployment_id(selected_url),
+            ca_cert_bundle=ca_cert_bundle,
         )
         logger.info("SAP AI SDK client ready (cached)")
 
@@ -217,10 +219,12 @@ async def proxy_claude_request(request: Request):
                         )
                     )
                     invalidate_bedrock_client(model)
+                    ca_cert_bundle = getattr(proxy_context, "ca_cert_bundle", None)
                     bedrock_client = get_bedrock_client(
                         sub_account_config=proxy_config.subaccounts[subaccount_name],
                         model_name=model,
                         deployment_id=extract_deployment_id(selected_url),
+                        ca_cert_bundle=ca_cert_bundle,
                     )
                     response = invoke_bedrock_streaming(bedrock_client, body_json)
                     response_status = response.get("ResponseMetadata", {}).get(
@@ -288,10 +292,12 @@ async def proxy_claude_request(request: Request):
                 log_auth_error_retry(response_status, f"SDK for model '{model}'")
             )
             invalidate_bedrock_client(model)
+            ca_cert_bundle = getattr(proxy_context, "ca_cert_bundle", None)
             bedrock_client = get_bedrock_client(
                 sub_account_config=proxy_config.subaccounts[subaccount_name],
                 model_name=model,
                 deployment_id=extract_deployment_id(selected_url),
+                ca_cert_bundle=ca_cert_bundle,
             )
             response = invoke_bedrock_non_streaming(bedrock_client, body_json)
             response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")

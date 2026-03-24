@@ -1,3 +1,95 @@
+# Troubleshooting Guide
+
+## TLS Certificate Verification Errors
+
+### Symptoms
+
+- Error message: `ConnectionError: TLS certificate verification failed`
+- Log shows: `OSError: [SSL: CERTIFICATE_VERIFY_FAILED]` or `CA certificate problem`
+- Token fetching fails during startup: `AIAPIAuthenticatorException`
+- All proxy requests fail with 500 errors
+
+### Root Cause
+
+The proxy cannot verify the TLS certificate when connecting to SAP AI Core. This typically occurs when:
+1. The CA certificate bundle is missing or inaccessible (especially in `uv` virtual environments)
+2. The system's CA certificate paths are not in standard locations
+3. A custom certificate or firewall is intercepting HTTPS traffic
+
+### Solution
+
+#### Option 1: Let the Proxy Auto-Discover (Recommended)
+
+The proxy automatically searches for CA certificates in this order:
+1. `certifi` Python package
+2. System certificate paths
+3. Python's SSL module defaults
+
+**To verify auto-discovery works:**
+```bash
+python -c "import certifi; print(certifi.where())"
+```
+
+If this returns a path like `/path/to/cacert.pem`, the proxy should work automatically.
+
+#### Option 2: Specify Certificate Bundle Explicitly
+
+If auto-discovery fails, add `ca_cert_bundle` to your `config.json`:
+
+```json
+{
+  "ca_cert_bundle": "/path/to/ca-certificates.crt",
+  "subAccounts": { ... }
+}
+```
+
+**Common certificate locations:**
+- **Linux (Ubuntu/Debian)**: `/etc/ssl/certs/ca-certificates.crt`
+- **Linux (CentOS/RHEL)**: `/etc/ssl/certs/ca-bundle.crt`
+- **macOS**: `/usr/local/etc/openssl/cert.pem`
+- **macOS (with Homebrew)**: `/opt/homebrew/etc/openssl/cert.pem`
+- **From certifi package**: Run `python -c 'import certifi; print(certifi.where())'`
+
+#### Option 3: Install/Update certifi
+
+The easiest solution is to ensure `certifi` is installed:
+```bash
+uv pip install certifi
+# or
+pip install certifi
+```
+
+Then verify it's accessible:
+```bash
+python -c "import certifi; print(certifi.where())"
+```
+
+### Retry and Fallback Behavior
+
+The proxy implements smart retry logic:
+1. **First Attempt**: Uses configured or discovered certificate bundle
+2. **If Certificate Error**: Automatically retries with default verification
+3. **If Both Fail**: Returns detailed error with troubleshooting steps
+
+This means even if the configured certificate fails, the proxy will attempt fallback verification.
+
+### Verification
+
+To test your certificate setup without starting the proxy:
+```bash
+# Test certificate discovery
+python -c "
+from utils.sdk_pool import resolve_ca_cert_bundle
+cert = resolve_ca_cert_bundle(None)
+print(f'Discovered certificate: {cert}')
+"
+
+# Test connection to SAP AI Core
+curl -v --cacert /path/to/cert.pem https://api.ai.YOUR_DOMAIN.com/
+```
+
+---
+
 # Kilo Code Payload Troubleshooting & Fix
 
 ## Issue Summary

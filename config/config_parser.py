@@ -78,6 +78,7 @@ class ProxyConfigSchema(BaseModel):
     host: str = "127.0.0.1"
     model_filters: Optional[ModelFiltersSchema] = Field(default=None)
     subAccounts: dict[str, SubAccountConfigSchema] = Field(default_factory=dict)
+    ca_cert_bundle: Optional[str] = Field(default=None)
 
 
 def validate_regex_patterns(
@@ -228,6 +229,7 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
         port=config_schema.port,
         host=config_schema.host,
         model_filters=model_filters,
+        ca_cert_bundle=config_schema.ca_cert_bundle,
     )
 
     # Parse each subAccount
