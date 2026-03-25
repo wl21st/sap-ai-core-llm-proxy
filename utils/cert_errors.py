@@ -1,5 +1,22 @@
 """Certificate error detection and handling utilities."""
 
+import re
+
+# Pre-compiled regex pattern for certificate error detection
+# Covers certificate verify failures, SSL errors, and CA certificate issues
+_CERTIFICATE_ERROR_PATTERN = re.compile(
+    r"certificate\s*verify\s*failed|"
+    r"certificate_verify_failed|"
+    r"certificate\s*verification\s*failed|"
+    r"ssl.*certificate\s*verify\s*failed|"
+    r"sslv3_alert_unknown_ca|"
+    r"ssl.*alert.*unknown\s*ca|"
+    r"ssl.*alert.*certificate\s*unknown|"
+    r"certificate\s*required|"
+    r"ca\s*certificate",
+    re.IGNORECASE,
+)
+
 
 def is_certificate_error(error: Exception) -> bool:
     """Check if an exception is related to TLS/SSL certificate verification.
@@ -13,22 +30,10 @@ def is_certificate_error(error: Exception) -> bool:
     Returns:
         True if the error is a certificate verification error, False otherwise
     """
-    error_str = str(error).lower()
-    error_type_name = type(error).__name__.lower()
+    error_str = str(error)
+    error_type_name = type(error).__name__
 
-    cert_keywords = [
-        "certificate verify failed",
-        "certificate_verify_failed",
-        "certificate verification failed",
-        "ssl: certificate verify failed",
-        "ssl: SSLV3_ALERT_UNKNOWN_CA",
-        "ssl: sslv3_alert_unknown_ca",
-        "ssl: ssLV3 alert unknown ca",
-        "ssl: ssLV3 alert certificate unknown",
-        "certificate required",
-        "ca certificate",
-    ]
-
-    return any(
-        keyword in error_str or keyword in error_type_name for keyword in cert_keywords
+    return bool(
+        _CERTIFICATE_ERROR_PATTERN.search(error_str)
+        or _CERTIFICATE_ERROR_PATTERN.search(error_type_name)
     )

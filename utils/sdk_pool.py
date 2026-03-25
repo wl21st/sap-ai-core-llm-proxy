@@ -146,35 +146,28 @@ def __get_sdk_session(ca_cert_bundle: str | None = None) -> Session:
     global __sdk_session, __current_ca_cert_bundle
 
     # Check if certificate bundle has changed (requires session reset)
-    if __current_ca_cert_bundle != ca_cert_bundle:
-        with __session_lock:
-            # Double-check under lock to prevent race conditions
-            if __current_ca_cert_bundle != ca_cert_bundle:
-                if __sdk_session is not None:
-                    logger.warning(
-                        f"Certificate bundle changed from '{__current_ca_cert_bundle}' to '{ca_cert_bundle}'. "
-                        "Invalidating SDK session to apply new certificate."
-                    )
-                    __sdk_session = None
-                    # Clean up old certificate from environment
-                    if "AWS_CA_BUNDLE" in os.environ:
-                        del os.environ["AWS_CA_BUNDLE"]
+    # Acquire lock first to prevent TOCTOU race condition
+    with __session_lock:
+        # Check certificate bundle change under lock
+        if __current_ca_cert_bundle != ca_cert_bundle:
+            if __sdk_session is not None:
+                logger.warning(
+                    f"Certificate bundle changed from '{__current_ca_cert_bundle}' to '{ca_cert_bundle}'. "
+                    "Invalidating SDK session to apply new certificate."
+                )
+                __sdk_session = None
+                # Clean up old certificate from environment
+                if "AWS_CA_BUNDLE" in os.environ:
+                    del os.environ["AWS_CA_BUNDLE"]
 
-    # Initialize session if not already done
-    if __sdk_session is None:
-        with __session_lock:
-            if __sdk_session is None:
-                logger.info("Initializing global SAP AI SDK Session")
+        # Initialize session if not already done
+        if __sdk_session is None:
+            logger.info("Initializing global SAP AI SDK Session")
 
-                # If CA certificate bundle is provided, configure it for boto3/botocore
-                if ca_cert_bundle:
-                    # boto3 respects AWS_CA_BUNDLE environment variable for SSL verification
-                    os.environ["AWS_CA_BUNDLE"] = ca_cert_bundle
-                    logger.info(f"Set AWS_CA_BUNDLE to: {ca_cert_bundle}")
-
-                # Session() handles AWS-style authentication for Bedrock models via SAP AI Core
-                __sdk_session = Session()
-                __current_ca_cert_bundle = ca_cert_bundle
+            # Session() handles AWS-style authentication for Bedrock models via SAP AI Core
+            # AWS_CA_BUNDLE is configured at startup via ProxyGlobalContext.initialize()
+            __sdk_session = Session()
+            __current_ca_cert_bundle = ca_cert_bundle
     return __sdk_session
 
 

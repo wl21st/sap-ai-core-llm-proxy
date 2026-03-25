@@ -16,6 +16,7 @@ from logging import Logger
 import requests
 
 from config import SubAccountConfig
+from utils.cert_errors import is_certificate_error
 from utils.logging_utils import get_server_logger
 
 logger: Logger = get_server_logger(__name__)
@@ -155,15 +156,7 @@ class TokenManager:
             raise ConnectionError(f"HTTP Error {err.response.status_code}") from err
 
         except OSError as err:
-            # Catch TLS/SSL certificate errors
-            error_str = str(err).lower()
-            is_cert_error = (
-                "ca certificate" in error_str
-                or "ssl" in error_str
-                or "certificate verify failed" in error_str
-            )
-
-            if is_cert_error:
+            if is_certificate_error(err):
                 if first_attempt and verify is not True:
                     # If first attempt with custom cert failed, retry with verify=True
                     # (allows SSL errors but may accept self-signed certs)
