@@ -70,7 +70,21 @@ class SubAccountConfig:
 
 @dataclass
 class ProxyConfig:
-    """Main proxy configuration with multi-subaccount support."""
+    """Main proxy configuration with multi-subaccount support.
+
+    Attributes:
+        ca_cert_bundle: Optional path to a custom CA certificate bundle file.
+            Used for TLS certificate verification when connecting to SAP AI Core.
+            If not specified, the proxy will attempt to automatically discover
+            the certificate bundle using a multi-level fallback chain:
+            1. certifi.where() (default Python CA bundle)
+            2. System paths (/etc/ssl/certs/ca-bundle.crt, etc.)
+            3. ssl.get_default_verify_paths()
+
+            This is useful in environments where the default certifi bundle
+            is missing or inaccessible (e.g., some uv virtual environments).
+            Example: "/path/to/ca-bundle.crt" or null to use automatic discovery.
+    """
 
     subaccounts: dict[str, SubAccountConfig] = field(default_factory=dict)
     secret_authentication_tokens: list[str] = field(default_factory=list)
@@ -79,6 +93,7 @@ class ProxyConfig:
     model_filters: Optional[ModelFilters] = None
     # Global model to subaccount mapping for load balancing
     model_to_subaccounts: dict[str, list[str]] = field(default_factory=dict)
+    ca_cert_bundle: Optional[str] = None  # Path to custom CA certificate bundle
 
     def get_subaccount(self, subaccount_name: str) -> SubAccountConfig:
         return self.subaccounts[subaccount_name]

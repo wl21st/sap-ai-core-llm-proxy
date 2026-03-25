@@ -22,6 +22,7 @@ from handlers.streaming_handler import make_backend_request
 from load_balancer import load_balance_url
 from proxy_helpers import Converters, Detector
 from utils.auth_retry import log_auth_error_retry
+from utils.cert_errors import is_certificate_error
 from utils.logging_utils import get_server_logger, get_transport_logger
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
@@ -36,6 +37,61 @@ DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.5-sonnet"
 API_VERSION_BEDROCK_2023_05_31 = "bedrock-2023-05-31"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
 API_VERSION_2023_05_15 = "2023-05-15"
+
+
+async def _handle_certificate_recovery(
+    model: str,
+    subaccount_name: str,
+    deployment_id: str,
+    body_json: str,
+    proxy_config,
+    ca_cert_bundle: str | None,
+    is_streaming: bool,
+):
+    """Recover from certificate errors by invalidating session and retrying.
+
+    This helper consolidates certificate error recovery logic that was previously
+    duplicated in both streaming and non-streaming handlers.
+
+    Args:
+        model: Model name
+        subaccount_name: SAP subaccount name
+        deployment_id: SAP deployment ID
+        body_json: Request body JSON string
+        proxy_config: Proxy configuration
+        ca_cert_bundle: CA certificate bundle path
+        is_streaming: Whether to use streaming or non-streaming invoke
+
+    Returns:
+        Tuple of (bedrock_client, response_status, response_body)
+
+    Raises:
+        Exception: If recovery fails
+    """
+    logger.warning(
+        "Certificate error detected: invalidating SDK session and retrying",
+        exc_info=True,
+    )
+    invalidate_bedrock_client(model, invalidate_session=True)
+
+    # Get fresh client with reset session
+    bedrock_client = get_bedrock_client(
+        sub_account_config=proxy_config.subaccounts[subaccount_name],
+        model_name=model,
+        deployment_id=deployment_id,
+        ca_cert_bundle=ca_cert_bundle,
+    )
+
+    # Retry the request
+    if is_streaming:
+        response = invoke_bedrock_streaming(bedrock_client, body_json)
+    else:
+        response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+
+    response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    response_body = response.get("body")
+
+    return bedrock_client, response_status, response_body
 
 
 @router.post("/v1/messages", dependencies=[Depends(verify_request_token)])
@@ -109,17 +165,20 @@ async def proxy_claude_request(request: Request):
     logger.info("Request from Claude API for model: %s", model)
     stream = request_body_json.get("stream", True)
 
+    # Extract ca_cert_bundle once to avoid repeated lookups
+    ca_cert_bundle = proxy_context.get_ca_cert_bundle()
+
     try:
         logger.info(
             "Obtaining SAP AI SDK client for model[%s] for subaccount[%s]",
             model,
             subaccount_name,
         )
-
         bedrock_client: ClientWrapper = get_bedrock_client(
             sub_account_config=proxy_config.subaccounts[subaccount_name],
             model_name=model,
             deployment_id=extract_deployment_id(selected_url),
+            ca_cert_bundle=ca_cert_bundle,
         )
         logger.info("SAP AI SDK client ready (cached)")
 
@@ -216,11 +275,12 @@ async def proxy_claude_request(request: Request):
                             response_status, f"SDK for model '{model}'"
                         )
                     )
-                    invalidate_bedrock_client(model)
+                    invalidate_bedrock_client(model, invalidate_session=False)
                     bedrock_client = get_bedrock_client(
                         sub_account_config=proxy_config.subaccounts[subaccount_name],
                         model_name=model,
                         deployment_id=extract_deployment_id(selected_url),
+                        ca_cert_bundle=ca_cert_bundle,
                     )
                     response = invoke_bedrock_streaming(bedrock_client, body_json)
                     response_status = response.get("ResponseMetadata", {}).get(
@@ -264,38 +324,111 @@ async def proxy_claude_request(request: Request):
                         status_code=500,
                     )
             except Exception as e:
-                logger.error("Error before streaming: %s", e, exc_info=True)
-                return JSONResponse(
-                    {
-                        "type": "error",
-                        "error": {"type": "api_error", "message": str(e)},
-                    },
-                    status_code=500,
-                )
+                if is_certificate_error(e):
+                    try:
+                        _, response_status, response_body = await _handle_certificate_recovery(
+                            model,
+                            subaccount_name,
+                            extract_deployment_id(selected_url),
+                            body_json,
+                            proxy_config,
+                            ca_cert_bundle,
+                            is_streaming=True,
+                        )
+                        if response_status != 200 or response_body is None:
+                            return JSONResponse(
+                                {
+                                    "type": "error",
+                                    "error": {
+                                        "type": "api_error",
+                                        "message": "Bedrock request failed after certificate recovery",
+                                    },
+                                },
+                                status_code=response_status or 500,
+                            )
+                    except Exception as retry_error:
+                        logger.error(
+                            "Retry after cert error failed: %s",
+                            retry_error,
+                            exc_info=True,
+                        )
+                        return JSONResponse(
+                            {
+                                "type": "error",
+                                "error": {
+                                    "type": "api_error",
+                                    "message": "Certificate error recovery failed",
+                                },
+                            },
+                            status_code=500,
+                        )
+                else:
+                    logger.error("Error before streaming: %s", e, exc_info=True)
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {"type": "api_error", "message": str(e)},
+                        },
+                        status_code=500,
+                    )
 
             return StreamingResponse(
                 generate_bedrock_streaming_response(response_body, tid),
                 media_type="text/event-stream",
             )
 
-        response = invoke_bedrock_non_streaming(bedrock_client, body_json)
-        response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        response_body = response.get("body")
-
-        # Check for authentication errors and retry with fresh client
-        if response_status in [401, 403]:
-            logger.warning(
-                log_auth_error_retry(response_status, f"SDK for model '{model}'")
-            )
-            invalidate_bedrock_client(model)
-            bedrock_client = get_bedrock_client(
-                sub_account_config=proxy_config.subaccounts[subaccount_name],
-                model_name=model,
-                deployment_id=extract_deployment_id(selected_url),
-            )
+        try:
             response = invoke_bedrock_non_streaming(bedrock_client, body_json)
             response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             response_body = response.get("body")
+
+            # Check for authentication errors and retry with fresh client
+            if response_status in [401, 403]:
+                logger.warning(
+                    log_auth_error_retry(response_status, f"SDK for model '{model}'")
+                )
+                invalidate_bedrock_client(model, invalidate_session=False)
+                bedrock_client = get_bedrock_client(
+                    sub_account_config=proxy_config.subaccounts[subaccount_name],
+                    model_name=model,
+                    deployment_id=extract_deployment_id(selected_url),
+                    ca_cert_bundle=ca_cert_bundle,
+                )
+                response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+                response_status = response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
+                response_body = response.get("body")
+        except Exception as e:
+            if is_certificate_error(e):
+                try:
+                    _, response_status, response_body = await _handle_certificate_recovery(
+                        model,
+                        subaccount_name,
+                        extract_deployment_id(selected_url),
+                        body_json,
+                        proxy_config,
+                        ca_cert_bundle,
+                        is_streaming=False,
+                    )
+                except Exception as retry_error:
+                    logger.error(
+                        "Retry after cert error failed: %s",
+                        retry_error,
+                        exc_info=True,
+                    )
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "Certificate error recovery failed",
+                            },
+                        },
+                        status_code=500,
+                    )
+            else:
+                raise
 
         # Check for malformed response
         if response_status is None:

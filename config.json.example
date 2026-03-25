@@ -55,5 +55,6 @@
         "<authentication_token_2>"
     ],
     "port": 3001,
-    "host": "0.0.0.0"
+    "host": "0.0.0.0",
+    "ca_cert_bundle": null
 }

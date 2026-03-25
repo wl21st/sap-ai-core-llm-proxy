@@ -1,5 +1,8 @@
+import os
+import ssl
 import threading
 from logging import Logger
+from pathlib import Path
 
 from botocore.config import Config
 from gen_ai_hub.proxy import get_proxy_client
@@ -8,6 +11,7 @@ from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper, Session
 
 from config import ServiceKey, SubAccountConfig
 from utils import logging_utils
+from utils.exceptions import ConfigValidationError
 
 # ------------------------
 # SAP AI SDK session/client cache for performance
@@ -20,23 +24,150 @@ __clients_lock = threading.Lock()
 __sdk_session: Session | None = None
 __proxy_client: BaseProxyClient | None = None
 __model_client_map: dict[str, ClientWrapper] = {}
+__current_ca_cert_bundle: str | None = (
+    None  # Track the currently configured certificate
+)
 
 logger: Logger = logging_utils.get_server_logger(__name__)
 
 
-def __get_sdk_session() -> Session:
+def resolve_ca_cert_bundle(configured_path: str | None) -> str | None:
+    """Resolve the TLS CA certificate bundle path using a multi-level fallback chain.
+
+    This function attempts to locate a valid CA certificate bundle for TLS verification,
+    following this order:
+    1. Use configured path if specified and valid
+    2. Try certifi.where() (Python's default CA bundle)
+    3. Check system paths by OS (/etc/ssl/certs/ca-bundle.crt on Linux, etc.)
+    4. Use ssl.get_default_verify_paths()
+    5. Return None to let SDK/requests use their defaults
+
+    Args:
+        configured_path: Optional path to CA certificate bundle from config
+
+    Returns:
+        Path to CA certificate bundle as string, or None if none found (SDK will use defaults)
+
+    Raises:
+        ConfigValidationError: If configured_path is specified but invalid
+    """
+    # If path is configured, validate and use it
+    if configured_path:
+        path = Path(configured_path)
+        if not path.exists():
+            raise ConfigValidationError(
+                f"Configured ca_cert_bundle path does not exist: {configured_path}"
+            )
+        if not path.is_file():
+            raise ConfigValidationError(
+                f"Configured ca_cert_bundle path is not a file: {configured_path}"
+            )
+        if not os.access(path, os.R_OK):
+            raise ConfigValidationError(
+                f"Configured ca_cert_bundle path is not readable: {configured_path}"
+            )
+        logger.info(f"Using configured CA certificate bundle: {configured_path}")
+        return str(path)
+
+    # Try certifi (Python standard CA bundle)
+    try:
+        import certifi
+
+        cert_path = certifi.where()
+        if cert_path and Path(cert_path).exists():
+            logger.info(f"Using certifi CA certificate bundle: {cert_path}")
+            return cert_path
+    except ImportError:
+        logger.debug("certifi not available, trying alternative paths")
+    except Exception as e:
+        logger.debug(f"certifi.where() failed: {e}, trying alternative paths")
+
+    # Try system paths by OS
+    system_cert_paths = []
+    if os.name == "posix":  # Unix-like systems (Linux, macOS)
+        system_cert_paths = [
+            "/etc/ssl/certs/ca-bundle.crt",  # Linux (CentOS, Fedora, RHEL)
+            "/etc/ssl/certs/ca-certificates.crt",  # Linux (Debian, Ubuntu)
+            "/etc/pki/tls/certs/ca-bundle.crt",  # Linux (older distributions)
+            "/usr/local/etc/openssl/cert.pem",  # macOS
+            "/etc/ssl/cert.pem",  # macOS (alternative)
+            "/usr/local/share/ca-certificates/",  # Linux (alternative)
+        ]
+    elif os.name == "nt":  # Windows
+        system_cert_paths = [
+            os.path.expandvars(r"%ALLUSERSPROFILE%\ssl\certs\ca-bundle.crt"),
+            os.path.expandvars(r"%ALLUSERSPROFILE%\ssl\certs\ca-certificates.crt"),
+        ]
+
+    for path_str in system_cert_paths:
+        path = Path(path_str)
+        if path.exists() and path.is_file() and os.access(path, os.R_OK):
+            logger.info(f"Found CA certificate bundle at system path: {path_str}")
+            return str(path)
+
+    # Try ssl.get_default_verify_paths() as last fallback
+    try:
+        verify_paths = ssl.get_default_verify_paths()
+        if verify_paths.cafile and Path(verify_paths.cafile).exists():
+            logger.info(f"Using ssl module default CA bundle: {verify_paths.cafile}")
+            return verify_paths.cafile
+        if verify_paths.capath and Path(verify_paths.capath).exists():
+            logger.info(f"Using ssl module default CA path: {verify_paths.capath}")
+            return verify_paths.capath
+    except Exception as e:
+        logger.debug(f"ssl.get_default_verify_paths() failed: {e}")
+
+    # No bundle found, log warning and let SDK use its own defaults
+    logger.warning(
+        "Could not locate CA certificate bundle. SDK/requests will use their defaults. "
+        "If TLS verification fails, set ca_cert_bundle in config or install certifi."
+    )
+    return None
+
+
+def __get_sdk_session(ca_cert_bundle: str | None = None) -> Session:
     """Lazily initialize and return a global SAP AI Core SDK Session.
+
+    Args:
+        ca_cert_bundle: Optional path to CA certificate bundle for TLS verification.
+            If provided, sets environment variables for boto3/botocore to use.
+            If the certificate bundle changes from what was previously set, the session
+            will be invalidated and recreated with the new certificate.
 
     Returns:
         Session configured for SAP AI Core
+
+    Note:
+        This function handles certificate bundle changes by detecting when the requested
+        certificate differs from the currently active one. If a change is detected,
+        it invalidates the existing session and creates a new one with the new certificate.
+        This prevents stale certificate caching when configuration is updated.
     """
-    global __sdk_session
-    if __sdk_session is None:
-        with __session_lock:
-            if __sdk_session is None:
-                logger.info("Initializing global SAP AI SDK Session")
-                # Session() handles AWS-style authentication for Bedrock models via SAP AI Core
-                __sdk_session = Session()
+    global __sdk_session, __current_ca_cert_bundle
+
+    # Check if certificate bundle has changed (requires session reset)
+    # Acquire lock first to prevent TOCTOU race condition
+    with __session_lock:
+        # Check certificate bundle change under lock
+        if __current_ca_cert_bundle != ca_cert_bundle:
+            if __sdk_session is not None:
+                logger.warning(
+                    f"Certificate bundle changed from '{__current_ca_cert_bundle}' to '{ca_cert_bundle}'. "
+                    "Invalidating SDK session to apply new certificate."
+                )
+                __sdk_session = None
+                # Clean up old certificate from environment
+                if "AWS_CA_BUNDLE" in os.environ:
+                    del os.environ["AWS_CA_BUNDLE"]
+
+        # Initialize session if not already done
+        if __sdk_session is None:
+            logger.info("Initializing global SAP AI SDK Session")
+
+            # Session() handles AWS-style authentication for Bedrock models via SAP AI Core
+            # AWS_CA_BUNDLE is configured at startup via ProxyGlobalContext.initialize()
+            __sdk_session = Session()
+            __current_ca_cert_bundle = ca_cert_bundle
     return __sdk_session
 
 
@@ -74,7 +205,10 @@ def __get_proxy_client(sub_account_config: SubAccountConfig) -> BaseProxyClient:
 
 
 def get_bedrock_client(
-    sub_account_config: SubAccountConfig, model_name: str, deployment_id: str
+    sub_account_config: SubAccountConfig,
+    model_name: str,
+    deployment_id: str,
+    ca_cert_bundle: str | None = None,
 ) -> ClientWrapper:
     """Get or create a cached SAP AI Core (Bedrock) client for the given model_name or deployment_id.
 
@@ -82,6 +216,7 @@ def get_bedrock_client(
         sub_account_config: SubAccount configuration containing service key credentials
         model_name: Model name for caching purposes
         deployment_id: SAP AI Core deployment ID
+        ca_cert_bundle: Optional path to CA certificate bundle for TLS verification
 
     Returns:
         ClientWrapper configured for the specified deployment
@@ -108,7 +243,8 @@ def get_bedrock_client(
             )
 
             # Get the session and proxy client
-            sdk_session: Session = __get_sdk_session()
+            # Pass ca_cert_bundle to session initialization for SDK/boto3 configuration
+            sdk_session: Session = __get_sdk_session(ca_cert_bundle)
             proxy_client: BaseProxyClient = __get_proxy_client(sub_account_config)
 
             # Create the client with authentication via proxy_client
@@ -129,17 +265,20 @@ def get_bedrock_client(
     return bedrock_client
 
 
-def invalidate_bedrock_client(model_name: str) -> None:
+def invalidate_bedrock_client(model_name: str, invalidate_session: bool = True) -> None:
     """Invalidate the cached Bedrock client for a given model.
 
     This removes the client from the cache, forcing a new client to be created
-    on the next request. Should be called when authentication errors (401/403)
-    occur, indicating the cached credentials may be invalid.
+    on the next request. Optionally invalidates the SDK session and proxy client.
 
     Args:
         model_name: Model name whose client should be invalidated
+        invalidate_session: Whether to also invalidate the SDK session and proxy client.
+            Set to False for authentication errors (401/403) where only client/proxy
+            invalidation is needed. Set to True for certificate errors where full
+            session reset is required.
     """
-    global __model_client_map, __proxy_client
+    global __model_client_map, __proxy_client, __sdk_session, __current_ca_cert_bundle
 
     with __clients_lock:
         if model_name in __model_client_map:
@@ -150,7 +289,30 @@ def invalidate_bedrock_client(model_name: str) -> None:
     # The proxy client holds authentication state at the subaccount level,
     # so invalidating it ensures all models under this subaccount will
     # use fresh credentials on their next request.
-    with __session_lock:
-        if __proxy_client is not None:
-            logger.info("Invalidating global SAP AI Core proxy client")
-            __proxy_client = None
+    if invalidate_session:
+        with __session_lock:
+            if __proxy_client is not None:
+                logger.info("Invalidating global SAP AI Core proxy client")
+                __proxy_client = None
+
+            # Also invalidate the SDK session to ensure certificate updates are picked up.
+            # The session caches the certificate configuration, so invalidating it
+            # forces a fresh session with the current certificate on next use.
+            # This is critical for handling certificate rotation/expiry scenarios.
+            if __sdk_session is not None:
+                logger.info(
+                    "Invalidating global SDK session to force fresh certificate handling"
+                )
+                # Clean up AWS_CA_BUNDLE environment variable when invalidating session
+                if "AWS_CA_BUNDLE" in os.environ:
+                    del os.environ["AWS_CA_BUNDLE"]
+                    logger.info("Cleaned up AWS_CA_BUNDLE environment variable")
+                __sdk_session = None
+                __current_ca_cert_bundle = None
+    else:
+        # For auth errors, only invalidate proxy client (not session) to avoid
+        # expensive session recreation for all models
+        with __session_lock:
+            if __proxy_client is not None:
+                logger.info("Invalidating global SAP AI Core proxy client (auth error)")
+                __proxy_client = None
