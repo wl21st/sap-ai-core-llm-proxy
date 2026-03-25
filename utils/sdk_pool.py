@@ -24,6 +24,9 @@ __clients_lock = threading.Lock()
 __sdk_session: Session | None = None
 __proxy_client: BaseProxyClient | None = None
 __model_client_map: dict[str, ClientWrapper] = {}
+__current_ca_cert_bundle: str | None = (
+    None  # Track the currently configured certificate
+)
 
 logger: Logger = logging_utils.get_server_logger(__name__)
 
@@ -128,11 +131,36 @@ def __get_sdk_session(ca_cert_bundle: str | None = None) -> Session:
     Args:
         ca_cert_bundle: Optional path to CA certificate bundle for TLS verification.
             If provided, sets environment variables for boto3/botocore to use.
+            If the certificate bundle changes from what was previously set, the session
+            will be invalidated and recreated with the new certificate.
 
     Returns:
         Session configured for SAP AI Core
+
+    Note:
+        This function handles certificate bundle changes by detecting when the requested
+        certificate differs from the currently active one. If a change is detected,
+        it invalidates the existing session and creates a new one with the new certificate.
+        This prevents stale certificate caching when configuration is updated.
     """
-    global __sdk_session
+    global __sdk_session, __current_ca_cert_bundle
+
+    # Check if certificate bundle has changed (requires session reset)
+    if __current_ca_cert_bundle != ca_cert_bundle:
+        with __session_lock:
+            # Double-check under lock to prevent race conditions
+            if __current_ca_cert_bundle != ca_cert_bundle:
+                if __sdk_session is not None:
+                    logger.warning(
+                        f"Certificate bundle changed from '{__current_ca_cert_bundle}' to '{ca_cert_bundle}'. "
+                        "Invalidating SDK session to apply new certificate."
+                    )
+                    __sdk_session = None
+                    # Clean up old certificate from environment
+                    if "AWS_CA_BUNDLE" in os.environ:
+                        del os.environ["AWS_CA_BUNDLE"]
+
+    # Initialize session if not already done
     if __sdk_session is None:
         with __session_lock:
             if __sdk_session is None:
@@ -146,6 +174,7 @@ def __get_sdk_session(ca_cert_bundle: str | None = None) -> Session:
 
                 # Session() handles AWS-style authentication for Bedrock models via SAP AI Core
                 __sdk_session = Session()
+                __current_ca_cert_bundle = ca_cert_bundle
     return __sdk_session
 
 
@@ -256,7 +285,7 @@ def invalidate_bedrock_client(model_name: str, invalidate_session: bool = True) 
             invalidation is needed. Set to True for certificate errors where full
             session reset is required.
     """
-    global __model_client_map, __proxy_client, __sdk_session
+    global __model_client_map, __proxy_client, __sdk_session, __current_ca_cert_bundle
 
     with __clients_lock:
         if model_name in __model_client_map:
@@ -286,6 +315,7 @@ def invalidate_bedrock_client(model_name: str, invalidate_session: bool = True) 
                     del os.environ["AWS_CA_BUNDLE"]
                     logger.info("Cleaned up AWS_CA_BUNDLE environment variable")
                 __sdk_session = None
+                __current_ca_cert_bundle = None
     else:
         # For auth errors, only invalidate proxy client (not session) to avoid
         # expensive session recreation for all models
