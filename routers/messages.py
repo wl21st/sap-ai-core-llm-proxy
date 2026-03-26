@@ -25,6 +25,7 @@ from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
 from utils.logging_utils import get_server_logger, get_transport_logger
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
+from config import SubAccountConfig
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
 
@@ -41,7 +42,7 @@ API_VERSION_2023_05_15 = "2023-05-15"
 
 def _handle_certificate_recovery(
     model: str,
-    sub_account_config,
+    sub_account_config: SubAccountConfig,
     deployment_id: str,
     body_json: str,
     ca_cert_bundle: str | None,
