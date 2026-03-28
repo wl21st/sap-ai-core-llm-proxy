@@ -838,7 +838,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             mock_warning.assert_called()
 
     def test_convert_openai_to_claude37_unsupported_role(self):
-        """Test handling of unsupported roles."""
+        """Test handling of tool role and other unsupported roles."""
         payload = {
             "messages": [
                 {"role": "system", "content": "System"},
@@ -847,11 +847,15 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             ]
         }
 
-        with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_claude37(payload)
-            # System should be converted to first user message, tool should be skipped
-            # Should have system as first user message + user message
-            assert len(result["messages"]) == 2
+        result = Converters.convert_openai_to_claude37(payload)
+        # System → first user message, tool → toolResult user message, user → user message
+        assert len(result["messages"]) == 3
+        # Second message should be the toolResult
+        assert "toolResult" in result["messages"][1]["content"][0]
+        assert (
+            result["messages"][1]["content"][0]["toolResult"]["content"][0]["text"]
+            == "Tool message"
+        )
 
 
 class TestConvertersClaudeStreaming:
@@ -1261,12 +1265,12 @@ class TestConvertersClaude37ResponseEdgeCases:
         assert result["choices"][0]["message"]["content"] == "Found text"
 
     def test_convert_claude37_to_openai_no_text_block(self):
-        """Test error when no text block found."""
+        """Test error when no text block or toolUse block found."""
         response = {
             "output": {
                 "message": {
                     "role": "assistant",
-                    "content": [{"type": "tool_use", "id": "tool_123"}],
+                    "content": [{"type": "unknown_block"}],
                 }
             },
             "stopReason": "end_turn",
@@ -1276,6 +1280,67 @@ class TestConvertersClaude37ResponseEdgeCases:
         result = Converters.convert_claude37_to_openai(response)
 
         assert result["object"] == "error"
+
+    def test_convert_claude37_to_openai_tool_use_block(self):
+        """Test that a toolUse block is correctly converted to OpenAI tool_calls."""
+        response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolUse",
+                            "toolUseId": "tooluse_abc123",
+                            "name": "get_weather",
+                            "input": {"location": "NYC"},
+                        }
+                    ],
+                }
+            },
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 10, "outputTokens": 5},
+        }
+
+        result = Converters.convert_claude37_to_openai(response)
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["finish_reason"] == "tool_calls"
+        tool_calls = result["choices"][0]["message"]["tool_calls"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["id"] == "tooluse_abc123"
+        assert tool_calls[0]["type"] == "function"
+        assert tool_calls[0]["function"]["name"] == "get_weather"
+        assert json.loads(tool_calls[0]["function"]["arguments"]) == {"location": "NYC"}
+
+    def test_convert_claude37_to_openai_tool_use_with_text(self):
+        """Test that a response with both text and toolUse is correctly converted."""
+        response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Let me check the weather."},
+                        {
+                            "type": "toolUse",
+                            "toolUseId": "tooluse_def456",
+                            "name": "get_weather",
+                            "input": {"location": "London"},
+                        },
+                    ],
+                }
+            },
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 20, "outputTokens": 10},
+        }
+
+        result = Converters.convert_claude37_to_openai(response)
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["finish_reason"] == "tool_calls"
+        assert result["choices"][0]["message"]["content"] == "Let me check the weather."
+        tool_calls = result["choices"][0]["message"]["tool_calls"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["function"]["name"] == "get_weather"
 
     def test_convert_claude37_to_openai_missing_usage(self):
         """Test handling of missing usage information."""

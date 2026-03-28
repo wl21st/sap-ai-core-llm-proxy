@@ -480,12 +480,77 @@ class Converters:
             role = msg.get("role")
             content = msg.get("content")
 
-            # Handle system, user, or assistant roles for inclusion in the messages list
-            # Note: While the top-level 'system' parameter is standard for Claude /converse,
-            # this modification includes the system message in the 'messages' array as requested.
-            # This might deviate from the expected API usage.
-            if role in ["user", "assistant"]:
-                if content:
+            # Handle system, user, assistant, and tool roles
+            if role == "tool":
+                # OpenAI tool result message → Bedrock toolResult block in a user message
+                tool_call_id = msg.get("tool_call_id", "")
+                tool_result_content = content if content is not None else ""
+                if isinstance(tool_result_content, list):
+                    # Extract text from content blocks
+                    texts = [
+                        item["text"]
+                        for item in tool_result_content
+                        if isinstance(item, dict) and "text" in item
+                    ]
+                    tool_result_content = " ".join(texts)
+                converted_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "toolResult": {
+                                    "toolUseId": tool_call_id,
+                                    "content": [{"text": str(tool_result_content)}],
+                                }
+                            }
+                        ],
+                    }
+                )
+            elif role in ["user", "assistant"]:
+                # Check for tool_calls in assistant messages (OpenAI format)
+                tool_calls = msg.get("tool_calls")
+                if role == "assistant" and tool_calls:
+                    # Build content list with optional text plus toolUse blocks
+                    bedrock_content = []
+                    if content:
+                        if isinstance(content, str):
+                            bedrock_content.append({"text": content})
+                        elif isinstance(content, list):
+                            for item in content:
+                                if isinstance(item, dict) and "text" in item:
+                                    sanitized = Converters._sanitize_content_block(item)
+                                    if sanitized:
+                                        bedrock_content.append(sanitized)
+                                elif isinstance(item, str):
+                                    bedrock_content.append({"text": item})
+                    for tc in tool_calls:
+                        if tc.get("type") == "function":
+                            fn = tc.get("function", {})
+                            try:
+                                tool_input = json.loads(fn.get("arguments", "{}"))
+                            except (json.JSONDecodeError, TypeError):
+                                tool_input = {}
+                            bedrock_content.append(
+                                {
+                                    "toolUse": {
+                                        "toolUseId": tc.get(
+                                            "id",
+                                            f"tooluse_{random.randint(10000000, 99999999)}",
+                                        ),
+                                        "name": fn.get("name", ""),
+                                        "input": tool_input,
+                                    }
+                                }
+                            )
+                    if bedrock_content:
+                        converted_messages.append(
+                            {"role": "assistant", "content": bedrock_content}
+                        )
+                    else:
+                        logger.warning(
+                            f"Skipping assistant message with tool_calls but no content: {msg}"
+                        )
+                elif content:
                     if isinstance(content, str):
                         # Convert string content to the required list of blocks format
                         converted_messages.append(
@@ -869,43 +934,51 @@ class Converters:
                     "Invalid response structure: 'output.message.content' is missing, not a list, or empty"
                 )
 
-            # --- Extract text from the first content block ---
-            # Assuming the primary response content is in the first block and is text.
-            # More complex handling might be needed for multi-modal or tool use responses.
-            first_content_block = content_list[0]
-            if (
-                not isinstance(first_content_block, dict)
-                or "text" not in first_content_block
-            ):
-                # Log the type if it's not text, for debugging.
-                block_type = (
-                    first_content_block.get("type", "unknown")
-                    if isinstance(first_content_block, dict)
-                    else "not a dict"
-                )
-                logger.warning(
-                    f"First content block is not of type 'text' or missing 'text' key. Type: {block_type}. Content: {first_content_block}"
-                )
-                # Decide how to handle non-text blocks. For now, raise error if no text found.
-                # Find the first text block if available?
-                content_text = None
-                for block in content_list:
-                    if (
-                        isinstance(block, dict)
-                        and block.get("type") == "text"
-                        and "text" in block
-                    ):
+            # --- Extract text and tool_use blocks from content ---
+            content_text = None
+            tool_calls = []
+            for idx, block in enumerate(content_list):
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type", "")
+                # A text block may have type="text" explicitly or simply have a "text" key
+                if (
+                    "text" in block
+                    and block_type != "toolUse"
+                    and "toolUseId" not in block
+                ):
+                    if content_text is None:
                         content_text = block["text"]
-                        logger.info(
-                            f"Found text content in block at index {content_list.index(block)}"
-                        )
-                        break
-                if content_text is None:
-                    raise ValueError(
-                        "No text content block found in the response message content"
+                        logger.info(f"Found text content in block at index {idx}")
+                elif block_type == "toolUse" or "toolUseId" in block:
+                    # Bedrock /converse uses camelCase: toolUseId, name, input
+                    tool_use_id = block.get("toolUseId") or block.get(
+                        "id", f"tooluse_{random.randint(10000000, 99999999)}"
                     )
-            else:
-                content_text = first_content_block["text"]
+                    tool_name = block.get("name", "")
+                    tool_input = block.get("input", {})
+                    if isinstance(tool_input, dict):
+                        arguments_str = json.dumps(tool_input)
+                    else:
+                        arguments_str = str(tool_input)
+                    tool_calls.append(
+                        {
+                            "id": tool_use_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": arguments_str,
+                            },
+                        }
+                    )
+                    logger.info(
+                        f"Found toolUse block at index {idx}: id={tool_use_id}, name={tool_name}"
+                    )
+
+            if content_text is None and not tool_calls:
+                raise ValueError(
+                    "No text content block or toolUse block found in the response message content"
+                )
 
             # --- Extract 'role' from 'message' ---
             message_role = message.get(
@@ -950,12 +1023,15 @@ class Converters:
             )  # Default to 'stop' if unknown or missing
 
             # --- Construct the OpenAI response ---
+            openai_message: dict = {"content": content_text, "role": message_role}
+            if tool_calls:
+                openai_message["tool_calls"] = tool_calls
             openai_response = {
                 "choices": [
                     {
                         "finish_reason": finish_reason,
                         "index": 0,
-                        "message": {"content": content_text, "role": message_role},
+                        "message": openai_message,
                         # "logprobs": None, # Not available from Claude
                     }
                 ],
@@ -1098,26 +1174,67 @@ class Converters:
                 openai_chunk_payload["choices"][0]["delta"]["role"] = role
                 logger.debug(f"Converted messageStart chunk: {openai_chunk_payload}")
 
-            elif chunk_type == "contentBlockDelta":
-                # Extract text delta
-                text_delta = (
-                    claude_chunk.get("contentBlockDelta", {})
-                    .get("delta", {})
-                    .get("text")
-                )
-                if (
-                    text_delta is not None
-                ):  # Send even if empty string delta? OpenAI usually does.
-                    openai_chunk_payload["choices"][0]["delta"]["content"] = text_delta
+            elif chunk_type == "contentBlockStart":
+                # Check if this is the start of a tool use block
+                start_data = claude_chunk.get("contentBlockStart", {}).get("start", {})
+                tool_use_start = start_data.get("toolUse")
+                if tool_use_start:
+                    block_index = claude_chunk.get("contentBlockStart", {}).get(
+                        "contentBlockIndex", 0
+                    )
+                    tool_use_id = tool_use_start.get(
+                        "toolUseId", f"tooluse_{random.randint(10000000, 99999999)}"
+                    )
+                    tool_name = tool_use_start.get("name", "")
+                    openai_chunk_payload["choices"][0]["delta"]["tool_calls"] = [
+                        {
+                            "index": block_index,
+                            "id": tool_use_id,
+                            "type": "function",
+                            "function": {"name": tool_name, "arguments": ""},
+                        }
+                    ]
                     logger.debug(
-                        f"Converted contentBlockDelta chunk: {openai_chunk_payload}"
+                        f"Converted contentBlockStart toolUse chunk: id={tool_use_id}, name={tool_name}"
                     )
                 else:
-                    # If delta or text is missing, maybe log but don't send?
+                    # Non-tool contentBlockStart (e.g., text block start) — no OpenAI equivalent
                     logger.debug(
-                        f"Ignoring contentBlockDelta without text: {claude_chunk}"
+                        f"Ignoring non-toolUse contentBlockStart: {claude_chunk}"
                     )
-                    return None  # Don't send chunk if no actual text delta
+                    return None
+
+            elif chunk_type == "contentBlockDelta":
+                delta_data = claude_chunk.get("contentBlockDelta", {}).get("delta", {})
+                block_index = claude_chunk.get("contentBlockDelta", {}).get(
+                    "contentBlockIndex", 0
+                )
+                # Extract text delta
+                text_delta = delta_data.get("text")
+                # Extract tool use input delta (JSON partial string)
+                tool_use_delta = delta_data.get("toolUse")
+                if text_delta is not None:
+                    openai_chunk_payload["choices"][0]["delta"]["content"] = text_delta
+                    logger.debug(
+                        f"Converted contentBlockDelta text chunk: {openai_chunk_payload}"
+                    )
+                elif tool_use_delta is not None:
+                    # Tool input arrives as a partial JSON string in tool_use_delta["input"]
+                    arguments_chunk = tool_use_delta.get("input", "")
+                    openai_chunk_payload["choices"][0]["delta"]["tool_calls"] = [
+                        {
+                            "index": block_index,
+                            "function": {"arguments": arguments_chunk},
+                        }
+                    ]
+                    logger.debug(
+                        f"Converted contentBlockDelta toolUse chunk: arguments_chunk={arguments_chunk!r}"
+                    )
+                else:
+                    logger.debug(
+                        f"Ignoring contentBlockDelta without text or toolUse: {claude_chunk}"
+                    )
+                    return None
 
             elif chunk_type == "messageStop":
                 # Extract stop reason
@@ -1147,16 +1264,13 @@ class Converters:
                     return None
 
             elif chunk_type in [
-                "contentBlockStart",
                 "contentBlockStop",
                 "metadata",
-                "messageStop",
             ]:
                 # These Claude events don't have a direct OpenAI chunk equivalent
                 # containing message delta or finish reason. Ignore them for streaming output.
                 # Metadata chunk should be handled separately in the calling function (`generate`)
                 # to extract usage information.
-                # messageStop is handled in proxy_server.py to combine with usage data.
                 logger.debug(
                     f"Ignoring Claude chunk type for OpenAI stream: {chunk_type}"
                 )
