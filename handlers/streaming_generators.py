@@ -381,10 +381,13 @@ async def generate_streaming_response(
                             else "end_turn"
                         )
                         finish_reason = stop_reason_map.get(stop_reason_key, "stop")
-                        final_usage_chunk = {
+                        created_time = int(time.time())
+
+                        # Chunk 1: finish_reason only (no usage) — matches OpenAI spec
+                        finish_reason_chunk = {
                             "id": stream_id,
                             "object": "chat.completion.chunk",
-                            "created": int(time.time()),
+                            "created": created_time,
                             "model": model,
                             "choices": [
                                 {
@@ -393,23 +396,39 @@ async def generate_streaming_response(
                                     "finish_reason": finish_reason,
                                 }
                             ],
+                        }
+                        finish_reason_chunk_str = (
+                            f"data: {json.dumps(finish_reason_chunk)}\n\n"
+                        )
+                        logger.info(
+                            "Sending finish_reason chunk: finish_reason=%s",
+                            finish_reason,
+                        )
+                        yield finish_reason_chunk_str
+
+                        # Chunk 2: usage only (empty choices) — matches OpenAI stream_options spec
+                        usage_chunk = {
+                            "id": stream_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [],
                             "usage": {
                                 "prompt_tokens": prompt_tokens,
                                 "completion_tokens": completion_tokens,
                                 "total_tokens": total_tokens,
                             },
                         }
-                        final_usage_chunk_str = (
-                            f"data: {json.dumps(final_usage_chunk)}\n\n"
-                        )
+                        usage_chunk_str = f"data: {json.dumps(usage_chunk)}\n\n"
                         logger.info(
-                            "Sending final chunk with finish_reason=%s and usage: %s...",
-                            finish_reason,
-                            final_usage_chunk_str[:200],
+                            "Sending usage chunk: prompt=%s, completion=%s, total=%s",
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
                         )
-                        yield final_usage_chunk_str
+                        yield usage_chunk_str
                         logger.info(
-                            "Sent final chunk: finish_reason=%s, prompt=%s, completion=%s, total=%s",
+                            "Sent final chunks: finish_reason=%s, prompt=%s, completion=%s, total=%s",
                             finish_reason,
                             prompt_tokens,
                             completion_tokens,
@@ -558,36 +577,30 @@ async def generate_streaming_response(
                             logger.info("Received [DONE] signal from Gemini backend")
 
                     if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
-                        final_usage_chunk = {
+                        # Usage-only chunk (empty choices) — matches OpenAI stream_options spec.
+                        # finish_reason is already emitted inline by convert_gemini_chunk_to_openai.
+                        usage_chunk = {
                             "id": f"chatcmpl-gemini-{random.randint(10000000, 99999999)}",
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
                             "model": model,
-                            "choices": [
-                                {"index": 0, "delta": {}, "finish_reason": None}
-                            ],
+                            "choices": [],
                             "usage": {
                                 "prompt_tokens": prompt_tokens,
                                 "completion_tokens": completion_tokens,
                                 "total_tokens": total_tokens,
                             },
                         }
-                        final_usage_chunk_str = (
-                            f"data: {json.dumps(final_usage_chunk)}\n\n"
-                        )
+                        usage_chunk_str = f"data: {json.dumps(usage_chunk)}\n\n"
                         logger.info(
-                            "[FIXED] Sending final Gemini usage chunk with data prefix: %s bytes, starts with: %s",
-                            len(final_usage_chunk_str),
-                            final_usage_chunk_str[:50],
+                            "Sending Gemini usage chunk: prompt=%s, completion=%s, total=%s",
+                            prompt_tokens,
+                            completion_tokens,
+                            total_tokens,
                         )
-                        if not final_usage_chunk_str.startswith("data: "):
-                            logger.error(
-                                "ERROR: Final usage chunk does not start with 'data: ': %s",
-                                final_usage_chunk_str[:100],
-                            )
-                        yield final_usage_chunk_str.encode("utf-8")
+                        yield usage_chunk_str.encode("utf-8")
                         logger.info(
-                            "Sent final Gemini usage chunk: prompt=%s, completion=%s, total=%s",
+                            "Sent Gemini usage chunk: prompt=%s, completion=%s, total=%s",
                             prompt_tokens,
                             completion_tokens,
                             total_tokens,
