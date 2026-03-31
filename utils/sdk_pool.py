@@ -145,10 +145,12 @@ def __get_sdk_session(ca_cert_bundle: str | None = None) -> Session:
     """
     global __sdk_session, __current_ca_cert_bundle
 
-    # Check if certificate bundle has changed (requires session reset)
-    # Acquire lock first to prevent TOCTOU race condition
+    # Fast path: session exists and certificate hasn't changed
+    if __sdk_session is not None and __current_ca_cert_bundle == ca_cert_bundle:
+        return __sdk_session
+
     with __session_lock:
-        # Check certificate bundle change under lock
+        # Re-check under lock (double-checked locking pattern)
         if __current_ca_cert_bundle != ca_cert_bundle:
             if __sdk_session is not None:
                 logger.warning(
@@ -164,8 +166,14 @@ def __get_sdk_session(ca_cert_bundle: str | None = None) -> Session:
         if __sdk_session is None:
             logger.info("Initializing global SAP AI SDK Session")
 
-            # Session() handles AWS-style authentication for Bedrock models via SAP AI Core
-            # AWS_CA_BUNDLE is configured at startup via ProxyGlobalContext.initialize()
+            # Restore AWS_CA_BUNDLE before creating the session so boto3/botocore
+            # picks it up. This is necessary after session invalidation, which
+            # clears the env var (see invalidate_bedrock_client).
+            if ca_cert_bundle:
+                os.environ["AWS_CA_BUNDLE"] = ca_cert_bundle
+            elif "AWS_CA_BUNDLE" in os.environ:
+                del os.environ["AWS_CA_BUNDLE"]
+
             __sdk_session = Session()
             __current_ca_cert_bundle = ca_cert_bundle
     return __sdk_session
@@ -289,30 +297,21 @@ def invalidate_bedrock_client(model_name: str, invalidate_session: bool = True) 
     # The proxy client holds authentication state at the subaccount level,
     # so invalidating it ensures all models under this subaccount will
     # use fresh credentials on their next request.
-    if invalidate_session:
-        with __session_lock:
-            if __proxy_client is not None:
-                logger.info("Invalidating global SAP AI Core proxy client")
-                __proxy_client = None
+    with __session_lock:
+        if __proxy_client is not None:
+            suffix = "" if invalidate_session else " (auth error)"
+            logger.info(f"Invalidating global SAP AI Core proxy client{suffix}")
+            __proxy_client = None
 
+        if invalidate_session:
             # Also invalidate the SDK session to ensure certificate updates are picked up.
             # The session caches the certificate configuration, so invalidating it
             # forces a fresh session with the current certificate on next use.
-            # This is critical for handling certificate rotation/expiry scenarios.
             if __sdk_session is not None:
                 logger.info(
                     "Invalidating global SDK session to force fresh certificate handling"
                 )
-                # Clean up AWS_CA_BUNDLE environment variable when invalidating session
                 if "AWS_CA_BUNDLE" in os.environ:
                     del os.environ["AWS_CA_BUNDLE"]
-                    logger.info("Cleaned up AWS_CA_BUNDLE environment variable")
                 __sdk_session = None
                 __current_ca_cert_bundle = None
-    else:
-        # For auth errors, only invalidate proxy client (not session) to avoid
-        # expensive session recreation for all models
-        with __session_lock:
-            if __proxy_client is not None:
-                logger.info("Invalidating global SAP AI Core proxy client (auth error)")
-                __proxy_client = None

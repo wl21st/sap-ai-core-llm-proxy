@@ -25,6 +25,7 @@ from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
 from utils.logging_utils import get_server_logger, get_transport_logger
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
+from config import SubAccountConfig
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
 
@@ -39,28 +40,18 @@ API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
 API_VERSION_2023_05_15 = "2023-05-15"
 
 
-async def _handle_certificate_recovery(
+def _handle_certificate_recovery(
     model: str,
-    subaccount_name: str,
+    sub_account_config: SubAccountConfig,
     deployment_id: str,
     body_json: str,
-    proxy_config,
     ca_cert_bundle: str | None,
     is_streaming: bool,
 ):
     """Recover from certificate errors by invalidating session and retrying.
 
-    This helper consolidates certificate error recovery logic that was previously
-    duplicated in both streaming and non-streaming handlers.
-
-    Args:
-        model: Model name
-        subaccount_name: SAP subaccount name
-        deployment_id: SAP deployment ID
-        body_json: Request body JSON string
-        proxy_config: Proxy configuration
-        ca_cert_bundle: CA certificate bundle path
-        is_streaming: Whether to use streaming or non-streaming invoke
+    Consolidates certificate error recovery logic shared by streaming and non-streaming
+    handlers.
 
     Returns:
         Tuple of (bedrock_client, response_status, response_body)
@@ -74,15 +65,13 @@ async def _handle_certificate_recovery(
     )
     invalidate_bedrock_client(model, invalidate_session=True)
 
-    # Get fresh client with reset session
     bedrock_client = get_bedrock_client(
-        sub_account_config=proxy_config.subaccounts[subaccount_name],
+        sub_account_config=sub_account_config,
         model_name=model,
         deployment_id=deployment_id,
         ca_cert_bundle=ca_cert_bundle,
     )
 
-    # Retry the request
     if is_streaming:
         response = invoke_bedrock_streaming(bedrock_client, body_json)
     else:
@@ -326,12 +315,11 @@ async def proxy_claude_request(request: Request):
             except Exception as e:
                 if is_certificate_error(e):
                     try:
-                        _, response_status, response_body = await _handle_certificate_recovery(
+                        _, response_status, response_body = _handle_certificate_recovery(
                             model,
-                            subaccount_name,
+                            proxy_config.subaccounts[subaccount_name],
                             extract_deployment_id(selected_url),
                             body_json,
-                            proxy_config,
                             ca_cert_bundle,
                             is_streaming=True,
                         )
@@ -402,12 +390,11 @@ async def proxy_claude_request(request: Request):
         except Exception as e:
             if is_certificate_error(e):
                 try:
-                    _, response_status, response_body = await _handle_certificate_recovery(
+                    _, response_status, response_body = _handle_certificate_recovery(
                         model,
-                        subaccount_name,
+                        proxy_config.subaccounts[subaccount_name],
                         extract_deployment_id(selected_url),
                         body_json,
-                        proxy_config,
                         ca_cert_bundle,
                         is_streaming=False,
                     )

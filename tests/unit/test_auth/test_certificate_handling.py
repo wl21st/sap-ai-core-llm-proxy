@@ -341,43 +341,9 @@ class TestTokenManagerCertificateHandling:
         assert token == "retry_token"
         assert mock_post.call_count == 2
 
-
-class TestTokenManagerWithConfig:
-    """Test TokenManager integration with configuration."""
-
-    @pytest.fixture
-    def mock_service_key(self):
-        """Create a mock service key."""
-        return ServiceKey(
-            client_id="test_client_id",
-            client_secret="test_client_secret",
-            auth_url="https://test.auth.com",
-            api_url="https://test.api.com",
-            identity_zone_id="test_zone",
-        )
-
-    @pytest.fixture
-    def mock_subaccount(self, mock_service_key):
-        """Create a mock subaccount configuration."""
-        subaccount = SubAccountConfig(
-            name="test_subaccount",
-            resource_group="test_resource_group",
-            service_key_json="/path/to/service_key.json",
-            model_to_deployment_urls={"model1": ["url1"], "model2": ["url2"]},
-        )
-        subaccount.service_key = mock_service_key
-        subaccount.token_info = TokenInfo(token="", expiry=0.0)
-        return subaccount
-
-    def test_token_manager_cert_bundle_parameter_passthrough(self, mock_subaccount):
-        """Test that ca_cert_bundle parameter is correctly stored."""
-        cert_paths = [
-            "/etc/ssl/certs/ca-bundle.crt",
-            "/usr/local/etc/openssl/cert.pem",
-            None,
-        ]
-
-        for cert_path in cert_paths:
+    def test_cert_bundle_parameter_passthrough(self, mock_subaccount):
+        """Test that ca_cert_bundle parameter is correctly stored for various values."""
+        for cert_path in ["/etc/ssl/certs/ca-bundle.crt", "/usr/local/etc/openssl/cert.pem", None]:
             manager = TokenManager(mock_subaccount, ca_cert_bundle=cert_path)
             assert manager.ca_cert_bundle == cert_path
 

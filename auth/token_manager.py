@@ -102,7 +102,6 @@ class TokenManager:
         token_url = f"{service_key.auth_url}/oauth/token?grant_type=client_credentials"
         headers = {"Authorization": f"Basic {encoded_auth}"}
 
-        # First attempt: use configured/resolved certificate bundle
         verify = self.ca_cert_bundle if self.ca_cert_bundle else True
         return self._attempt_token_fetch(token_url, headers, verify, first_attempt=True)
 
