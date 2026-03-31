@@ -367,6 +367,17 @@ def fetch_all_deployments(
                             f"Could not extract backend model for deployment {deployment.id}: {e}"
                         )
 
+                    # Fall back to configuration_name for orchestration deployments
+                    if info["model_name"] is None:
+                        try:
+                            config_name = getattr(deployment, "configuration_name", None)
+                            if config_name:
+                                info["model_name"] = config_name
+                        except Exception as e:
+                            logger.debug(
+                                f"Could not extract configuration_name for deployment {deployment.id}: {e}"
+                            )
+
                     results.append(info)
 
                 logger.info(

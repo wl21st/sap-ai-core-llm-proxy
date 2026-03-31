@@ -68,6 +68,7 @@ class SubAccountConfigSchema(BaseModel):
     service_key_json: str = ""
     deployment_models: dict[str, list[str]] = Field(default_factory=dict)
     deployment_ids: dict[str, list[str]] = Field(default_factory=dict)
+    auto_discover: bool = False
 
 
 class ProxyConfigSchema(BaseModel):
@@ -271,6 +272,7 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
             service_key_json=sub_config_schema.service_key_json,
             model_to_deployment_urls=deployment_models,
             model_to_deployment_ids=sub_config_schema.deployment_ids,
+            auto_discover=sub_config_schema.auto_discover,
         )
         proxy_config.subaccounts[sub_name] = sub_account_config
 
@@ -593,19 +595,30 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
     """Build deployment ID mapping for a subaccount.
 
     This orchestrates the deployment mapping process:
-    1. Auto-discovers deployments from SAP AI Core
-    2. Resolves configured deployment IDs to URLs
-    3. Extracts deployment IDs from configured URLs (backward compatibility)
+    1. Resolves configured deployment IDs to URLs
+    2. Extracts deployment IDs from configured URLs (backward compatibility)
+
+    Note: Auto-discovery of deployments from SAP AI Core is handled separately
+    by run_discovery() in discovery.py, called during the startup lifespan hook.
 
     Args:
         sub_account_config: The subaccount config to update
     """
-    # Step 1: Auto-discover deployments from SAP AI Core
-    discovered_deployments = _auto_discover_deployments(sub_account_config)
+    # Step 1: Fetch all deployments for validation purposes (if service key available)
+    discovered_deployments: list[dict] = []
+    try:
+        discovered_deployments = fetch_all_deployments(
+            service_key=sub_account_config.service_key,
+            resource_group=sub_account_config.resource_group,
+        )
+    except Exception as e:
+        logger.debug(
+            f"Could not fetch deployments for validation in subaccount '{sub_account_config.name}': {e}"
+        )
 
     # Build lookup map for validation (ID -> Model Name)
-    deployment_id_to_model = {
-        d["id"]: d.get("model_name") for d in discovered_deployments if d.get("id")
+    deployment_id_to_model: dict[str, str] = {
+        d["id"]: d["model_name"] for d in discovered_deployments if d.get("id") and d.get("model_name")
     }
 
     # Step 2: Resolve configured deployment IDs to URLs

@@ -63,8 +63,9 @@ def test_fetch_all_deployments_basic(mock_client_cls, mock_cache_cls, mock_servi
     mock_dep2.id = "dep-2"
     mock_dep2.deployment_url = "https://dep-2.com"
     mock_dep2.created_at = "2023-01-02"
-    # dep-2 has missing backend details
+    # dep-2 has missing backend details and no configuration_name
     mock_dep2.details = {}
+    mock_dep2.configuration_name = None
 
     # Configure query return value
     mock_query_response = Mock()
