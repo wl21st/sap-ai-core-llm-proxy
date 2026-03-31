@@ -17,6 +17,7 @@ from utils.sdk_utils import (
     extract_deployment_id,
     fetch_deployment_url,
     fetch_all_deployments,
+    fetch_foundation_models,
 )
 from utils.exceptions import (
     ConfigValidationError,
@@ -317,6 +318,45 @@ def _load_service_key_for_subaccount(sub_account_config: SubAccountConfig):
     )
 
 
+def _register_orchestration_models(
+    sub_account_config: SubAccountConfig, orchestration_url: str
+) -> None:
+    """Register all foundation models under an orchestration deployment URL.
+
+    Queries the SAP AI Core foundation-models scenario to get all available
+    model names, then registers each under the given orchestration URL. This
+    allows clients to address foundation models via the orchestration endpoint.
+
+    Args:
+        sub_account_config: The subaccount config to update
+        orchestration_url: The orchestration deployment URL to register models under
+    """
+    try:
+        foundation_models = fetch_foundation_models(
+            service_key=sub_account_config.service_key,
+            resource_group=sub_account_config.resource_group,
+        )
+        for model_name in foundation_models:
+            if model_name not in sub_account_config.model_to_deployment_urls:
+                sub_account_config.model_to_deployment_urls[model_name] = []
+            if orchestration_url not in sub_account_config.model_to_deployment_urls[model_name]:
+                sub_account_config.model_to_deployment_urls[model_name].append(orchestration_url)
+                logger.info(f"Registered orchestration model: {model_name} -> {orchestration_url}")
+
+            # Register aliases
+            if model_name in MODEL_ALIASES:
+                for alias in MODEL_ALIASES[model_name]:
+                    if alias not in sub_account_config.model_to_deployment_urls:
+                        sub_account_config.model_to_deployment_urls[alias] = []
+                    if orchestration_url not in sub_account_config.model_to_deployment_urls[alias]:
+                        sub_account_config.model_to_deployment_urls[alias].append(orchestration_url)
+                        logger.debug(f"Registered orchestration alias: {alias} -> {orchestration_url}")
+    except Exception as e:
+        logger.warning(
+            f"Could not fetch foundation models for orchestration URL {orchestration_url}: {e}"
+        )
+
+
 def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dict]:
     """Auto-discover deployments from SAP AI Core and register them.
 
@@ -371,6 +411,7 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
         for dep in discovered_deployments:
             url = dep.get("url")
             backend_model = dep.get("model_name")
+            scenario_id = dep.get("scenario_id")
 
             if url and backend_model:
                 # Register under raw backend model name
@@ -400,6 +441,11 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
                                 url
                             )
                             logger.debug(f"Auto-aliased: {alias} -> {url}")
+
+                # For orchestration deployments, also register all foundation models
+                # under this URL so clients can address them via the orchestration endpoint
+                if scenario_id == "orchestration":
+                    _register_orchestration_models(sub_account_config, url)
 
         return discovered_deployments
 
