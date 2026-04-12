@@ -302,3 +302,39 @@ class TestAppStateAccess:
 
         assert all(isinstance(r, JSONResponse) for r in responses)
         assert all(r.status_code == 200 for r in responses)
+
+
+class TestChatStreamDefault:
+    """Regression guard: /v1/chat/completions must default stream to False."""
+
+    @pytest.mark.asyncio
+    async def test_omit_stream_calls_non_streaming_handler(self):
+        """When stream is absent from payload, _handle_non_streaming_request must be used."""
+        mock_request = AsyncMock(spec=Request)
+        mock_request.method = "POST"
+        mock_request.url = Mock(path="/v1/chat/completions")
+        mock_request.body = AsyncMock(return_value=b'{"model": "gpt-4.1", "messages": []}')
+        mock_request.json = AsyncMock(return_value={"model": "gpt-4.1", "messages": []})
+        mock_request.headers = {}
+
+        mock_state = Mock()
+        mock_state.proxy_config = MagicMock()
+        mock_state.proxy_context = MagicMock()
+        mock_state.proxy_context.get_token_manager.return_value.get_token.return_value = "tok"
+        mock_state.proxy_config.subaccounts = {"acct": MagicMock(resource_group="rg", service_key=MagicMock(identity_zone_id="iz"))}
+        mock_request.app.state = mock_state
+
+        with patch("routers.chat.resolve_model_name", return_value="gpt-4.1"):
+            with patch(
+                "routers.chat.handle_default_request",
+                return_value=("http://test.com", {"model": "gpt-4.1"}, "acct"),
+            ):
+                with patch(
+                    "routers.chat._handle_non_streaming_request",
+                    return_value=JSONResponse({"choices": []}),
+                ) as mock_non_stream:
+                    with patch("routers.chat.generate_streaming_response") as mock_stream:
+                        await proxy_openai_stream(mock_request)
+
+        mock_non_stream.assert_called_once()
+        mock_stream.assert_not_called()

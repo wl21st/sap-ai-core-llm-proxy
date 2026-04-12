@@ -152,7 +152,7 @@ async def proxy_claude_request(request: Request):
         )
 
     logger.info("Request from Claude API for model: %s", model)
-    stream = request_body_json.get("stream", True)
+    stream = request_body_json.get("stream", False)
 
     # Extract ca_cert_bundle once to avoid repeated lookups
     ca_cert_bundle = proxy_context.get_ca_cert_bundle()

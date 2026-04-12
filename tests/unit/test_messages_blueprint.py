@@ -232,3 +232,174 @@ class TestSDKReAuthenticationRetry:
             assert response.status_code == 500
             assert not mock_invalidate_client.called
             assert mock_invoke.call_count == 1
+
+
+class TestStreamingDefault:
+    """Tests verifying that stream defaults to False per the Anthropic API spec."""
+
+    @pytest.fixture
+    def sdk_client(self, mock_proxy_state):
+        mock_config, mock_ctx = mock_proxy_state
+        app = _make_app(proxy_config=mock_config, proxy_context=mock_ctx)
+        return TestClient(app, raise_server_exceptions=False), mock_config, mock_ctx
+
+    def _make_non_streaming_response(self):
+        response = Mock()
+        response.get.side_effect = lambda key, default=None: {
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+            "body": None,
+        }.get(key, default)
+        return response
+
+    @patch("routers.messages.verify_request_token", return_value=True)
+    @patch("routers.messages.load_balance_url")
+    @patch("routers.messages.get_bedrock_client")
+    @patch("routers.messages.invalidate_bedrock_client")
+    @patch("routers.messages.Detector")
+    @patch("routers.messages.extract_deployment_id")
+    def test_omit_stream_defaults_to_non_streaming(
+        self,
+        mock_extract_id,
+        mock_detector,
+        mock_invalidate_client,
+        mock_get_client,
+        mock_load_balance,
+        mock_validate,
+        sdk_client,
+    ):
+        """Omitting stream should call non-streaming backend, not streaming."""
+        client, mock_config, mock_ctx = sdk_client
+        mock_load_balance.return_value = (
+            "https://test.url/deployment-id",
+            "test_subaccount",
+            "test_resource_group",
+            "anthropic--claude-4.5-sonnet",
+        )
+        mock_detector.is_claude_model.return_value = True
+        mock_extract_id.return_value = "deployment-id"
+        mock_get_client.return_value = MagicMock()
+
+        ok_response = Mock()
+        ok_response.get.side_effect = lambda key, default=None: {
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+            "body": None,
+        }.get(key, default)
+
+        with patch("routers.messages.invoke_bedrock_non_streaming", return_value=ok_response) as mock_non_stream:
+            with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
+                with patch(
+                    "routers.messages.read_response_body_stream",
+                    return_value='{"content": [{"text": "Hi"}], "type": "message"}',
+                ):
+                    client.post(
+                        "/v1/messages",
+                        json={
+                            "model": "anthropic--claude-4.5-sonnet",
+                            "messages": [{"role": "user", "content": "Hello"}],
+                            # stream intentionally omitted
+                        },
+                    )
+
+        mock_non_stream.assert_called_once()
+        mock_stream.assert_not_called()
+
+    @patch("routers.messages.verify_request_token", return_value=True)
+    @patch("routers.messages.load_balance_url")
+    @patch("routers.messages.get_bedrock_client")
+    @patch("routers.messages.invalidate_bedrock_client")
+    @patch("routers.messages.Detector")
+    @patch("routers.messages.extract_deployment_id")
+    def test_explicit_stream_false_uses_non_streaming(
+        self,
+        mock_extract_id,
+        mock_detector,
+        mock_invalidate_client,
+        mock_get_client,
+        mock_load_balance,
+        mock_validate,
+        sdk_client,
+    ):
+        """Explicit stream=false must call non-streaming backend."""
+        client, mock_config, mock_ctx = sdk_client
+        mock_load_balance.return_value = (
+            "https://test.url/deployment-id",
+            "test_subaccount",
+            "test_resource_group",
+            "anthropic--claude-4.5-sonnet",
+        )
+        mock_detector.is_claude_model.return_value = True
+        mock_extract_id.return_value = "deployment-id"
+        mock_get_client.return_value = MagicMock()
+
+        ok_response = Mock()
+        ok_response.get.side_effect = lambda key, default=None: {
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+            "body": None,
+        }.get(key, default)
+
+        with patch("routers.messages.invoke_bedrock_non_streaming", return_value=ok_response) as mock_non_stream:
+            with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
+                with patch(
+                    "routers.messages.read_response_body_stream",
+                    return_value='{"content": [{"text": "Hi"}], "type": "message"}',
+                ):
+                    client.post(
+                        "/v1/messages",
+                        json={
+                            "model": "anthropic--claude-4.5-sonnet",
+                            "messages": [{"role": "user", "content": "Hello"}],
+                            "stream": False,
+                        },
+                    )
+
+        mock_non_stream.assert_called_once()
+        mock_stream.assert_not_called()
+
+    @patch("routers.messages.verify_request_token", return_value=True)
+    @patch("routers.messages.load_balance_url")
+    @patch("routers.messages.get_bedrock_client")
+    @patch("routers.messages.invalidate_bedrock_client")
+    @patch("routers.messages.Detector")
+    @patch("routers.messages.extract_deployment_id")
+    def test_explicit_stream_true_uses_streaming(
+        self,
+        mock_extract_id,
+        mock_detector,
+        mock_invalidate_client,
+        mock_get_client,
+        mock_load_balance,
+        mock_validate,
+        sdk_client,
+    ):
+        """Regression: explicit stream=true must still call streaming backend."""
+        client, mock_config, mock_ctx = sdk_client
+        mock_load_balance.return_value = (
+            "https://test.url/deployment-id",
+            "test_subaccount",
+            "test_resource_group",
+            "anthropic--claude-4.5-sonnet",
+        )
+        mock_detector.is_claude_model.return_value = True
+        mock_extract_id.return_value = "deployment-id"
+        mock_get_client.return_value = MagicMock()
+
+        ok_response = Mock()
+        ok_response.get.side_effect = lambda key, default=None: {
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+            "body": MagicMock(),
+        }.get(key, default)
+
+        with patch("routers.messages.invoke_bedrock_streaming", return_value=ok_response) as mock_stream:
+            with patch("routers.messages.invoke_bedrock_non_streaming") as mock_non_stream:
+                with patch("routers.messages.generate_bedrock_streaming_response", return_value=iter([])):
+                    client.post(
+                        "/v1/messages",
+                        json={
+                            "model": "anthropic--claude-4.5-sonnet",
+                            "messages": [{"role": "user", "content": "Hello"}],
+                            "stream": True,
+                        },
+                    )
+
+        mock_stream.assert_called_once()
+        mock_non_stream.assert_not_called()
