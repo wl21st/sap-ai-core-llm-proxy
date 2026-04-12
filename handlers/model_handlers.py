@@ -35,7 +35,7 @@ def handle_claude_request(payload, model, proxy_config):
     Raises:
         ValueError: If no valid Claude model is found
     """
-    stream = payload.get("stream", True)
+    stream = payload.get("stream", False)
     logger.info(f"handle_claude_request: model={model} stream={stream}")
 
     # Get the selected URL, subaccount and resource group using our load balancer
@@ -89,7 +89,7 @@ def handle_gemini_request(payload, model, proxy_config):
     Raises:
         ValueError: If no valid Gemini model is found
     """
-    stream = payload.get("stream", True)  # Default to True if 'stream' is not provided
+    stream = payload.get("stream", False)  # Default to False per OpenAI/Anthropic API spec
     logger.info(f"handle_gemini_request: model={model} stream={stream}")
 
     # Get the selected URL, subaccount and resource group using our load balancer
