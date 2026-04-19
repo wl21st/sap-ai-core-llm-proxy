@@ -8,7 +8,17 @@ from fastapi.responses import JSONResponse
 
 from cli import parse_arguments
 from config import ProxyConfig, ProxyGlobalContext, load_proxy_config
-from routers import chat, embeddings, logging as logging_router, messages, models, status
+from routers import (
+    anthropic,
+    chat,
+    embeddings,
+    gemini,
+    logging as logging_router,
+    messages,
+    models,
+    openai as openai_router,
+    status,
+)
 from utils.logging_utils import init_logging
 from utils.metrics import MetricsCollector
 from utils.metrics_middleware import MetricsMiddleware
@@ -48,6 +58,9 @@ def create_app(config_path: str) -> FastAPI:
         - embeddings.router: /v1/embeddings endpoint
         - models.router: /v1/models endpoint
         - logging_router: /api/event_logging endpoint
+        - openai_router: /openai/v1/... (native OpenAI format, GPT models only)
+        - anthropic: /anthropic/v1/... (native Anthropic format, Claude models only)
+        - gemini: /gemini/v1beta/... (native Gemini REST format, Gemini models only)
 
     Notes:
         - Stores config_path in app.state for lifespan manager
@@ -124,6 +137,10 @@ def create_app(config_path: str) -> FastAPI:
     app.include_router(models.router)
     app.include_router(logging_router.router)
     app.include_router(status.router)
+    # Provider-native prefix routers (no format conversion)
+    app.include_router(openai_router.router)  # /openai/v1/...
+    app.include_router(anthropic.router)  # /anthropic/v1/...
+    app.include_router(gemini.router)  # /gemini/v1beta/...
     return app
 
 
