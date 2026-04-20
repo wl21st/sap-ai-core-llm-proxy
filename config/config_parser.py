@@ -6,25 +6,19 @@ This module handles loading and parsing configuration from JSON files.
 
 import json
 import re
+import warnings
 from logging import Logger
 
 from typing import Optional
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from config.config_models import ProxyConfig, SubAccountConfig, ServiceKey, ModelFilters
 from utils.logging_utils import get_server_logger
-from utils.sdk_utils import (
-    extract_deployment_id,
-    fetch_deployment_url,
-    fetch_all_deployments,
-)
+from utils.sdk_utils import fetch_all_deployments
 from utils.exceptions import (
     ConfigValidationError,
     DeploymentFetchError,
-    DeploymentResolutionError,
 )
-from utils.error_ids import ErrorIDs
-from proxy_helpers import MODEL_ALIASES, Detector
 
 logger: Logger = get_server_logger(__name__)
 
@@ -66,6 +60,9 @@ class SubAccountConfigSchema(BaseModel):
 
     resource_group: str = "default"
     service_key_json: str = ""
+    # New Orchestration V2 field
+    orchestration_url: Optional[str] = Field(default=None)
+    # Deprecated: replaced by orchestration_url
     deployment_models: dict[str, list[str]] = Field(default_factory=dict)
     deployment_ids: dict[str, list[str]] = Field(default_factory=dict)
 
@@ -234,6 +231,22 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
 
     # Parse each subAccount
     for sub_name, sub_config_schema in config_schema.subAccounts.items():
+        # Emit deprecation warnings for old fields
+        deprecated_fields_found: list[str] = []
+        if sub_config_schema.deployment_models:
+            deprecated_fields_found.append("deployment_models")
+        if sub_config_schema.deployment_ids:
+            deprecated_fields_found.append("deployment_ids")
+        if deprecated_fields_found:
+            msg = (
+                f"Subaccount '{sub_name}': deprecated config fields detected: "
+                f"{deprecated_fields_found}. "
+                f"Please migrate to 'orchestration_url'. "
+                f"These fields will be removed in a future version."
+            )
+            warnings.warn(msg, DeprecationWarning, stacklevel=2)
+            logger.warning(msg)
+
         deployment_models = sub_config_schema.deployment_models
         models_before_filter = len(deployment_models)
 
@@ -269,6 +282,7 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
             name=sub_name,
             resource_group=sub_config_schema.resource_group,
             service_key_json=sub_config_schema.service_key_json,
+            orchestration_url=sub_config_schema.orchestration_url,
             model_to_deployment_urls=deployment_models,
             model_to_deployment_ids=sub_config_schema.deployment_ids,
         )
@@ -277,16 +291,45 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
     # Parse subaccounts: load service keys and build mappings
     for sub_name, sub_account_config in proxy_config.subaccounts.items():
         _load_service_key_for_subaccount(sub_account_config)
-        _build_mapping_for_subaccount(sub_account_config)
+        if sub_account_config.orchestration_url:
+            # Orchestration V2 path: explicit URL provided
+            logger.info(
+                f"Subaccount '{sub_name}': using Orchestration V2 URL: {sub_account_config.orchestration_url}"
+            )
+        else:
+            # Try auto-discovery of orchestration URL
+            discovered_url = _auto_discover_orchestration_url(sub_account_config)
+            if discovered_url:
+                sub_account_config.orchestration_url = discovered_url
+                logger.info(
+                    f"Subaccount '{sub_name}': auto-discovered orchestration URL: {discovered_url}"
+                )
         _dump_subaccount_config(sub_account_config)
 
     # Build model to subaccounts mapping
+    # For Orchestration V2 subaccounts: use a sentinel key "*" to indicate "any model"
+    # For legacy subaccounts: build per-model mappings from model_to_deployment_urls
     proxy_config.model_to_subaccounts = {}
     for subaccount_name, subaccount in proxy_config.subaccounts.items():
-        for model in subaccount.model_to_deployment_urls.keys():
-            if model not in proxy_config.model_to_subaccounts:
-                proxy_config.model_to_subaccounts[model] = []
-            proxy_config.model_to_subaccounts[model].append(subaccount_name)
+        if subaccount.orchestration_url:
+            # Orchestration V2: register subaccount under wildcard key
+            if "*" not in proxy_config.model_to_subaccounts:
+                proxy_config.model_to_subaccounts["*"] = []
+            proxy_config.model_to_subaccounts["*"].append(subaccount_name)
+        else:
+            # Legacy: register per-model
+            for model in subaccount.model_to_deployment_urls.keys():
+                if model not in proxy_config.model_to_subaccounts:
+                    proxy_config.model_to_subaccounts[model] = []
+                proxy_config.model_to_subaccounts[model].append(subaccount_name)
+
+    # Validate: each subaccount must have either orchestration_url or at least one deployment URL
+    for sub_name, subaccount in proxy_config.subaccounts.items():
+        if not subaccount.orchestration_url and not subaccount.model_to_deployment_urls:
+            raise ConfigValidationError(
+                f"Subaccount '{sub_name}' has no orchestration_url and no deployment_models configured. "
+                f"Please add 'orchestration_url' to enable Orchestration V2 inference."
+            )
 
     # Log configuration
     logger.info(
@@ -295,6 +338,53 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
     logger.info("Model to subaccounts mapping: %s", proxy_config.model_to_subaccounts)
 
     return proxy_config
+
+
+def check_orchestration_url_health(
+    orchestration_url: str, ca_cert_bundle: Optional[str] = None
+) -> bool:
+    """Check that the orchestration URL is reachable.
+
+    Performs a lightweight HTTP HEAD/GET check to verify connectivity.
+    This is a startup health check — failures are logged but do not crash the proxy.
+
+    Args:
+        orchestration_url: The orchestration deployment URL to check
+        ca_cert_bundle: Optional CA cert bundle path for TLS verification
+
+    Returns:
+        True if the URL is reachable (HTTP 2xx/3xx/4xx), False on connection failure
+    """
+    import requests
+
+    # Remove trailing /completion path for a lighter check
+    base_url = orchestration_url.rstrip("/")
+    if base_url.endswith("/completion"):
+        base_url = base_url[: -len("/completion")]
+
+    try:
+        response = requests.head(
+            base_url,
+            timeout=5,
+            verify=ca_cert_bundle if ca_cert_bundle else True,
+            allow_redirects=True,
+        )
+        # Any HTTP response (even 401/403/404) means connectivity works
+        logger.info(
+            f"Orchestration URL health check passed: {base_url} → HTTP {response.status_code}"
+        )
+        return True
+    except requests.exceptions.ConnectionError as e:
+        logger.warning(
+            f"Orchestration URL health check failed (connection error): {base_url} — {e}"
+        )
+        return False
+    except requests.exceptions.Timeout:
+        logger.warning(f"Orchestration URL health check timed out: {base_url}")
+        return False
+    except Exception as e:
+        logger.warning(f"Orchestration URL health check error: {base_url} — {e}")
+        return False
 
 
 def _load_service_key_for_subaccount(sub_account_config: SubAccountConfig):
@@ -315,304 +405,51 @@ def _load_service_key_for_subaccount(sub_account_config: SubAccountConfig):
     )
 
 
-def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dict]:
-    """Auto-discover deployments from SAP AI Core and register them.
+def _auto_discover_orchestration_url(
+    sub_account_config: SubAccountConfig,
+) -> Optional[str]:
+    """Discover the orchestration service deployment URL from SAP AI Core.
 
-    This function:
-    1. Validates service key is properly initialized
-    2. Fetches all deployments for the subaccount
-    3. Registers discovered deployments under their backend model names
-    4. Registers model aliases
+    Calls GET /v2/lm/deployments and filters for deployments running the
+    orchestration service (model_name contains 'orchestration' or
+    configurationName contains 'orchestration').
 
     Args:
-        sub_account_config: The subaccount config to discover deployments for
+        sub_account_config: The subaccount config with a loaded service key
 
     Returns:
-        List of discovered deployment dictionaries with keys: id, url, model_name, created_at
-
-    Raises:
-        ConfigValidationError: If service key is invalid or auto-discovery fails
+        Orchestration URL string if found, None otherwise
     """
-    # Check if service_key is initialized and has required fields for auto-discovery
-    has_valid_service_key = (
-        hasattr(sub_account_config, "service_key")
-        and sub_account_config.service_key is not None
-        and hasattr(sub_account_config.service_key, "api_url")
-        and sub_account_config.service_key.api_url is not None
-        and hasattr(sub_account_config.service_key, "auth_url")
-        and sub_account_config.service_key.auth_url is not None
-    )
-
-    if not has_valid_service_key:
-        logger.error(
-            f"Service key not initialized for subaccount '{sub_account_config.name}': "
-            f"missing required fields (api_url, auth_url). This may indicate an authentication error in configuration.",
-            extra={
-                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
-                "subaccount": sub_account_config.name,
-            },
-        )
-        raise ConfigValidationError(
-            f"Service key not properly initialized for subaccount '{sub_account_config.name}'. "
-            f"Ensure service_key_json is configured correctly with valid credentials."
-        )
-
     try:
-        logger.info(
-            f"Starting auto-discovery for subaccount '{sub_account_config.name}'"
-        )
         discovered_deployments = fetch_all_deployments(
             service_key=sub_account_config.service_key,
             resource_group=sub_account_config.resource_group,
         )
-
-        for dep in discovered_deployments:
-            url = dep.get("url")
-            backend_model = dep.get("model_name")
-
-            if url and backend_model:
-                # Register under raw backend model name
-                if backend_model not in sub_account_config.model_to_deployment_urls:
-                    sub_account_config.model_to_deployment_urls[backend_model] = []
-
-                if (
-                    url
-                    not in sub_account_config.model_to_deployment_urls[backend_model]
-                ):
-                    sub_account_config.model_to_deployment_urls[backend_model].append(
-                        url
-                    )
-                    logger.debug(f"Auto-discovered: {backend_model} -> {url}")
-
-                # Register aliases
-                if backend_model in MODEL_ALIASES:
-                    for alias in MODEL_ALIASES[backend_model]:
-                        if alias not in sub_account_config.model_to_deployment_urls:
-                            sub_account_config.model_to_deployment_urls[alias] = []
-
-                        if (
-                            url
-                            not in sub_account_config.model_to_deployment_urls[alias]
-                        ):
-                            sub_account_config.model_to_deployment_urls[alias].append(
-                                url
-                            )
-                            logger.debug(f"Auto-aliased: {alias} -> {url}")
-
-        return discovered_deployments
-
-    except DeploymentFetchError as e:
-        logger.error(
-            f"Auto-discovery failed for subaccount '{sub_account_config.name}': {e}. "
-            f"Check service key credentials and network connectivity.",
-            extra={
-                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
-                "subaccount": sub_account_config.name,
-            },
-        )
-        raise ConfigValidationError(
-            f"Auto-discovery failed for '{sub_account_config.name}': {e}"
-        ) from e
     except Exception as e:
-        logger.error(
-            f"Unexpected error during auto-discovery for '{sub_account_config.name}': {e}",
-            extra={
-                "error_id": ErrorIDs.AUTODISCOVERY_UNEXPECTED_ERROR,
-                "subaccount": sub_account_config.name,
-            },
+        logger.warning(
+            f"Could not fetch deployments for orchestration URL discovery in "
+            f"'{sub_account_config.name}': {e}"
         )
-        raise ConfigValidationError(
-            f"Auto-discovery failed: {e}. Check service key and network connectivity."
-        ) from e
+        return None
 
+    for dep in discovered_deployments:
+        url = dep.get("url", "")
+        model_name = dep.get("model_name") or ""
+        # Orchestration service deployments typically have 'orchestration' in the path
+        # or in their model/config name
+        if url and (
+            "orchestration" in url.lower() or "orchestration" in model_name.lower()
+        ):
+            logger.info(
+                f"Auto-discovered orchestration URL for '{sub_account_config.name}': {url}"
+            )
+            return url
 
-def _resolve_deployment_ids(
-    sub_account_config: SubAccountConfig, deployment_id_to_model: dict[str, str]
-):
-    """Resolve deployment IDs to URLs using the SDK.
-
-    This function:
-    1. Iterates through configured deployment IDs
-    2. Validates each deployment against discovered deployments
-    3. Fetches the deployment URL from SAP AI Core
-    4. Adds the URL to model_to_deployment_urls
-
-    Args:
-        sub_account_config: The subaccount config to update
-        deployment_id_to_model: Lookup map from deployment ID to backend model name
-
-    Raises:
-        ConfigValidationError: If deployment resolution fails
-    """
-    for (
-        model_name,
-        deployment_ids,
-    ) in sub_account_config.model_to_deployment_ids.items():
-        model_name = model_name.strip()
-        if model_name not in sub_account_config.model_to_deployment_urls:
-            sub_account_config.model_to_deployment_urls[model_name] = []
-
-        for deployment_id in deployment_ids:
-            deployment_id = deployment_id.strip()
-
-            # Validation: Check if deployment exists and matches model
-            if deployment_id in deployment_id_to_model:
-                backend_model = deployment_id_to_model[deployment_id]
-                is_valid, reason = Detector.validate_model_mapping(
-                    model_name, backend_model
-                )
-                if not is_valid:
-                    logger.warning(
-                        "Configuration mismatch: Model '%s' mapped to deployment '%s' which is running '%s' (%s)",
-                        model_name,
-                        deployment_id,
-                        backend_model,
-                        reason,
-                    )
-            elif deployment_id_to_model:  # Only warn if discovery succeeded
-                logger.warning(
-                    "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
-                    deployment_id,
-                    model_name,
-                )
-
-            try:
-                deployment_url = fetch_deployment_url(
-                    service_key=sub_account_config.service_key,
-                    deployment_id=deployment_id,
-                    resource_group=sub_account_config.resource_group,
-                )
-                if (
-                    deployment_url
-                    not in sub_account_config.model_to_deployment_urls[model_name]
-                ):
-                    sub_account_config.model_to_deployment_urls[model_name].append(
-                        deployment_url
-                    )
-                    logger.info(
-                        "Resolved deployment ID '%s' to URL for model '%s' in subaccount '%s'",
-                        deployment_id,
-                        model_name,
-                        sub_account_config.name,
-                    )
-            except ValueError as e:
-                logger.error(
-                    f"Invalid deployment ID '{deployment_id}' for model '{model_name}': {e}",
-                    extra={"error_id": ErrorIDs.INVALID_DEPLOYMENT_ID},
-                )
-                raise ConfigValidationError(
-                    f"Invalid deployment ID '{deployment_id}' for model '{model_name}'. "
-                    f"Check your config.json and verify deployment exists in SAP AI Core console."
-                ) from e
-            except Exception as e:
-                # Check if it's a 404 error by examining the exception
-                error_msg = str(e).lower()
-                if "404" in error_msg or "not found" in error_msg:
-                    logger.error(
-                        f"Deployment '{deployment_id}' not found for model '{model_name}'",
-                        extra={"error_id": ErrorIDs.DEPLOYMENT_NOT_FOUND},
-                    )
-                    raise ConfigValidationError(
-                        f"Deployment '{deployment_id}' not found. Verify it exists in SAP AI Core."
-                    ) from e
-
-                logger.error(
-                    f"Failed to resolve deployment '{deployment_id}': {e}",
-                    extra={"error_id": ErrorIDs.DEPLOYMENT_RESOLUTION_FAILED},
-                )
-                raise ConfigValidationError(
-                    f"Could not resolve deployment '{deployment_id}' to URL. "
-                    f"Check credentials and deployment status."
-                ) from e
-
-
-def _extract_deployment_ids_from_urls(
-    sub_account_config: SubAccountConfig, deployment_id_to_model: dict[str, str]
-):
-    """Extract deployment IDs from URLs for backward compatibility.
-
-    This function:
-    1. Iterates through configured deployment URLs
-    2. Extracts the deployment ID from each URL
-    3. Validates the deployment against discovered deployments
-    4. Adds the ID to model_to_deployment_ids
-
-    Args:
-        sub_account_config: The subaccount config to update
-        deployment_id_to_model: Lookup map from deployment ID to backend model name
-    """
-    for model_name, urls in sub_account_config.model_to_deployment_urls.items():
-        model_name = model_name.strip()
-        if model_name not in sub_account_config.model_to_deployment_ids:
-            sub_account_config.model_to_deployment_ids[model_name] = []
-
-        for url in urls:
-            deployment_url = url.strip()
-            try:
-                deployment_id = extract_deployment_id(deployment_url)
-
-                # Validation: Check if deployment exists and matches model
-                if deployment_id in deployment_id_to_model:
-                    backend_model = deployment_id_to_model[deployment_id]
-                    is_valid, reason = Detector.validate_model_mapping(
-                        model_name, backend_model
-                    )
-                    if not is_valid:
-                        logger.warning(
-                            "Configuration mismatch: Model '%s' mapped to deployment '%s' which is running '%s' (%s)",
-                            model_name,
-                            deployment_id,
-                            backend_model,
-                            reason,
-                        )
-                elif deployment_id_to_model:  # Only warn if discovery succeeded
-                    logger.warning(
-                        "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
-                        deployment_id,
-                        model_name,
-                    )
-
-                if (
-                    deployment_id
-                    and deployment_id
-                    not in sub_account_config.model_to_deployment_ids[model_name]
-                ):
-                    sub_account_config.model_to_deployment_ids[model_name].append(
-                        deployment_id
-                    )
-            except ValueError as e:
-                logger.warning(
-                    "Could not extract deployment ID from URL '%s' for model '%s': %s",
-                    deployment_url,
-                    model_name,
-                    e,
-                )
-
-
-def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
-    """Build deployment ID mapping for a subaccount.
-
-    This orchestrates the deployment mapping process:
-    1. Auto-discovers deployments from SAP AI Core
-    2. Resolves configured deployment IDs to URLs
-    3. Extracts deployment IDs from configured URLs (backward compatibility)
-
-    Args:
-        sub_account_config: The subaccount config to update
-    """
-    # Step 1: Auto-discover deployments from SAP AI Core
-    discovered_deployments = _auto_discover_deployments(sub_account_config)
-
-    # Build lookup map for validation (ID -> Model Name)
-    deployment_id_to_model = {
-        d["id"]: d.get("model_name") for d in discovered_deployments if d.get("id")
-    }
-
-    # Step 2: Resolve configured deployment IDs to URLs
-    _resolve_deployment_ids(sub_account_config, deployment_id_to_model)
-
-    # Step 3: Extract deployment IDs from URLs for backward compatibility
-    _extract_deployment_ids_from_urls(sub_account_config, deployment_id_to_model)
+    logger.warning(
+        f"No orchestration service deployment found in '{sub_account_config.name}'. "
+        f"Please configure 'orchestration_url' explicitly."
+    )
+    return None
 
 
 def _dump_subaccount_config(sub_account_config: SubAccountConfig):

@@ -21,9 +21,20 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from auth.request_validator import verify_request_token
 from load_balancer import load_balance_url
-from proxy_helpers import Detector
 from handlers.streaming_handler import make_backend_request
 from utils.logging_utils import get_server_logger, get_transport_logger
+
+_GEMINI_PREFIXES = ("gemini-",)
+
+
+def _is_gemini_model(name: str) -> bool:
+    lower = name.lower()
+    return any(lower.startswith(p) for p in _GEMINI_PREFIXES)
+
+
+def _is_claude_model(name: str) -> bool:
+    lower = name.lower()
+    return any(t in lower for t in ("claude", "anthropic--", "sonnet", "haiku", "opus"))
 
 logger = get_server_logger(__name__)
 transport_logger = get_transport_logger(__name__)
@@ -86,7 +97,7 @@ async def gemini_generate(
     proxy_config = request.app.state.proxy_config
 
     # Validate it's actually a Gemini model
-    if not Detector.is_gemini_model(bare_model):
+    if not _is_gemini_model(bare_model):
         return JSONResponse(
             {
                 "error": {
@@ -159,7 +170,7 @@ async def gemini_generate(
             payload=payload,
             model=resolved_model,
             tid=tid,
-            is_claude_model_fn=Detector.is_claude_model,
+            is_claude_model_fn=_is_claude_model,
         )
 
         if not result.success:
@@ -192,21 +203,27 @@ async def gemini_generate(
 @router.get("/v1beta/models", dependencies=[Depends(verify_request_token)])
 async def gemini_list_models(request: Request) -> JSONResponse:
     """List available Gemini models in Google AI REST format."""
+    proxy_context = request.app.state.proxy_context
     proxy_config = request.app.state.proxy_config
-    models: list[dict[str, Any]] = [
-        {
-            "name": f"models/{name}",
-            "baseModelId": name,
-            "version": "001",
-            "displayName": name,
-            "description": f"SAP AI Core hosted {name}",
-            "inputTokenLimit": 1048576,
-            "outputTokenLimit": 8192,
-            "supportedGenerationMethods": ["generateContent", "streamGenerateContent"],
-        }
-        for name in proxy_config.model_to_subaccounts
-        if Detector.is_gemini_model(name)
+    models: list[dict[str, Any]] = []
+
+    registry = getattr(proxy_context, "foundation_model_registry", None)
+    names = registry.get_model_names() if registry else [
+        n for n in proxy_config.model_to_subaccounts if n != "*"
     ]
+
+    for name in names:
+        if _is_gemini_model(name):
+            models.append({
+                "name": f"models/{name}",
+                "baseModelId": name,
+                "version": "001",
+                "displayName": name,
+                "description": f"SAP AI Core hosted {name}",
+                "inputTokenLimit": 1048576,
+                "outputTokenLimit": 8192,
+                "supportedGenerationMethods": ["generateContent", "streamGenerateContent"],
+            })
     return JSONResponse({"models": models})
 
 
@@ -214,9 +231,7 @@ async def gemini_list_models(request: Request) -> JSONResponse:
 async def gemini_get_model(request: Request, model: str) -> JSONResponse:
     """Get info for a single Gemini model."""
     proxy_config = request.app.state.proxy_config
-    if model not in proxy_config.model_to_subaccounts or not Detector.is_gemini_model(
-        model
-    ):
+    if not _is_gemini_model(model):
         return JSONResponse(
             {
                 "error": {

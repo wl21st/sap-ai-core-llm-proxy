@@ -5,7 +5,8 @@ This module handles model name resolution (including fallbacks) and
 round-robin load balancing across subaccounts.
 """
 
-from proxy_helpers import Detector
+import threading
+
 from utils.logging_utils import get_server_logger
 
 logger = get_server_logger(__name__)
@@ -17,14 +18,18 @@ DEFAULT_GPT_MODEL = "gpt-4.1"
 
 # Module-level counter storage for load balancing
 _load_balance_counters: dict = {}
+_counters_lock = threading.Lock()
 
 
 def resolve_model_name(model_name: str, proxy_config) -> str | None:
     """
     Resolve a model name to an available model in the configuration.
 
-    Handles aliases like 'opus-4.5' -> 'anthropic--claude-4.5-opus'.
-    Returns the resolved model name or None if no fallback is found.
+    For Orchestration V2 subaccounts, all models route through the wildcard
+    key "*" so any model name is considered "available" — validation against
+    the foundation model registry happens separately in the chat router.
+
+    For legacy per-deployment subaccounts, performs alias-based fallback.
 
     Args:
         model_name: The requested model name (may be an alias)
@@ -33,15 +38,25 @@ def resolve_model_name(model_name: str, proxy_config) -> str | None:
     Returns:
         The resolved model name that exists in configuration, or None
     """
-    # Check if model already exists in config
+    # Orchestration V2 path: if any subaccount uses the wildcard key, all
+    # model names are routable (registry validation handled in chat router).
+    if "*" in proxy_config.model_to_subaccounts:
+        return model_name
+
+    # Legacy path: check exact match first
     if model_name in proxy_config.model_to_subaccounts:
         return model_name
 
     model_lower = model_name.lower()
 
-    # Try fallback models based on model type
-    if Detector.is_claude_model(model_name):
-        # Build fallback list based on variant in requested model
+    # Determine model family for legacy fallback
+    is_claude = any(
+        token in model_lower
+        for token in ("claude", "anthropic--", "sonnet", "haiku", "opus")
+    )
+    is_gemini = "gemini" in model_lower
+
+    if is_claude:
         fallback_models = []
         if "opus" in model_lower:
             fallback_models = [
@@ -54,29 +69,26 @@ def resolve_model_name(model_name: str, proxy_config) -> str | None:
                 "anthropic--claude-3.5-haiku",
             ]
         else:
-            # Default to sonnet for unspecified or sonnet variants
             fallback_models = [
                 "anthropic--claude-4.5-sonnet",
                 "anthropic--claude-4-sonnet",
                 "anthropic--claude-3.7-sonnet",
             ]
-
         for fallback in fallback_models:
             if fallback in proxy_config.model_to_subaccounts:
-                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
+                logger.info("Resolved model '%s' to '%s'", model_name, fallback)
                 return fallback
-    elif Detector.is_gemini_model(model_name):
+    elif is_gemini:
         fallback_models = [DEFAULT_GEMINI_MODEL]
         for fallback in fallback_models:
             if fallback in proxy_config.model_to_subaccounts:
-                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
+                logger.info("Resolved model '%s' to '%s'", model_name, fallback)
                 return fallback
     else:
-        # For other models, try GPT fallback
         fallback_models = [DEFAULT_GPT_MODEL]
         for fallback in fallback_models:
             if fallback in proxy_config.model_to_subaccounts:
-                logger.info(f"Resolved model '{model_name}' to '{fallback}'")
+                logger.info("Resolved model '%s' to '%s'", model_name, fallback)
                 return fallback
 
     return None
@@ -104,18 +116,22 @@ def load_balance_url(selected_model_name: str, proxy_config) -> tuple[str, str, 
         or not proxy_config.model_to_subaccounts[selected_model_name]
     ):
         # Check if it's a Claude or Gemini model and try fallback
-        if Detector.is_claude_model(selected_model_name):
+        model_lower_lb = selected_model_name.lower()
+        _is_claude = any(
+            t in model_lower_lb for t in ("claude", "anthropic--", "sonnet", "haiku", "opus")
+        )
+        _is_gemini = "gemini" in model_lower_lb
+        if _is_claude:
             logger.info(
                 f"Claude model '{selected_model_name}' not found, trying fallback models"
             )
             # Build fallback list based on variant in requested model
-            model_lower = selected_model_name.lower()
-            if "opus" in model_lower:
+            if "opus" in model_lower_lb:
                 fallback_models = [
                     "anthropic--claude-4.5-opus",
                     "anthropic--claude-4-opus",
                 ]
-            elif "haiku" in model_lower:
+            elif "haiku" in model_lower_lb:
                 fallback_models = [
                     "anthropic--claude-4-haiku",
                     "anthropic--claude-3.5-haiku",
@@ -142,7 +158,7 @@ def load_balance_url(selected_model_name: str, proxy_config) -> tuple[str, str, 
                 raise ValueError(
                     f"Claude model '{selected_model_name}' and fallbacks not available in any subAccount"
                 )
-        elif Detector.is_gemini_model(selected_model_name):
+        elif _is_gemini:
             logger.info(
                 f"Gemini model '{selected_model_name}' not found, trying fallback models"
             )
@@ -237,6 +253,47 @@ def load_balance_url(selected_model_name: str, proxy_config) -> tuple[str, str, 
         selected_resource_group,
         selected_model_name,
     )
+
+
+def select_subaccount_for_orchestration(proxy_config) -> str:
+    """Round-robin select a subaccount for Orchestration V2 inference.
+
+    Uses the wildcard "*" key in model_to_subaccounts to find all V2-enabled
+    subaccounts and distributes load evenly across them.
+
+    Args:
+        proxy_config: The proxy configuration object.
+
+    Returns:
+        The selected subaccount name.
+
+    Raises:
+        ValueError: If no Orchestration V2 subaccounts are configured.
+    """
+    global _load_balance_counters
+
+    subaccount_names = proxy_config.model_to_subaccounts.get("*", [])
+    if not subaccount_names:
+        raise ValueError(
+            "No Orchestration V2 subaccounts configured. "
+            "Ensure at least one subaccount has 'orchestration_url' set."
+        )
+
+    with _counters_lock:
+        counter_key = "__orchestration_v2__"
+        if counter_key not in _load_balance_counters:
+            _load_balance_counters[counter_key] = 0
+        idx = _load_balance_counters[counter_key] % len(subaccount_names)
+        _load_balance_counters[counter_key] += 1
+
+    selected = subaccount_names[idx]
+    logger.info(
+        "Orchestration V2 round-robin: selected subaccount '%s' (%d/%d)",
+        selected,
+        idx + 1,
+        len(subaccount_names),
+    )
+    return selected
 
 
 def reset_counters():

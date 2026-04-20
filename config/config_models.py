@@ -62,9 +62,12 @@ class SubAccountConfig:
     name: str
     resource_group: str
     service_key_json: str
-    model_to_deployment_urls: dict[str, list[str]]
+    # New Orchestration V2 field: single URL for all model inference
+    orchestration_url: Optional[str] = None
     service_key: ServiceKey = field(init=False)
     token_info: TokenInfo = field(default_factory=TokenInfo)
+    # Kept for backward compatibility during transition; will be removed after cleanup
+    model_to_deployment_urls: dict[str, list[str]] = field(default_factory=dict)
     model_to_deployment_ids: dict[str, list[str]] = field(default_factory=dict)
 
 
