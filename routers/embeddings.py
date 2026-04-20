@@ -10,8 +10,12 @@ from fastapi.responses import JSONResponse
 from auth.request_validator import verify_request_token
 from handlers.streaming_handler import make_backend_request
 from load_balancer import load_balance_url
-from proxy_helpers import Detector
 from utils.logging_utils import get_server_logger, get_transport_logger
+
+
+def _is_claude_model(name: str) -> bool:
+    lower = name.lower()
+    return any(t in lower for t in ("claude", "anthropic--", "sonnet", "haiku", "opus"))
 
 logger = get_server_logger(__name__)
 transport_logger = get_transport_logger(__name__)
@@ -91,7 +95,7 @@ async def handle_embedding_request(request: Request) -> JSONResponse:
             payload=upstream_payload,
             model=model,
             tid=tid,
-            is_claude_model_fn=Detector.is_claude_model,
+            is_claude_model_fn=_is_claude_model,
         )
 
         if not result.success:

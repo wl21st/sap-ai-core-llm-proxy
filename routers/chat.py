@@ -1,4 +1,9 @@
-"""Router for /v1/chat/completions endpoint."""
+"""Router for /v1/chat/completions endpoint.
+
+All inference routes through SAP AI Core Orchestration V2.
+Each subaccount must be configured with an `orchestration_url`
+(or have one auto-discovered at startup).
+"""
 
 import json
 import uuid
@@ -8,16 +13,10 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from auth.request_validator import verify_request_token
-from handlers.model_handlers import (
-    handle_claude_request,
-    handle_default_request,
-    handle_gemini_request,
-)
-from handlers.streaming_generators import generate_streaming_response
-from handlers.streaming_handler import make_backend_request
-from load_balancer import resolve_model_name
-from proxy_helpers import Converters, Detector
+from load_balancer import select_subaccount_for_orchestration
 from utils.logging_utils import get_server_logger, get_transport_logger
+from utils.model_aliases import resolve_model_name as resolve_alias
+from utils.orchestration_client import get_orchestration_client
 
 logger = get_server_logger(__name__)
 
@@ -26,86 +25,9 @@ router = APIRouter()
 DEFAULT_GPT_MODEL = "gpt-4.1"
 
 
-async def _handle_non_streaming_request(
-    request: Request,
-    url: str,
-    headers: dict,
-    payload: dict,
-    model: str,
-    subaccount_name: str,
-    tid: str,
-) -> JSONResponse:
-    transport_logger = get_transport_logger(__name__)
-
-    result = await run_in_threadpool(
-        make_backend_request,
-        url=url,
-        headers=headers,
-        payload=payload,
-        model=model,
-        tid=tid,
-        is_claude_model_fn=Detector.is_claude_model,
-    )
-
-    if not result.success:
-        if result.status_code == 429:
-            return JSONResponse(
-                result.response_data or {"error": result.error_message},
-                status_code=429,
-            )
-
-        if result.response_data:
-            return JSONResponse(result.response_data, status_code=result.status_code)
-
-        return JSONResponse(
-            {"error": result.error_message or "Unknown error"},
-            status_code=result.status_code,
-        )
-
-    response_data = result.response_data
-
-    if result.is_sse_response:
-        logger.info(
-            "Claude model response is in SSE format, parsing as streaming response for non-streaming request"
-        )
-
-    if Detector.is_claude_model(model):
-        final_response = Converters.convert_claude_to_openai(response_data, model)
-    elif Detector.is_gemini_model(model):
-        final_response = Converters.convert_gemini_to_openai(response_data, model)
-    else:
-        final_response = response_data
-
-    total_tokens = final_response.get("usage", {}).get("total_tokens", 0)
-    prompt_tokens = final_response.get("usage", {}).get("prompt_tokens", 0)
-    completion_tokens = final_response.get("usage", {}).get("completion_tokens", 0)
-
-    user_id = request.headers.get("Authorization", "unknown")
-    if user_id and len(user_id) > 20:
-        user_id = f"{user_id[:20]}..."
-    ip_address = request.client.host if request.client else "unknown_ip"
-    logger.info(
-        "CHAT_RSP: tid=%s, user=%s, ip=%s, model=%s, sub_account=%s, prompt_tokens=%s, completion_tokens=%s, total_tokens=%s",
-        tid,
-        user_id,
-        ip_address,
-        model,
-        subaccount_name,
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
-    )
-
-    transport_logger.info(
-        "RSP: tid=%s, status=200, body=%s", tid, json.dumps(final_response)
-    )
-
-    return JSONResponse(final_response)
-
-
 @router.post("/v1/chat/completions", dependencies=[Depends(verify_request_token)])
 async def proxy_openai_stream(request: Request):
-    """Main handler for chat completions endpoint with multi-subAccount support."""
+    """Main handler for chat completions via Orchestration V2."""
     transport_logger = get_transport_logger(__name__)
 
     logger.info("Received request to /v1/chat/completions")
@@ -129,79 +51,184 @@ async def proxy_openai_stream(request: Request):
             effective_model,
         )
 
-    resolved_model = resolve_model_name(effective_model, request.app.state.proxy_config)
-    if resolved_model is None:
-        error_message = f"Model {effective_model} is not supported."
-        if effective_model != original_model:
-            error_message = f"Models '{original_model}' and '{effective_model}'(fallback) are NOT defined in any subAccount"
-        return JSONResponse({"error": error_message}, status_code=404)
+    proxy_config = request.app.state.proxy_config
+    proxy_context = request.app.state.proxy_context
 
-    effective_model = resolved_model
+    return await _handle_orchestration_v2(
+        request=request,
+        payload=payload,
+        original_model=original_model,
+        effective_model=effective_model,
+        proxy_config=proxy_config,
+        proxy_context=proxy_context,
+        tid=tid,
+        transport_logger=transport_logger,
+    )
+
+
+def _is_orchestration_v2_available(proxy_config) -> bool:
+    """Return True if any subaccount is configured for Orchestration V2."""
+    return "*" in proxy_config.model_to_subaccounts
+
+
+async def _handle_orchestration_v2(
+    request: Request,
+    payload: dict,
+    original_model: str | None,
+    effective_model: str,
+    proxy_config,
+    proxy_context,
+    tid: str,
+    transport_logger,
+) -> JSONResponse | StreamingResponse:
+    """Handle a chat completion request via Orchestration V2.
+
+    Performs:
+    1. Model alias resolution
+    2. Foundation model registry validation (404 for unknown models)
+    3. Round-robin subaccount selection
+    4. Orchestration V2 POST (streaming or non-streaming)
+    """
+    transport_logger = get_transport_logger(__name__)
+    user_id = request.headers.get("Authorization", "unknown")
+    if user_id and len(user_id) > 20:
+        user_id = f"{user_id[:20]}..."
+    ip_address = request.client.host if request.client else "unknown_ip"
+
+    # Step 1: Resolve model alias
+    model_aliases = getattr(proxy_context, "model_aliases", None)
+    canonical_model = resolve_alias(effective_model, model_aliases)
+    if canonical_model != effective_model:
+        logger.info(
+            "Model alias resolved: '%s' → '%s' (tid=%s)", effective_model, canonical_model, tid
+        )
+
+    # Step 2: Validate against foundation model registry
+    registry = getattr(proxy_context, "foundation_model_registry", None)
+    if registry is not None and not registry.is_known_model(canonical_model):
+        logger.warning(
+            "Model '%s' not available in foundation model registry (tid=%s)",
+            canonical_model,
+            tid,
+        )
+        return JSONResponse(
+            {
+                "error": {
+                    "message": f"Model '{canonical_model}' not available in foundation model registry.",
+                    "type": "not_found_error",
+                    "code": "model_not_found",
+                }
+            },
+            status_code=404,
+        )
+
+    # Step 3: Round-robin subaccount selection
+    try:
+        subaccount_name = select_subaccount_for_orchestration(proxy_config)
+    except ValueError as err:
+        logger.error("CHAT: No V2 subaccount available, tid=%s, %s", tid, str(err))
+        return JSONResponse({"error": str(err)}, status_code=503)
+
+    subaccount = proxy_config.subaccounts[subaccount_name]
+    token = proxy_context.get_token_manager(subaccount_name).get_token()
+
     is_stream = payload.get("stream", False)
-    logger.info("Model: %s, Streaming: %s", original_model, is_stream)
+    messages = payload.get("messages", [])
+    params = {
+        k: v
+        for k, v in payload.items()
+        if k not in ("model", "messages", "stream")
+    }
+
+    logger.info(
+        "CHAT_V2: tid=%s, model=%s→%s, sub_account=%s, stream=%s",
+        tid,
+        effective_model,
+        canonical_model,
+        subaccount_name,
+        is_stream,
+    )
+
+    client = get_orchestration_client()
 
     try:
-        if Detector.is_claude_model(original_model):
-            endpoint_url, modified_payload, subaccount_name = handle_claude_request(
-                payload, original_model, request.app.state.proxy_config
-            )
-        elif Detector.is_gemini_model(original_model):
-            endpoint_url, modified_payload, subaccount_name = handle_gemini_request(
-                payload, original_model, request.app.state.proxy_config
-            )
-        else:
-            endpoint_url, modified_payload, subaccount_name = handle_default_request(
-                payload, original_model, request.app.state.proxy_config
-            )
-
-        subaccount = request.app.state.proxy_config.subaccounts[subaccount_name]
-        subaccount_token = request.app.state.proxy_context.get_token_manager(
-            subaccount_name
-        ).get_token()
-
-        headers = {
-            "AI-Resource-Group": subaccount.resource_group,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {subaccount_token}",
-            "AI-Tenant-Id": subaccount.service_key.identity_zone_id,
-        }
-
-        logger.info(
-            "CHAT: tid=%s, url=%s, model=%s, sub_account=%s",
-            tid,
-            endpoint_url,
-            effective_model,
-            subaccount_name,
-        )
-
         if not is_stream:
-            return await _handle_non_streaming_request(
-                request,
-                endpoint_url,
-                headers,
-                modified_payload,
-                original_model,
-                subaccount_name,
-                tid,
+            response_data = await run_in_threadpool(
+                client.invoke,
+                subaccount=subaccount,
+                token=token,
+                model=canonical_model,
+                messages=messages,
+                params=params,
             )
-
-        return StreamingResponse(
-            generate_streaming_response(
-                request,
-                endpoint_url,
-                headers,
-                modified_payload,
-                original_model,
-                subaccount_name,
+            usage = response_data.get("usage", {})
+            logger.info(
+                "CHAT_RSP_V2: tid=%s, user=%s, ip=%s, model=%s, sub_account=%s, "
+                "prompt_tokens=%s, completion_tokens=%s, total_tokens=%s",
                 tid,
-            ),
-            media_type="text/event-stream",
-        )
+                user_id,
+                ip_address,
+                canonical_model,
+                subaccount_name,
+                usage.get("prompt_tokens", 0),
+                usage.get("completion_tokens", 0),
+                usage.get("total_tokens", 0),
+            )
+            transport_logger.info(
+                "RSP: tid=%s, status=200, body=%s", tid, json.dumps(response_data)
+            )
+            return JSONResponse(response_data)
 
-    except ValueError as err:
-        logger.error("CHAT: Value error, tid=%s, %s", tid, str(err), exc_info=True)
-        return JSONResponse({"error": str(err)}, status_code=400)
+        # Streaming
+        async def _stream_gen():
+            async for chunk in _iter_sync_generator(
+                client.invoke_stream(
+                    subaccount=subaccount,
+                    token=token,
+                    model=canonical_model,
+                    messages=messages,
+                    params=params,
+                )
+            ):
+                yield chunk
+
+        return StreamingResponse(_stream_gen(), media_type="text/event-stream")
 
     except Exception as err:
-        logger.error("CHAT: Unexpected error, tid=%s, %s", tid, str(err), exc_info=True)
+        import requests as _requests
+
+        if isinstance(err, _requests.HTTPError) and err.response is not None:
+            status = err.response.status_code
+            try:
+                err_body = err.response.json()
+            except Exception:
+                err_body = {"error": str(err)}
+            logger.error(
+                "CHAT_V2: HTTP error %s, tid=%s, %s", status, tid, str(err)
+            )
+            return JSONResponse(err_body, status_code=status)
+
+        logger.error(
+            "CHAT_V2: Unexpected error, tid=%s, %s", tid, str(err), exc_info=True
+        )
         return JSONResponse({"error": str(err)}, status_code=500)
+
+
+async def _iter_sync_generator(gen):
+    """Async wrapper for a synchronous generator."""
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    sentinel = object()
+
+    def _next():
+        try:
+            return next(gen)
+        except StopIteration:
+            return sentinel
+
+    while True:
+        chunk = await loop.run_in_executor(None, _next)
+        if chunk is sentinel:
+            break
+        yield chunk

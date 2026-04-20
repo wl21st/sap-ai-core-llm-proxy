@@ -336,37 +336,27 @@ class TestSubAccountConfig:
         )
 
     def test_normalize_model_names(self, mocker, sample_service_key_raw, tmp_path):
-        """Test model name normalization."""
-        from config.config_parser import (
-            _build_mapping_for_subaccount,
-            _load_service_key_for_subaccount,
-        )
+        """Test subaccount config with orchestration_url (new V2 schema)."""
+        from config.config_parser import _load_service_key_for_subaccount
 
         # Create temp key file
         key_file = tmp_path / "test_key.json"
         key_file.write_text(json.dumps(sample_service_key_raw))
 
+        orch_url = "https://api.ai.com/v2/inference/deployments/orch/completion"
         config = SubAccountConfig(
             name="test",
             resource_group="default",
             service_key_json=str(key_file),
-            model_to_deployment_urls={
-                "anthropic--claude-3.5-sonnet": [
-                    "https://api.ai.com/v2/inference/deployments/deployment1"
-                ],
-                "gpt-4": ["https://api.ai.com/v2/inference/deployments/deployment2"],
-            },
+            orchestration_url=orch_url,
         )
 
-        # Load service key and mock auto-discovery
+        # Load service key
         _load_service_key_for_subaccount(config)
-        mocker.patch("config.config_parser.fetch_all_deployments", return_value=[])
 
-        _build_mapping_for_subaccount(config)
-
-        # Check that build_mapping populates model_to_deployment_ids
-        assert "anthropic--claude-3.5-sonnet" in config.model_to_deployment_ids
-        assert "gpt-4" in config.model_to_deployment_ids
+        # In the new schema, orchestration_url is the single routing target
+        assert config.orchestration_url == orch_url
+        assert config.service_key is not None
 
 
 class TestProxyConfig:
@@ -1135,8 +1125,9 @@ class TestIntegration:
             identity_zone_id="zone",
         )
 
+        subaccount.orchestration_url = "https://orch.url/completion"
         proxy_server.proxy_config.subaccounts["account1"] = subaccount
-        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+        proxy_server.proxy_config.model_to_subaccounts = {"*": ["account1"]}
 
         response = flask_client.post(
             "/v1/chat/completions",

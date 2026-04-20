@@ -105,18 +105,12 @@ def setup_test_config():
         api_url="https://test.api.com",
         identity_zone_id="test-zone",
     )
-    test_subaccount.model_to_deployment_urls = {
-        "gpt-4o": ["https://test.api.com/gpt4"],
-        "anthropic--claude-4.5-sonnet": ["https://test.api.com/claude"],
-        "gemini-2.5-pro": ["https://test.api.com/gemini"],
-    }
+    # V2 schema: single orchestration_url instead of per-model deployment URLs
+    test_subaccount.orchestration_url = "https://test.api.com/orchestration/completion"
 
     proxy_server.proxy_config.subaccounts = {"test-sub": test_subaccount}
-    proxy_server.proxy_config.model_to_subaccounts = {
-        "gpt-4o": ["test-sub"],
-        "anthropic--claude-4.5-sonnet": ["test-sub"],
-        "gemini-2.5-pro": ["test-sub"],
-    }
+    # Use wildcard key for V2 orchestration routing
+    proxy_server.proxy_config.model_to_subaccounts = {"*": ["test-sub"]}
     proxy_server.proxy_config.secret_authentication_tokens = ["test-token-123"]
 
     yield
@@ -314,87 +308,77 @@ class TestProxyOpenAIStreamEndpoint:
     """Test cases for proxy_openai_stream endpoint."""
 
     @patch("auth.request_validator.RequestValidator.validate")
-    @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_claude_model_success(
-        self, mock_post, mock_validate, client, setup_test_config
+        self, mock_validate, client, setup_test_config
     ):
-        """Test successful Claude model request via proxy_openai_stream."""
+        """Test successful Claude model request via Orchestration V2."""
         mock_validate.return_value = True
 
-        mock_token = Mock()
-        mock_token.get_token.return_value = "test-token"
-        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
-
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "output": {
-                "message": {"role": "assistant", "content": [{"text": "Hello"}]}
-            },
-            "stopReason": "end_turn",
-            "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+        openai_response = {
+            "id": "chatcmpl-abc",
+            "choices": [{"message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         }
-        mock_response.text = '{"output": {"message": {"role": "assistant", "content": [{"text": "Hello"}]}}}'
-        mock_response.raise_for_status = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {}
-        mock_response.content = b'{"output": {"message": {"role": "assistant", "content": [{"text": "Hello"}]}}}'
-        mock_post.return_value = mock_response
 
-        response = client.post(
-            "/v1/chat/completions",
-            json={
-                "model": "anthropic--claude-4.5-sonnet",
-                "messages": [{"role": "user", "content": "Hello"}],
-                "stream": False,
-            },
-            headers={"Authorization": "Bearer test-token-123"},
-        )
+        # Patch token manager to return a token directly (avoids requests.post for token)
+        with patch("auth.token_manager.TokenManager.get_token", return_value="test-tok"):
+            with patch("utils.orchestration_client.requests.post") as mock_post:
+                mock_resp = Mock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = openai_response
+                mock_resp.raise_for_status = Mock()
+                mock_post.return_value = mock_resp
+
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "anthropic--claude-4.5-sonnet",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "stream": False,
+                    },
+                    headers={"Authorization": "Bearer test-token-123"},
+                )
 
         assert response.status_code == 200
         data = response.json()
         assert "choices" in data
 
     @patch("auth.request_validator.RequestValidator.validate")
-    @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_gemini_model_success(
-        self, mock_post, mock_validate, client, setup_test_config
+        self, mock_validate, client, setup_test_config
     ):
-        """Test successful Gemini model request via proxy_openai_stream."""
+        """Test successful Gemini model request via Orchestration V2."""
         mock_validate.return_value = True
 
-        mock_token = Mock()
-        mock_token.get_token.return_value = "test-token"
-        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
-
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}],
-            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 10},
+        openai_response = {
+            "id": "chatcmpl-gemini",
+            "choices": [{"message": {"role": "assistant", "content": "Hello from Gemini"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15},
         }
-        mock_response.raise_for_status = Mock()
-        mock_response.status_code = 200
-        mock_response.headers = {}
-        mock_response.text = (
-            '{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
-        )
-        mock_response.content = (
-            b'{"candidates": [{"content": {"parts": [{"text": "Hello from Gemini"}]}}]}'
-        )
-        mock_post.return_value = mock_response
 
-        response = client.post(
-            "/v1/chat/completions",
-            json={
-                "model": "gemini-2.5-pro",
-                "messages": [{"role": "user", "content": "Hello"}],
-                "stream": False,
-            },
-            headers={"Authorization": "Bearer test-token-123"},
-        )
+        with patch("auth.token_manager.TokenManager.get_token", return_value="test-tok"):
+            with patch("utils.orchestration_client.requests.post") as mock_post:
+                mock_resp = Mock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = openai_response
+                mock_resp.raise_for_status = Mock()
+                mock_post.return_value = mock_resp
+
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "gemini-2.5-pro",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "stream": False,
+                    },
+                    headers={"Authorization": "Bearer test-token-123"},
+                )
 
         assert response.status_code == 200
         data = response.json()
         assert "choices" in data
+
+    # Duplicate removed — see test_proxy_openai_stream_gemini_model_success above
 
     @patch("auth.request_validator.RequestValidator.validate")
     def test_proxy_openai_stream_unauthorized(
@@ -463,36 +447,41 @@ class TestProxyOpenAIStreamEndpoint:
         assert response.status_code == 404
 
     @patch("auth.request_validator.RequestValidator.validate")
-    @patch("proxy_server.requests.post")
     def test_proxy_openai_stream_streaming_response(
-        self, mock_post, mock_validate, client, setup_test_config
+        self, mock_validate, client, setup_test_config
     ):
-        """Test streaming response from proxy_openai_stream."""
+        """Test streaming response from proxy_openai_stream via Orchestration V2."""
         mock_validate.return_value = True
 
-        mock_token = Mock()
-        mock_token.get_token.return_value = "test-token"
-        proxy_server.ctx.get_token_manager = Mock(return_value=mock_token)
-
-        # Mock streaming response with context manager support
-        mock_response = Mock()
-        mock_response.iter_lines.return_value = [
-            b'data: {"id":"chatcmpl-123","choices":[{"delta":{"content":"Hello"},"index":0}]}\n',
-            b"data: [DONE]\n",
+        sse_chunks = [
+            b'data: {"id":"chatcmpl-123","choices":[{"delta":{"content":"Hello"},"index":0}]}\n\n',
+            b"data: [DONE]\n\n",
         ]
-        mock_response.__enter__ = Mock(return_value=mock_response)
-        mock_response.__exit__ = Mock(return_value=None)
-        mock_post.return_value = mock_response
 
-        response = client.post(
-            "/v1/chat/completions",
-            json={
-                "model": "gpt-4o",
-                "messages": [{"role": "user", "content": "Hello"}],
-                "stream": True,
-            },
-            headers={"Authorization": "Bearer test-token-123"},
-        )
+        with patch("utils.orchestration_client.requests.post") as mock_post:
+            mock_resp = Mock()
+            mock_resp.status_code = 200
+            mock_resp.raise_for_status = Mock()
+            mock_resp.__enter__ = Mock(return_value=mock_resp)
+            mock_resp.__exit__ = Mock(return_value=False)
+            mock_resp.iter_content.return_value = iter(sse_chunks)
+            mock_post.return_value = mock_resp
+
+            with patch("auth.token_manager.requests.post") as mock_token_post:
+                mock_token_resp = Mock()
+                mock_token_resp.json.return_value = {"access_token": "tok", "expires_in": 3600}
+                mock_token_resp.raise_for_status = Mock()
+                mock_token_post.return_value = mock_token_resp
+
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "gpt-4o",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "stream": True,
+                    },
+                    headers={"Authorization": "Bearer test-token-123"},
+                )
 
         assert response.status_code == 200
         assert "text/event-stream" in response.headers["content-type"]

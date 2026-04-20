@@ -19,7 +19,7 @@ So it is compatible with any application that supports the OpenAI API, so you ca
 
 - <https://developers.sap.com/tutorials/ai-core-generative-ai.html>
 
-Once the LLM model is deployed, obtain the URL and update it in the config.json file: `deployment_models`.
+Once the SAP AI Core **Orchestration service** is deployed in your subaccount, add its URL to `config.json` as `orchestration_url`. The proxy will route all models through this single endpoint.
 
 ## Quick Start
 
@@ -252,13 +252,99 @@ $(python -c 'import certifi; print(certifi.where())')
 - Check that your certificate bundle is current: `openssl x509 -in /path/to/cert.pem -noout -dates`
 - For self-signed certificates in development, you can skip verification by setting `ca_cert_bundle: false` (not recommended for production)
 
-### Multi-Account Configuration
+### Multi-Account Configuration (Orchestration V2 — Current Schema)
 
-   You can configure deployments using either **deployment URLs** (full URLs) or **deployment IDs** (simplified). The proxy will automatically resolve deployment IDs to URLs using the SAP AI Core SDK.
+   Each subaccount needs a single `orchestration_url` pointing to the running SAP AI Core
+   Orchestration service deployment. All models are routed through this single endpoint.
 
-   #### Option 1: Using Deployment IDs (Simplified - Recommended)
+   **The proxy auto-discovers the orchestration URL at startup** if not explicitly provided.
 
-   Configure using deployment IDs found in SAP AI Launchpad. The proxy will automatically fetch the full URLs at startup:
+   #### Recommended Configuration
+
+   ```json
+   {
+       "secret_authentication_tokens": ["your-proxy-token"],
+       "port": 3001,
+       "subAccounts": {
+           "subAccount1": {
+               "resource_group": "default",
+               "service_key_json": "demokey1.json",
+               "orchestration_url": "https://api.ai.prod1.cfapps.sap.hana.ondemand.com/v2/inference/deployments/<orch-deployment-id>"
+           },
+           "subAccount2": {
+               "resource_group": "default",
+               "service_key_json": "demokey2.json",
+               "orchestration_url": "https://api.ai.prod2.cfapps.sap.hana.ondemand.com/v2/inference/deployments/<orch-deployment-id>"
+           }
+       }
+   }
+   ```
+
+   > **Note**: The `orchestration_url` should be the URL of your Orchestration service deployment,
+   > optionally ending with `/completion`. If your URL does not end with `/completion`, the proxy
+   > appends it automatically.
+
+   #### Auto-Discovery (No explicit URL required)
+
+   If `orchestration_url` is omitted, the proxy calls `GET /v2/lm/deployments` at startup and
+   auto-discovers the orchestration service deployment URL for each subaccount. Explicit
+   `orchestration_url` takes priority over auto-discovery.
+
+   #### Model Aliases (Optional)
+
+   Create `config/aliases.json` to map custom model name aliases to canonical Orchestration V2 names:
+
+   ```json
+   {
+     "my-gpt": "gpt-4o",
+     "claude-latest": "anthropic--claude-4.5-sonnet"
+   }
+   ```
+
+   If the file is absent, a comprehensive set of default aliases is used (see `utils/model_aliases.py`).
+
+   ---
+
+   ### Migration Guide: From Per-Model Deployments (Legacy)
+
+   > **BREAKING CHANGE**: The `deployment_ids` and `deployment_models` fields are no longer used
+   > for routing. Subaccounts must use `orchestration_url` (or rely on auto-discovery).
+
+   **Old config (deprecated)**:
+   ```json
+   {
+       "subAccounts": {
+           "subAccount1": {
+               "service_key_json": "key.json",
+               "deployment_ids": {
+                   "gpt-4o": ["d12345"]
+               }
+           }
+       }
+   }
+   ```
+
+   **New config**:
+   ```json
+   {
+       "subAccounts": {
+           "subAccount1": {
+               "service_key_json": "key.json",
+               "orchestration_url": "https://.../<orch-deployment-id>"
+           }
+       }
+   }
+   ```
+
+   The proxy emits a `DeprecationWarning` and logs a warning if `deployment_ids` or
+   `deployment_models` are still present in a subaccount config.
+
+   ---
+
+   #### Legacy: Option 1: Using Deployment IDs (Deprecated)
+
+   > This option is kept for backward compat but the deployment IDs are no longer resolved.
+   > Migrate to `orchestration_url`.
 
    ```json
    {

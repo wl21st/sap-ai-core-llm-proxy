@@ -1790,7 +1790,7 @@ requires-dist = [
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
     { name = "requests", specifier = "==2.33.0" },
     { name = "ruff", specifier = "==0.15.8" },
-    { name = "sap-ai-sdk-gen", specifier = "==6.6.0" },
+    { name = "sap-ai-sdk-gen", specifier = ">=6.7.0" },
     { name = "tenacity", specifier = ">=9.0.0" },
     { name = "types-requests", specifier = "==2.33.0.20260327" },
     { name = "uvicorn", specifier = "==0.42.0" },
@@ -1816,7 +1816,7 @@ dev = [
 
 [[package]]
 name = "sap-ai-sdk-base"
-version = "3.2.3"
+version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aenum" },
@@ -1824,24 +1824,24 @@ dependencies = [
     { name = "requests" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/c2/5ebdee4b53d04261fffffb9bc8d15c4704c0d3cee444dcd6dba5ed7dd65c/sap_ai_sdk_base-3.2.3-py3-none-any.whl", hash = "sha256:c06a7c8800d17a83948cfce31623da4cf91f91a7f793e52c472d221d7d2e3474", size = 268507, upload-time = "2026-02-03T10:17:01.119Z" },
+    { url = "https://files.pythonhosted.org/packages/51/20/de65ea58dc055383a5e94c01e1167deb6e28e4a73302861a26c557d14317/sap_ai_sdk_base-3.4.0-py3-none-any.whl", hash = "sha256:0f820e5b4976989d9d178c64bc989d0f80fc61442b64e96851628ddacfadb366", size = 269697, upload-time = "2026-03-30T14:17:09.99Z" },
 ]
 
 [[package]]
 name = "sap-ai-sdk-core"
-version = "3.1.6"
+version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "sap-ai-sdk-base" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/4f/24ccb262824ed59e2ac7b15f264b9fad9511915515da0ae3a899aa0a13b2/sap_ai_sdk_core-3.1.6-py3-none-any.whl", hash = "sha256:b812b47c6227fa5c172ecb9998e2c0948ab625bdac8365fd14fd8e606884a4e4", size = 119927, upload-time = "2026-02-03T11:42:08.783Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/90/dfbc54df9eeccc48050bafbc79fdb22c6899d8257942ac4bc496693302fc/sap_ai_sdk_core-3.3.0-py3-none-any.whl", hash = "sha256:f13552ab3525bc559a212951b4ae02d992722e355ae0e997cd129199bdad64e3", size = 120098, upload-time = "2026-03-30T14:23:02.289Z" },
 ]
 
 [[package]]
 name = "sap-ai-sdk-gen"
-version = "6.6.0"
+version = "6.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1861,7 +1861,7 @@ dependencies = [
     { name = "sap-ai-sdk-core" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/4b/f478d7bb47ca12ac1a2c9a1903d9cf0d90d165a64666e801a8b6494805cc/sap_ai_sdk_gen-6.6.0-py3-none-any.whl", hash = "sha256:02dbb0b0c877e3ebeec6cd5c6b4aac63df3965f56bc80c79123a363d9f8ecab9", size = 2213315, upload-time = "2026-03-11T09:26:36.747Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/ff/f461483d53f592d4795ee024ae6591bb06d1917e845c59487e017b1e2748/sap_ai_sdk_gen-6.7.0-py3-none-any.whl", hash = "sha256:5bc3c54b6bb36039db59a4c35069d6bc91409e8f8219654e707082e2cab74a4f", size = 2216344, upload-time = "2026-03-30T14:30:56.364Z" },
 ]
 
 [[package]]
