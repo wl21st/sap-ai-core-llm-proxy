@@ -43,6 +43,7 @@ STATIC_FALLBACK_MODELS: list[dict] = [
     {"name": "anthropic--claude-4-opus", "provider": "anthropic"},
     {"name": "anthropic--claude-4.5-sonnet", "provider": "anthropic"},
     {"name": "anthropic--claude-4.5-haiku", "provider": "anthropic"},
+    {"name": "haiku-4.5", "provider": "anthropic"},
     # Google Gemini models
     {"name": "gemini-2.0-flash", "provider": "google"},
     {"name": "gemini-2.0-flash-lite", "provider": "google"},

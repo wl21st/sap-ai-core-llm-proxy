@@ -344,7 +344,7 @@ def fetch_all_deployments(
                         "model_name": None,
                     }
 
-                    # Try to extract backend model name
+                    # Try to extract backend model name and configuration name
                     try:
                         if hasattr(deployment, "details") and deployment.details:
                             details = deployment.details
@@ -362,6 +362,9 @@ def fetch_all_deployments(
                                     info["model_name"] = backend_details["model"][
                                         "name"
                                     ]
+                        # Also extract configurationName if available
+                        if hasattr(deployment, "configurationName"):
+                            info["configuration_name"] = deployment.configurationName
                     except Exception as e:
                         logger.debug(
                             f"Could not extract backend model for deployment {deployment.id}: {e}"

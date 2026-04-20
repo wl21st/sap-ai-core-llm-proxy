@@ -411,8 +411,10 @@ def _auto_discover_orchestration_url(
     """Discover the orchestration service deployment URL from SAP AI Core.
 
     Calls GET /v2/lm/deployments and filters for deployments running the
-    orchestration service (model_name contains 'orchestration' or
-    configurationName contains 'orchestration').
+    orchestration service using multiple heuristics:
+    1. URL ends with '/completion' (most reliable indicator)
+    2. Model name contains 'orchestration'
+    3. Configuration name contains 'orchestration'
 
     Args:
         sub_account_config: The subaccount config with a loaded service key
@@ -435,15 +437,28 @@ def _auto_discover_orchestration_url(
     for dep in discovered_deployments:
         url = dep.get("url", "")
         model_name = dep.get("model_name") or ""
-        # Orchestration service deployments typically have 'orchestration' in the path
-        # or in their model/config name
-        if url and (
-            "orchestration" in url.lower() or "orchestration" in model_name.lower()
-        ):
+        config_name = dep.get("configuration_name") or ""
+
+        # Multiple heuristics to detect orchestration service deployment
+        is_orchestration = (
+            # 1. URL ends with '/completion' (SAP AI Core orchestration endpoint pattern)
+            (url and url.rstrip("/").endswith("/completion"))
+            # 2. Model name contains 'orchestration'
+            or "orchestration" in model_name.lower()
+            # 3. Configuration name contains 'orchestration'
+            or "orchestration" in config_name.lower()
+        )
+
+        if url and is_orchestration:
+            # Ensure URL ends with '/completion' for orchestration endpoint
+            orchestration_url = url.rstrip("/")
+            if not orchestration_url.endswith("/completion"):
+                orchestration_url = f"{orchestration_url}/completion"
+
             logger.info(
-                f"Auto-discovered orchestration URL for '{sub_account_config.name}': {url}"
+                f"Auto-discovered orchestration URL for '{sub_account_config.name}': {orchestration_url}"
             )
-            return url
+            return orchestration_url
 
     logger.warning(
         f"No orchestration service deployment found in '{sub_account_config.name}'. "

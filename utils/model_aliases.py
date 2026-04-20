@@ -51,6 +51,7 @@ DEFAULT_ALIASES: dict[str, str] = {
     # claude-4.5-haiku
     "claude-4.5-haiku": "anthropic--claude-4.5-haiku",
     "claude-4-5-haiku": "anthropic--claude-4.5-haiku",
+    "haiku-4.5": "anthropic--claude-4.5-haiku",
     # Bare shorthand (resolve to latest sonnet as reasonable default)
     "claude": "anthropic--claude-4.5-sonnet",
     "claude-sonnet": "anthropic--claude-4.5-sonnet",

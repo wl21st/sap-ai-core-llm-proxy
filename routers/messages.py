@@ -84,6 +84,17 @@ async def proxy_claude_request(request: Request):
 
     # Validate against foundation model registry if available
     registry = getattr(proxy_context, "foundation_model_registry", None)
+    if registry is not None:
+        # Refresh registry (respecting TTL) to ensure we have the latest models
+        try:
+            registry.refresh(
+                subaccounts=proxy_config.subaccounts,
+                token_managers=proxy_context.token_managers,
+                ca_cert_bundle=getattr(proxy_context, "ca_cert_bundle", None),
+            )
+        except Exception as exc:
+            logger.warning("Failed to refresh foundation model registry: %s", exc)
+    
     if registry is not None and not registry.is_known_model(canonical_model):
         logger.warning(
             "Model '%s' not in foundation model registry (tid=%s)", canonical_model, tid
