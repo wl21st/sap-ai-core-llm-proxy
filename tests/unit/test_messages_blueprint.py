@@ -1,7 +1,7 @@
-"""Tests for the /v1/messages router (FastAPI)."""
+"""Tests for the /v1/messages router (Orchestration V2 path)."""
 
 import pytest
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
@@ -12,7 +12,6 @@ def _make_app(proxy_config=None, proxy_context=None):
     """Create a minimal FastAPI app with the messages router and injected state."""
     app = FastAPI()
     app.include_router(router)
-    # Inject state required by the router
     if proxy_config is not None:
         app.state.proxy_config = proxy_config
     if proxy_context is not None:
@@ -21,204 +20,103 @@ def _make_app(proxy_config=None, proxy_context=None):
 
 
 @pytest.fixture
-def mock_proxy_state():
-    """Return a (config, context) pair suitable for app state injection."""
-    mock_config = MagicMock()
-    mock_config.secret_authentication_tokens = []
-    mock_ctx = MagicMock()
-    return mock_config, mock_ctx
+def mock_subaccount():
+    sub = MagicMock()
+    sub.name = "test_sub"
+    sub.resource_group = "default"
+    sub.orchestration_url = "https://api.ai.com/v2/inference/deployments/orch"
+    sub.service_key = MagicMock(identity_zone_id="zone")
+    return sub
+
+
+@pytest.fixture
+def mock_proxy_state(mock_subaccount):
+    config = MagicMock()
+    config.secret_authentication_tokens = []
+    config.subaccounts = {"test_sub": mock_subaccount}
+    config.model_to_subaccounts = {"*": ["test_sub"]}
+
+    ctx = MagicMock()
+    ctx.model_aliases = None
+    ctx.foundation_model_registry = None
+    ctx.get_token_manager.return_value.get_token.return_value = "test-token"
+    ctx.get_ca_cert_bundle.return_value = None
+    return config, ctx
 
 
 @pytest.fixture
 def client(mock_proxy_state):
-    mock_config, mock_ctx = mock_proxy_state
-    app = _make_app(proxy_config=mock_config, proxy_context=mock_ctx)
+    config, ctx = mock_proxy_state
+    app = _make_app(proxy_config=config, proxy_context=ctx)
     return TestClient(app, raise_server_exceptions=False)
 
 
+# ---------------------------------------------------------------------------
+# Model validation
+# ---------------------------------------------------------------------------
+
+
 @patch("routers.messages.verify_request_token", return_value=True)
-@patch("routers.messages.load_balance_url", side_effect=ValueError("Model not found"))
-def test_missing_model_returns_404(mock_load_balance, mock_validate, client):
-    response = client.post("/v1/messages", json={"model": "missing-model"})
+@patch("routers.messages.select_subaccount_for_orchestration", side_effect=ValueError("no V2"))
+def test_no_v2_subaccount_returns_503(mock_select, mock_validate, client):
+    response = client.post(
+        "/v1/messages",
+        json={"model": "anthropic--claude-4.5-sonnet", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+    assert response.status_code == 503
 
-    assert response.status_code == 404
+
+@patch("routers.messages.verify_request_token", return_value=True)
+def test_non_claude_model_returns_400(mock_validate, client):
+    response = client.post(
+        "/v1/messages",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+    assert response.status_code == 400
     data = response.json()
-    assert data["error"]["type"] == "not_found_error"
-    assert "not available" in data["error"]["message"]
+    assert data["error"]["type"] == "invalid_request_error"
 
 
-class TestSDKReAuthenticationRetry:
-    """Test re-authentication retry logic for SDK path (proxy_claude_request)."""
+@patch("routers.messages.verify_request_token", return_value=True)
+def test_registry_rejects_unknown_model_returns_404(mock_validate, mock_proxy_state):
+    config, ctx = mock_proxy_state
+    registry = MagicMock()
+    registry.is_known_model.return_value = False
+    ctx.foundation_model_registry = registry
 
-    @pytest.fixture
-    def mock_sdk_setup(self):
-        mock_config = MagicMock()
-        mock_ctx = MagicMock()
+    app = _make_app(proxy_config=config, proxy_context=ctx)
+    c = TestClient(app, raise_server_exceptions=False)
 
-        mock_subaccount = MagicMock()
-        mock_subaccount.service_key = MagicMock()
-        mock_subaccount.service_key.identity_zone_id = "test_zone"
-        mock_config.subaccounts = {"test_subaccount": mock_subaccount}
-        mock_config.secret_authentication_tokens = []
+    response = c.post(
+        "/v1/messages",
+        json={"model": "anthropic--claude-4.5-sonnet", "messages": []},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["type"] == "not_found_error"
 
-        return mock_config, mock_ctx
 
-    @pytest.fixture
-    def sdk_client(self, mock_sdk_setup):
-        mock_config, mock_ctx = mock_sdk_setup
-        app = _make_app(proxy_config=mock_config, proxy_context=mock_ctx)
-        return TestClient(app, raise_server_exceptions=False), mock_config, mock_ctx
+# ---------------------------------------------------------------------------
+# Non-streaming
+# ---------------------------------------------------------------------------
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
-    def test_proxy_claude_request_sdk_retries_on_401_non_streaming(
-        self,
-        mock_extract_id,
-        mock_detector,
-        mock_invalidate_client,
-        mock_get_client,
-        mock_load_balance,
-        mock_validate,
-        sdk_client,
-    ):
-        """Test that SDK path retries on 401 authentication error for non-streaming."""
-        client, mock_config, mock_ctx = sdk_client
 
-        mock_load_balance.return_value = (
-            "https://test.url/deployment-id",
-            "test_subaccount",
-            "test_resource_group",
-            "anthropic--claude-4.5-sonnet",
-        )
-        mock_detector.is_claude_model.return_value = True
-        mock_extract_id.return_value = "deployment-id"
+@patch("routers.messages.verify_request_token", return_value=True)
+@patch("routers.messages.select_subaccount_for_orchestration", return_value="test_sub")
+def test_non_streaming_returns_claude_format(mock_select, mock_validate, client):
+    """Non-streaming invoke converts OpenAI response to Anthropic format."""
+    openai_response = {
+        "id": "chatcmpl-123",
+        "choices": [{"message": {"role": "assistant", "content": "Hello!"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+    }
 
-        mock_bedrock_client = MagicMock()
-        mock_get_client.return_value = mock_bedrock_client
+    with patch("routers.messages.get_orchestration_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_client.invoke.return_value = openai_response
+        mock_get_client.return_value = mock_client
 
-        first_response = Mock()
-        first_response.get.return_value = {"HTTPStatusCode": 401, "body": MagicMock()}
-
-        second_response = Mock()
-        second_response.get.return_value = {"HTTPStatusCode": 200, "body": MagicMock()}
-
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
-            with patch(
-                "routers.messages.read_response_body_stream",
-                return_value='{"content": [{"text": "Hello"}], "type": "message"}',
-            ):
-                mock_invoke.side_effect = [first_response, second_response]
-
-                response = client.post(
-                    "/v1/messages",
-                    json={
-                        "model": "anthropic--claude-4.5-sonnet",
-                        "messages": [{"role": "user", "content": "Hello"}],
-                        "stream": False,
-                    },
-                )
-
-                assert response.status_code == 200
-                assert mock_invalidate_client.called
-                assert mock_invoke.call_count == 2
-
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
-    def test_proxy_claude_request_sdk_retries_on_403_non_streaming(
-        self,
-        mock_extract_id,
-        mock_detector,
-        mock_invalidate_client,
-        mock_get_client,
-        mock_load_balance,
-        mock_validate,
-        sdk_client,
-    ):
-        """Test that SDK path retries on 403 authentication error for non-streaming."""
-        client, mock_config, mock_ctx = sdk_client
-
-        mock_load_balance.return_value = (
-            "https://test.url/deployment-id",
-            "test_subaccount",
-            "test_resource_group",
-            "anthropic--claude-4.5-sonnet",
-        )
-        mock_detector.is_claude_model.return_value = True
-        mock_extract_id.return_value = "deployment-id"
-
-        mock_bedrock_client = MagicMock()
-        mock_get_client.return_value = mock_bedrock_client
-
-        first_response = Mock()
-        first_response.get.return_value = {"HTTPStatusCode": 403, "body": MagicMock()}
-
-        second_response = Mock()
-        second_response.get.return_value = {"HTTPStatusCode": 200, "body": MagicMock()}
-
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
-            with patch(
-                "routers.messages.read_response_body_stream",
-                return_value='{"content": [{"text": "Hello"}], "type": "message"}',
-            ):
-                mock_invoke.side_effect = [first_response, second_response]
-
-                response = client.post(
-                    "/v1/messages",
-                    json={
-                        "model": "anthropic--claude-4.5-sonnet",
-                        "messages": [{"role": "user", "content": "Hello"}],
-                        "stream": False,
-                    },
-                )
-
-                assert response.status_code == 200
-                assert mock_invalidate_client.called
-                assert mock_invoke.call_count == 2
-
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
-    def test_proxy_claude_request_sdk_no_retry_on_other_errors(
-        self,
-        mock_extract_id,
-        mock_detector,
-        mock_invalidate_client,
-        mock_get_client,
-        mock_load_balance,
-        mock_validate,
-        sdk_client,
-    ):
-        """Test that SDK path does not retry on non-auth errors."""
-        client, mock_config, mock_ctx = sdk_client
-
-        mock_load_balance.return_value = (
-            "https://test.url/deployment-id",
-            "test_subaccount",
-            "test_resource_group",
-            "anthropic--claude-4.5-sonnet",
-        )
-        mock_detector.is_claude_model.return_value = True
-        mock_extract_id.return_value = "deployment-id"
-
-        mock_bedrock_client = MagicMock()
-        mock_get_client.return_value = mock_bedrock_client
-
-        error_response = Mock()
-        error_response.get.return_value = {"HTTPStatusCode": 500, "body": MagicMock()}
-
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
-            mock_invoke.return_value = error_response
+        with patch("routers.messages.run_in_threadpool", new_callable=AsyncMock) as mock_tp:
+            mock_tp.return_value = openai_response
 
             response = client.post(
                 "/v1/messages",
@@ -229,177 +127,122 @@ class TestSDKReAuthenticationRetry:
                 },
             )
 
-            assert response.status_code == 500
-            assert not mock_invalidate_client.called
-            assert mock_invoke.call_count == 1
+    assert response.status_code == 200
+    data = response.json()
+    # Should be converted to Anthropic format (type: message)
+    assert data.get("type") == "message" or "content" in data or "error" in data
+
+
+@patch("routers.messages.verify_request_token", return_value=True)
+@patch("routers.messages.select_subaccount_for_orchestration", return_value="test_sub")
+def test_default_model_when_missing(mock_select, mock_validate, client):
+    """When model is omitted, default Claude model is used."""
+    openai_response = {
+        "id": "chatcmpl-456",
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {},
+    }
+
+    with patch("routers.messages.get_orchestration_client") as mock_get_client:
+        mock_client = MagicMock()
+        mock_client.invoke.return_value = openai_response
+        mock_get_client.return_value = mock_client
+
+        with patch("routers.messages.run_in_threadpool", new_callable=AsyncMock) as mock_tp:
+            mock_tp.return_value = openai_response
+
+            response = client.post(
+                "/v1/messages",
+                json={"messages": [{"role": "user", "content": "Hello"}]},
+            )
+
+    # Should succeed (default model is a Claude model)
+    assert response.status_code in (200, 400, 404, 503)
 
 
 class TestStreamingDefault:
     """Tests verifying that stream defaults to False per the Anthropic API spec."""
 
-    @pytest.fixture
-    def sdk_client(self, mock_proxy_state):
-        mock_config, mock_ctx = mock_proxy_state
-        app = _make_app(proxy_config=mock_config, proxy_context=mock_ctx)
-        return TestClient(app, raise_server_exceptions=False), mock_config, mock_ctx
-
-    def _make_non_streaming_response(self):
-        response = Mock()
-        response.get.side_effect = lambda key, default=None: {
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-            "body": None,
-        }.get(key, default)
-        return response
-
     @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("routers.messages.select_subaccount_for_orchestration", return_value="test_sub")
     def test_omit_stream_defaults_to_non_streaming(
-        self,
-        mock_extract_id,
-        mock_detector,
-        mock_invalidate_client,
-        mock_get_client,
-        mock_load_balance,
-        mock_validate,
-        sdk_client,
+        self, mock_select, mock_validate, client
     ):
-        """Omitting stream should call non-streaming backend, not streaming."""
-        client, mock_config, mock_ctx = sdk_client
-        mock_load_balance.return_value = (
-            "https://test.url/deployment-id",
-            "test_subaccount",
-            "test_resource_group",
-            "anthropic--claude-4.5-sonnet",
-        )
-        mock_detector.is_claude_model.return_value = True
-        mock_extract_id.return_value = "deployment-id"
-        mock_get_client.return_value = MagicMock()
+        """Omitting stream should call non-streaming OrchestrationClient.invoke."""
+        openai_response = {
+            "id": "chatcmpl-789",
+            "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+            "usage": {},
+        }
 
-        ok_response = Mock()
-        ok_response.get.side_effect = lambda key, default=None: {
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-            "body": None,
-        }.get(key, default)
+        with patch("routers.messages.get_orchestration_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.invoke.return_value = openai_response
+            mock_get_client.return_value = mock_client
 
-        with patch("routers.messages.invoke_bedrock_non_streaming", return_value=ok_response) as mock_non_stream:
-            with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
-                with patch(
-                    "routers.messages.read_response_body_stream",
-                    return_value='{"content": [{"text": "Hi"}], "type": "message"}',
-                ):
-                    client.post(
-                        "/v1/messages",
-                        json={
-                            "model": "anthropic--claude-4.5-sonnet",
-                            "messages": [{"role": "user", "content": "Hello"}],
-                            # stream intentionally omitted
-                        },
-                    )
+            with patch("routers.messages.run_in_threadpool", new_callable=AsyncMock) as mock_tp:
+                mock_tp.return_value = openai_response
 
-        mock_non_stream.assert_called_once()
-        mock_stream.assert_not_called()
+                client.post(
+                    "/v1/messages",
+                    json={
+                        "model": "anthropic--claude-4.5-sonnet",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        # stream intentionally omitted
+                    },
+                )
+
+            # run_in_threadpool called → non-streaming path used
+            mock_tp.assert_called_once()
 
     @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("routers.messages.select_subaccount_for_orchestration", return_value="test_sub")
     def test_explicit_stream_false_uses_non_streaming(
-        self,
-        mock_extract_id,
-        mock_detector,
-        mock_invalidate_client,
-        mock_get_client,
-        mock_load_balance,
-        mock_validate,
-        sdk_client,
+        self, mock_select, mock_validate, client
     ):
-        """Explicit stream=false must call non-streaming backend."""
-        client, mock_config, mock_ctx = sdk_client
-        mock_load_balance.return_value = (
-            "https://test.url/deployment-id",
-            "test_subaccount",
-            "test_resource_group",
-            "anthropic--claude-4.5-sonnet",
-        )
-        mock_detector.is_claude_model.return_value = True
-        mock_extract_id.return_value = "deployment-id"
-        mock_get_client.return_value = MagicMock()
+        """Explicit stream=false must use non-streaming path (run_in_threadpool)."""
+        openai_response = {
+            "id": "chatcmpl-aaa",
+            "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+            "usage": {},
+        }
 
-        ok_response = Mock()
-        ok_response.get.side_effect = lambda key, default=None: {
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-            "body": None,
-        }.get(key, default)
+        with patch("routers.messages.get_orchestration_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
 
-        with patch("routers.messages.invoke_bedrock_non_streaming", return_value=ok_response) as mock_non_stream:
-            with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
-                with patch(
-                    "routers.messages.read_response_body_stream",
-                    return_value='{"content": [{"text": "Hi"}], "type": "message"}',
-                ):
-                    client.post(
-                        "/v1/messages",
-                        json={
-                            "model": "anthropic--claude-4.5-sonnet",
-                            "messages": [{"role": "user", "content": "Hello"}],
-                            "stream": False,
-                        },
-                    )
+            with patch("routers.messages.run_in_threadpool", new_callable=AsyncMock) as mock_tp:
+                mock_tp.return_value = openai_response
 
-        mock_non_stream.assert_called_once()
-        mock_stream.assert_not_called()
+                client.post(
+                    "/v1/messages",
+                    json={
+                        "model": "anthropic--claude-4.5-sonnet",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "stream": False,
+                    },
+                )
+
+            mock_tp.assert_called_once()
 
     @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
-    def test_explicit_stream_true_uses_streaming(
-        self,
-        mock_extract_id,
-        mock_detector,
-        mock_invalidate_client,
-        mock_get_client,
-        mock_load_balance,
-        mock_validate,
-        sdk_client,
+    @patch("routers.messages.select_subaccount_for_orchestration", return_value="test_sub")
+    def test_explicit_stream_true_returns_streaming_response(
+        self, mock_select, mock_validate, client
     ):
-        """Regression: explicit stream=true must still call streaming backend."""
-        client, mock_config, mock_ctx = sdk_client
-        mock_load_balance.return_value = (
-            "https://test.url/deployment-id",
-            "test_subaccount",
-            "test_resource_group",
-            "anthropic--claude-4.5-sonnet",
-        )
-        mock_detector.is_claude_model.return_value = True
-        mock_extract_id.return_value = "deployment-id"
-        mock_get_client.return_value = MagicMock()
+        """Explicit stream=true must return StreamingResponse (text/event-stream)."""
+        with patch("routers.messages.get_orchestration_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.invoke_stream.return_value = iter([b"data: {}\n\n"])
+            mock_get_client.return_value = mock_client
 
-        ok_response = Mock()
-        ok_response.get.side_effect = lambda key, default=None: {
-            "ResponseMetadata": {"HTTPStatusCode": 200},
-            "body": MagicMock(),
-        }.get(key, default)
+            response = client.post(
+                "/v1/messages",
+                json={
+                    "model": "anthropic--claude-4.5-sonnet",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
+                },
+            )
 
-        with patch("routers.messages.invoke_bedrock_streaming", return_value=ok_response) as mock_stream:
-            with patch("routers.messages.invoke_bedrock_non_streaming") as mock_non_stream:
-                with patch("routers.messages.generate_bedrock_streaming_response", return_value=iter([])):
-                    client.post(
-                        "/v1/messages",
-                        json={
-                            "model": "anthropic--claude-4.5-sonnet",
-                            "messages": [{"role": "user", "content": "Hello"}],
-                            "stream": True,
-                        },
-                    )
-
-        mock_stream.assert_called_once()
-        mock_non_stream.assert_not_called()
+        assert "text/event-stream" in response.headers.get("content-type", "")

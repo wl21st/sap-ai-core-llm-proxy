@@ -13,8 +13,16 @@ from handlers.model_handlers import handle_default_request
 from handlers.streaming_generators import generate_streaming_response
 from handlers.streaming_handler import make_backend_request
 from load_balancer import load_balance_url, resolve_model_name
-from proxy_helpers import Detector
 from utils.logging_utils import get_server_logger, get_transport_logger
+
+
+def _is_claude_model(name: str) -> bool:
+    lower = name.lower()
+    return any(t in lower for t in ("claude", "anthropic--", "sonnet", "haiku", "opus"))
+
+
+def _is_gemini_model(name: str) -> bool:
+    return name.lower().startswith("gemini-")
 
 logger = get_server_logger(__name__)
 transport_logger = get_transport_logger(__name__)
@@ -28,7 +36,7 @@ API_VERSION_2023_05_15 = "2023-05-15"
 
 def _is_openai_model(model: str) -> bool:
     """Return True if the model is an OpenAI/GPT model (not Claude, not Gemini)."""
-    return not Detector.is_claude_model(model) and not Detector.is_gemini_model(model)
+    return not _is_claude_model(model) and not _is_gemini_model(model)
 
 
 @router.post(
@@ -105,7 +113,7 @@ async def openai_chat_completions(request: Request) -> JSONResponse | StreamingR
             payload=modified_payload,
             model=model,
             tid=tid,
-            is_claude_model_fn=Detector.is_claude_model,
+            is_claude_model_fn=_is_claude_model,
         )
 
         if not result.success:
@@ -167,7 +175,7 @@ async def openai_embeddings(request: Request) -> JSONResponse:
             payload={"input": input_text},
             model=resolved_model,
             tid=tid,
-            is_claude_model_fn=Detector.is_claude_model,
+             is_claude_model_fn=_is_claude_model,
         )
         if not result.success:
             return JSONResponse(

@@ -9,6 +9,7 @@ Similar to Spring Boot's ApplicationContext.
 import os
 import threading
 from logging import Logger
+from typing import Optional
 
 from config.config_models import ProxyConfig
 from utils import logging_utils
@@ -38,7 +39,7 @@ class ProxyGlobalContext:
         from auth.token_manager import (
             TokenManager,
         )  # Import here to avoid circular import
-        from utils.sdk_pool import resolve_ca_cert_bundle
+        from utils.cert_utils import resolve_ca_cert_bundle
 
         self.config = config
 
@@ -48,8 +49,9 @@ class ProxyGlobalContext:
         if self.ca_cert_bundle:
             logger.info(f"CA certificate bundle resolved: {self.ca_cert_bundle}")
             # Configure boto3/botocore to use the resolved certificate bundle
-            os.environ["AWS_CA_BUNDLE"] = self.ca_cert_bundle
-            logger.info(f"Set AWS_CA_BUNDLE environment variable to: {self.ca_cert_bundle}")
+            logger.info(
+                "CA bundle set: %s", self.ca_cert_bundle
+            )
 
         # Initialize token managers per subaccount with resolved certificate bundle
         self.token_managers = {}
@@ -57,6 +59,48 @@ class ProxyGlobalContext:
             self.token_managers[sub_name] = TokenManager(
                 sub_config, self.ca_cert_bundle
             )
+
+        # Startup health checks for Orchestration V2 URLs
+        from config.config_parser import check_orchestration_url_health
+
+        for sub_name, sub_config in config.subaccounts.items():
+            if sub_config.orchestration_url:
+                healthy = check_orchestration_url_health(
+                    sub_config.orchestration_url, self.ca_cert_bundle
+                )
+                if not healthy:
+                    logger.warning(
+                        "Orchestration URL for subaccount '%s' is not reachable at startup: %s. "
+                        "Requests to this subaccount may fail until connectivity is restored.",
+                        sub_name,
+                        sub_config.orchestration_url,
+                    )
+
+        # Populate the foundation model registry
+        from utils.foundation_model_registry import get_registry
+
+        registry = get_registry()
+        registry.populate(
+            subaccounts=config.subaccounts,
+            token_managers=self.token_managers,
+            ca_cert_bundle=self.ca_cert_bundle,
+        )
+        self.foundation_model_registry = registry
+
+        # Load model aliases (config/aliases.json if present, else defaults)
+        from utils.model_aliases import load_aliases_from_file, DEFAULT_ALIASES
+
+        # Look for aliases.json in the config/ subdirectory of the CWD
+        aliases_path = os.path.join("config", "aliases.json")
+        self.model_aliases = load_aliases_from_file(aliases_path, base_aliases=DEFAULT_ALIASES)
+
+        # Initialize OrchestrationClient singleton with resolved CA bundle
+        from utils.orchestration_client import OrchestrationClient
+        import utils.orchestration_client as _orch_module
+
+        _orch_module._client = OrchestrationClient(ca_cert_bundle=self.ca_cert_bundle)
+        self.orchestration_client = _orch_module._client
+
         logger.info(
             "ProxyGlobalContext initialized with %d subaccounts",
             len(config.subaccounts),

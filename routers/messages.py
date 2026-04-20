@@ -1,33 +1,23 @@
-"""Router for /v1/messages endpoint (Anthropic Claude Messages API)."""
+"""Router for /v1/messages endpoint (Anthropic Claude Messages API).
+
+Accepts native Anthropic Messages API requests, converts them to OpenAI format,
+routes through SAP AI Core Orchestration V2, then converts the response back to
+Anthropic format.
+"""
 
 import json
 import uuid
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
-from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
-from tenacity import RetryError
 
 from auth.request_validator import verify_request_token
-from handlers.bedrock_handler import (
-    invoke_bedrock_non_streaming,
-    invoke_bedrock_streaming,
-    read_response_body_stream,
-)
-from handlers.streaming_generators import (
-    generate_bedrock_streaming_response,
-    generate_claude_streaming_response,
-)
-from handlers.streaming_handler import make_backend_request
-from load_balancer import load_balance_url
+from load_balancer import select_subaccount_for_orchestration
 from proxy_helpers import Converters, Detector
-from utils.auth_retry import log_auth_error_retry
-from utils.cert_errors import is_certificate_error
 from utils.logging_utils import get_server_logger, get_transport_logger
-from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
-from config import SubAccountConfig
-from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
-from utils.sdk_utils import extract_deployment_id
+from utils.model_aliases import resolve_model_name as resolve_alias
+from utils.orchestration_client import get_orchestration_client
 
 logger = get_server_logger(__name__)
 transport_logger = get_transport_logger(__name__)
@@ -35,57 +25,15 @@ transport_logger = get_transport_logger(__name__)
 router = APIRouter()
 
 DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.5-sonnet"
-API_VERSION_BEDROCK_2023_05_31 = "bedrock-2023-05-31"
-API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
-API_VERSION_2023_05_15 = "2023-05-15"
-
-
-def _handle_certificate_recovery(
-    model: str,
-    sub_account_config: SubAccountConfig,
-    deployment_id: str,
-    body_json: str,
-    ca_cert_bundle: str | None,
-    is_streaming: bool,
-):
-    """Recover from certificate errors by invalidating session and retrying.
-
-    Consolidates certificate error recovery logic shared by streaming and non-streaming
-    handlers.
-
-    Returns:
-        Tuple of (bedrock_client, response_status, response_body)
-
-    Raises:
-        Exception: If recovery fails
-    """
-    logger.warning(
-        "Certificate error detected: invalidating SDK session and retrying",
-        exc_info=True,
-    )
-    invalidate_bedrock_client(model, invalidate_session=True)
-
-    bedrock_client = get_bedrock_client(
-        sub_account_config=sub_account_config,
-        model_name=model,
-        deployment_id=deployment_id,
-        ca_cert_bundle=ca_cert_bundle,
-    )
-
-    if is_streaming:
-        response = invoke_bedrock_streaming(bedrock_client, body_json)
-    else:
-        response = invoke_bedrock_non_streaming(bedrock_client, body_json)
-
-    response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-    response_body = response.get("body")
-
-    return bedrock_client, response_status, response_body
 
 
 @router.post("/v1/messages", dependencies=[Depends(verify_request_token)])
 async def proxy_claude_request(request: Request):
-    """Handles requests compatible with the Anthropic Claude Messages API."""
+    """Handles requests compatible with the Anthropic Claude Messages API.
+
+    Converts the Anthropic Messages request to OpenAI format, routes through
+    Orchestration V2, then converts the response back to Anthropic format.
+    """
     tid: str = str(uuid.uuid4())
 
     request_body_bytes = await request.body()
@@ -97,48 +45,31 @@ async def proxy_claude_request(request: Request):
 
     request_body_json = await request.json()
     request_model = request_body_json.get("model")
-    if (request_model is None) or (request_model == ""):
-        request_model = DEFAULT_CLAUDE_MODEL
-        logger.info("hardcode request_model to: %s", request_model)
-    else:
-        logger.info("request_model is: %s", request_model)
-
     if not request_model:
-        return JSONResponse(
-            {
-                "type": "error",
-                "error": {
-                    "type": "invalid_request_error",
-                    "message": "Missing 'model' parameter",
-                },
-            },
-            status_code=400,
-        )
+        request_model = DEFAULT_CLAUDE_MODEL
+        logger.info("No model in request, defaulting to: %s", request_model)
+    else:
+        logger.info("Request model: %s", request_model)
 
     proxy_config = request.app.state.proxy_config
     proxy_context = request.app.state.proxy_context
 
-    try:
-        selected_url, subaccount_name, resource_group, model = load_balance_url(
-            request_model, proxy_config
-        )
-    except ValueError as e:
-        logger.error("Model validation failed: %s", e, exc_info=True)
-        return JSONResponse(
-            {
-                "type": "error",
-                "error": {
-                    "type": "not_found_error",
-                    "message": f"Model '{request_model}' not available",
-                },
-            },
-            status_code=404,
+    # Resolve model alias
+    model_aliases = getattr(proxy_context, "model_aliases", None)
+    canonical_model = resolve_alias(request_model, model_aliases)
+    if canonical_model != request_model:
+        logger.info(
+            "Model alias resolved: '%s' → '%s' (tid=%s)",
+            request_model,
+            canonical_model,
+            tid,
         )
 
-    if not Detector.is_claude_model(model):
+    # Validate it's a Claude model (this endpoint is Claude-only)
+    if not Detector.is_claude_model(canonical_model) and not Detector.is_claude_model(request_model):
         logger.warning(
-            "Model '%s' is not a Claude model, falling back to original implementation",
-            model,
+            "Model '%s' is not a Claude model — /v1/messages only supports Claude",
+            canonical_model,
         )
         return JSONResponse(
             {
@@ -151,326 +82,217 @@ async def proxy_claude_request(request: Request):
             status_code=400,
         )
 
-    logger.info("Request from Claude API for model: %s", model)
+    # Validate against foundation model registry if available
+    registry = getattr(proxy_context, "foundation_model_registry", None)
+    if registry is not None and not registry.is_known_model(canonical_model):
+        logger.warning(
+            "Model '%s' not in foundation model registry (tid=%s)", canonical_model, tid
+        )
+        return JSONResponse(
+            {
+                "type": "error",
+                "error": {
+                    "type": "not_found_error",
+                    "message": f"Model '{canonical_model}' not available in foundation model registry.",
+                },
+            },
+            status_code=404,
+        )
+
+    # Round-robin subaccount selection
+    try:
+        subaccount_name = select_subaccount_for_orchestration(proxy_config)
+    except ValueError as e:
+        logger.error("No V2 subaccount available, tid=%s: %s", tid, e)
+        return JSONResponse(
+            {
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": f"No Orchestration V2 subaccount configured: {e}",
+                },
+            },
+            status_code=503,
+        )
+
+    subaccount = proxy_config.subaccounts[subaccount_name]
+    token = proxy_context.get_token_manager(subaccount_name).get_token()
     stream = request_body_json.get("stream", False)
 
-    # Extract ca_cert_bundle once to avoid repeated lookups
-    ca_cert_bundle = proxy_context.get_ca_cert_bundle()
+    # Convert Anthropic Messages → OpenAI Chat Completion format
+    openai_payload = Converters.convert_claude_request_to_openai(request_body_json)
+    openai_payload["model"] = canonical_model
+    if stream:
+        openai_payload["stream"] = True
+
+    messages = openai_payload.get("messages", [])
+    params = {
+        k: v
+        for k, v in openai_payload.items()
+        if k not in ("model", "messages", "stream")
+    }
+
+    logger.info(
+        "MESSAGES_V2: tid=%s, model=%s, sub=%s, stream=%s, msgs=%d",
+        tid,
+        canonical_model,
+        subaccount_name,
+        stream,
+        len(messages),
+    )
+
+    client = get_orchestration_client()
 
     try:
-        logger.info(
-            "Obtaining SAP AI SDK client for model[%s] for subaccount[%s]",
-            model,
-            subaccount_name,
-        )
-        bedrock_client: ClientWrapper = get_bedrock_client(
-            sub_account_config=proxy_config.subaccounts[subaccount_name],
-            model_name=model,
-            deployment_id=extract_deployment_id(selected_url),
-            ca_cert_bundle=ca_cert_bundle,
-        )
-        logger.info("SAP AI SDK client ready (cached)")
+        if not stream:
+            openai_response = await run_in_threadpool(
+                client.invoke,
+                subaccount=subaccount,
+                token=token,
+                model=canonical_model,
+                messages=messages,
+                params=params,
+            )
+            # Convert OpenAI response → Anthropic Messages response format
+            claude_response = Converters.convert_openai_response_to_claude(openai_response)
+            logger.info(
+                "MESSAGES_RSP: tid=%s, model=%s, sub=%s",
+                tid,
+                canonical_model,
+                subaccount_name,
+            )
+            transport_logger.info(
+                "RSP: tid=%s, status=200, body=%s", tid, json.dumps(claude_response)
+            )
+            return JSONResponse(claude_response)
 
-        conversation = request_body_json.get("messages", [])
-        logger.debug("Original conversation: %s", conversation)
+        # Streaming: convert OpenAI SSE chunks → Anthropic SSE chunks
+        async def _stream_gen():
+            msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+            # Send message_start event
+            yield _sse(
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": msg_id,
+                        "type": "message",
+                        "role": "assistant",
+                        "model": canonical_model,
+                        "content": [],
+                        "stop_reason": None,
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    },
+                }
+            )
+            yield _sse({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
+            yield _sse({"type": "ping"})
 
-        thinking_cfg_preview = request_body_json.get("thinking")
-        logger.info(
-            "Claude request context: stream=%s, messages=%s, has_thinking=%s",
-            stream,
-            len(conversation) if isinstance(conversation, list) else "unknown",
-            isinstance(thinking_cfg_preview, dict),
-        )
+            input_tokens = 0
+            output_tokens = 0
+            stop_reason = "end_turn"
 
-        for message in conversation:
-            content = message.get("content")
-            if isinstance(content, list):
-                items_to_remove = []
-                for i, item in enumerate(content):
-                    if item.get("type") == "text" and (
-                        not item.get("text") or item.get("text") == ""
-                    ):
-                        items_to_remove.append(i)
-                for i in reversed(items_to_remove):
-                    content.pop(i)
-
-        body = request_body_json.copy()
-        logger.info("Original request body keys: %s", list(body.keys()))
-        body.pop("model", None)
-        body.pop("stream", None)
-        body["anthropic_version"] = API_VERSION_BEDROCK_2023_05_31
-
-        unsupported_fields = ["context_management", "metadata", "output_config"]
-        for field in unsupported_fields:
-            if field in body:
-                logger.info(
-                    "Removing unsupported top-level field '%s' from request body",
-                    field,
+            async for chunk_bytes in _iter_sync_generator(
+                client.invoke_stream(
+                    subaccount=subaccount,
+                    token=token,
+                    model=canonical_model,
+                    messages=messages,
+                    params=params,
                 )
-                body.pop(field, None)
-
-        thinking_cfg = body.get("thinking")
-        if isinstance(thinking_cfg, dict) and "context_management" in thinking_cfg:
-            logger.info("Removing 'context_management' from thinking config")
-            thinking_cfg.pop("context_management", None)
-
-        tools_list = body.get("tools")
-        if isinstance(tools_list, list):
-            for tool in tools_list:
-                if isinstance(tool, dict):
-                    tool.pop("input_examples", None)
-                    custom = tool.get("custom")
-                    if isinstance(custom, dict):
-                        custom.pop("input_examples", None)
-
-        raw_max_tokens = body.get("max_tokens")
-        max_tokens_value = None
-        if raw_max_tokens is not None:
-            try:
-                max_tokens_value = int(raw_max_tokens)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Invalid max_tokens value '%s' in request; resetting to None",
-                    raw_max_tokens,
-                )
-                max_tokens_value = None
-
-        if isinstance(thinking_cfg, dict):
-            budget_tokens = thinking_cfg.get("budget_tokens")
-            if isinstance(budget_tokens, int):
-                required_min_tokens = budget_tokens + 1
-                if max_tokens_value is None or max_tokens_value <= budget_tokens:
-                    body["max_tokens"] = required_min_tokens
-                    logger.info(
-                        "Adjusted max_tokens to %s to satisfy thinking.budget_tokens=%s",
-                        required_min_tokens,
-                        budget_tokens,
-                    )
-
-        body_json = json.dumps(body)
-
-        if stream:
-            try:
-                response = invoke_bedrock_streaming(bedrock_client, body_json)
-                response_status = response.get("ResponseMetadata", {}).get(
-                    "HTTPStatusCode"
-                )
-                response_body = response.get("body")
-
-                # Check for authentication errors and retry with fresh client
-                if response_status in [401, 403]:
-                    logger.warning(
-                        log_auth_error_retry(
-                            response_status, f"SDK for model '{model}'"
-                        )
-                    )
-                    invalidate_bedrock_client(model, invalidate_session=False)
-                    bedrock_client = get_bedrock_client(
-                        sub_account_config=proxy_config.subaccounts[subaccount_name],
-                        model_name=model,
-                        deployment_id=extract_deployment_id(selected_url),
-                        ca_cert_bundle=ca_cert_bundle,
-                    )
-                    response = invoke_bedrock_streaming(bedrock_client, body_json)
-                    response_status = response.get("ResponseMetadata", {}).get(
-                        "HTTPStatusCode"
-                    )
-                    response_body = response.get("body")
-
-                if response_status is None:
-                    return JSONResponse(
-                        {
-                            "type": "error",
-                            "error": {
-                                "type": "api_error",
-                                "message": "Malformed response from backend API",
-                            },
-                        },
-                        status_code=500,
-                    )
-
-                if response_status != 200:
-                    return JSONResponse(
-                        {
-                            "type": "error",
-                            "error": {
-                                "type": "api_error",
-                                "message": f"Backend API returned status {response_status}",
-                            },
-                        },
-                        status_code=response_status,
-                    )
-
-                if response_body is None:
-                    return JSONResponse(
-                        {
-                            "type": "error",
-                            "error": {
-                                "type": "api_error",
-                                "message": "Empty response body from backend API",
-                            },
-                        },
-                        status_code=500,
-                    )
-            except Exception as e:
-                if is_certificate_error(e):
+            ):
+                # Parse SSE lines from the raw bytes chunk
+                for line in chunk_bytes.decode("utf-8", errors="ignore").splitlines():
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
                     try:
-                        _, response_status, response_body = _handle_certificate_recovery(
-                            model,
-                            proxy_config.subaccounts[subaccount_name],
-                            extract_deployment_id(selected_url),
-                            body_json,
-                            ca_cert_bundle,
-                            is_streaming=True,
-                        )
-                        if response_status != 200 or response_body is None:
-                            return JSONResponse(
-                                {
-                                    "type": "error",
-                                    "error": {
-                                        "type": "api_error",
-                                        "message": "Bedrock request failed after certificate recovery",
-                                    },
-                                },
-                                status_code=response_status or 500,
-                            )
-                    except Exception as retry_error:
-                        logger.error(
-                            "Retry after cert error failed: %s",
-                            retry_error,
-                            exc_info=True,
-                        )
-                        return JSONResponse(
-                            {
-                                "type": "error",
-                                "error": {
-                                    "type": "api_error",
-                                    "message": "Certificate error recovery failed",
-                                },
-                            },
-                            status_code=500,
-                        )
-                else:
-                    logger.error("Error before streaming: %s", e, exc_info=True)
-                    return JSONResponse(
-                        {
-                            "type": "error",
-                            "error": {"type": "api_error", "message": str(e)},
-                        },
-                        status_code=500,
-                    )
+                        openai_chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
 
-            return StreamingResponse(
-                generate_bedrock_streaming_response(response_body, tid),
-                media_type="text/event-stream",
-            )
+                    # Extract usage if present (final chunk)
+                    usage = openai_chunk.get("usage") or {}
+                    if usage:
+                        input_tokens = usage.get("prompt_tokens", input_tokens)
+                        output_tokens = usage.get("completion_tokens", output_tokens)
 
-        try:
-            response = invoke_bedrock_non_streaming(bedrock_client, body_json)
-            response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-            response_body = response.get("body")
+                    delta = Converters.convert_openai_chunk_to_claude_delta(openai_chunk)
+                    if delta:
+                        yield _sse(delta)
 
-            # Check for authentication errors and retry with fresh client
-            if response_status in [401, 403]:
-                logger.warning(
-                    log_auth_error_retry(response_status, f"SDK for model '{model}'")
-                )
-                invalidate_bedrock_client(model, invalidate_session=False)
-                bedrock_client = get_bedrock_client(
-                    sub_account_config=proxy_config.subaccounts[subaccount_name],
-                    model_name=model,
-                    deployment_id=extract_deployment_id(selected_url),
-                    ca_cert_bundle=ca_cert_bundle,
-                )
-                response = invoke_bedrock_non_streaming(bedrock_client, body_json)
-                response_status = response.get("ResponseMetadata", {}).get(
-                    "HTTPStatusCode"
-                )
-                response_body = response.get("body")
-        except Exception as e:
-            if is_certificate_error(e):
-                try:
-                    _, response_status, response_body = _handle_certificate_recovery(
-                        model,
-                        proxy_config.subaccounts[subaccount_name],
-                        extract_deployment_id(selected_url),
-                        body_json,
-                        ca_cert_bundle,
-                        is_streaming=False,
-                    )
-                except Exception as retry_error:
-                    logger.error(
-                        "Retry after cert error failed: %s",
-                        retry_error,
-                        exc_info=True,
-                    )
-                    return JSONResponse(
-                        {
-                            "type": "error",
-                            "error": {
-                                "type": "api_error",
-                                "message": "Certificate error recovery failed",
-                            },
-                        },
-                        status_code=500,
-                    )
-            else:
-                raise
+                    # Track stop reason
+                    choices = openai_chunk.get("choices", [])
+                    if choices:
+                        fr = choices[0].get("finish_reason")
+                        if fr:
+                            stop_reason_map = {
+                                "stop": "end_turn",
+                                "length": "max_tokens",
+                                "tool_calls": "tool_use",
+                                "content_filter": "stop_sequence",
+                            }
+                            stop_reason = stop_reason_map.get(fr, "end_turn")
 
-        # Check for malformed response
-        if response_status is None:
-            return JSONResponse(
+            yield _sse({"type": "content_block_stop", "index": 0})
+            yield _sse(
                 {
-                    "type": "error",
-                    "error": {
-                        "type": "api_error",
-                        "message": "Malformed response from backend API",
-                    },
-                },
-                status_code=500,
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+                    "usage": {"output_tokens": output_tokens},
+                }
             )
+            yield _sse({"type": "message_stop"})
 
-        if response_body is not None:
-            chunk_data = read_response_body_stream(response_body)
-            response_json = json.loads(chunk_data)
+        return StreamingResponse(_stream_gen(), media_type="text/event-stream")
 
-            logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
-
-            return JSONResponse(response_json, status_code=response_status)
-        else:
-            error_status = response_status if response_status >= 400 else 500
-            return JSONResponse(
-                {
-                    "type": "error",
-                    "error": {
-                        "type": "api_error",
-                        "message": "Empty response body from backend API",
-                    },
-                },
-                status_code=error_status,
-            )
-
-    except RetryError as err:
-        logger.error("RetryError in Claude request: %s", err, exc_info=True)
-        return JSONResponse(
-            {
-                "type": "error",
-                "error": {
-                    "type": "api_error",
-                    "message": "Bedrock retry failed",
-                },
-            },
-            status_code=500,
-        )
     except Exception as err:
-        logger.error("Error in Claude request: %s", err, exc_info=True)
+        import requests as _requests
+
+        if isinstance(err, _requests.HTTPError) and err.response is not None:
+            status = err.response.status_code
+            logger.error("MESSAGES_V2: HTTP %s, tid=%s: %s", status, tid, err)
+            return JSONResponse(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": f"Backend returned HTTP {status}",
+                    },
+                },
+                status_code=status,
+            )
+        logger.error("MESSAGES_V2: Unexpected error, tid=%s: %s", tid, err, exc_info=True)
         return JSONResponse(
             {
                 "type": "error",
-                "error": {
-                    "type": "api_error",
-                    "message": str(err),
-                },
+                "error": {"type": "api_error", "message": str(err)},
             },
             status_code=500,
         )
+
+
+def _sse(data: dict) -> bytes:
+    """Encode a dict as a Server-Sent Events data line."""
+    return f"data: {json.dumps(data)}\n\n".encode("utf-8")
+
+
+async def _iter_sync_generator(gen):
+    """Async wrapper for a synchronous generator (runs next() in thread pool)."""
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    sentinel = object()
+
+    def _next():
+        try:
+            return next(gen)
+        except StopIteration:
+            return sentinel
+
+    while True:
+        chunk = await loop.run_in_executor(None, _next)
+        if chunk is sentinel:
+            break
+        yield chunk

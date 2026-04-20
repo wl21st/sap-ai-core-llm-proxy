@@ -13,7 +13,7 @@ import pytest
 
 from auth import TokenManager
 from config import SubAccountConfig, ServiceKey, TokenInfo
-from utils.sdk_pool import resolve_ca_cert_bundle
+from utils.cert_utils import resolve_ca_cert_bundle
 from utils.exceptions import ConfigValidationError
 
 
@@ -136,7 +136,7 @@ class TestResolveCaCertBundle:
 
         with patch("certifi.where", side_effect=ImportError):
             # All system path checks return False
-            with patch("utils.sdk_pool.Path.exists", return_value=False):
+            with patch("utils.cert_utils.Path.exists", return_value=False):
                 # ssl.get_default_verify_paths().cafile will be checked and found valid
                 result = resolve_ca_cert_bundle(None)
                 # When system paths don't exist, ssl module path should be used
@@ -405,30 +405,10 @@ class TestCertificateErrorDetection:
 
 
 class TestSessionInvalidation:
-    """Test SDK session invalidation on certificate errors."""
+    """Test SDK session invalidation — legacy Bedrock tests removed (sdk_pool deprecated).
+    Kept as placeholder class for backward compat with test discovery."""
 
-    def test_invalidate_bedrock_client_is_safe(self):
-        """Test that invalidate_bedrock_client can be called safely."""
-        from utils import sdk_pool
-
-        # Test that the function exists and is callable
-        assert hasattr(sdk_pool, "invalidate_bedrock_client")
-        assert callable(sdk_pool.invalidate_bedrock_client)
-
-        # Calling with non-existent model should not raise
-        try:
-            sdk_pool.invalidate_bedrock_client("test-model-that-does-not-exist")
-            assert True  # Should complete without error
-        except Exception as e:
-            pytest.fail(f"invalidate_bedrock_client raised unexpected error: {e}")
-
-    def test_invalidate_bedrock_client_resets_session(self):
-        """Test that invalidate_bedrock_client signature includes session handling."""
-        import inspect
-        from utils import sdk_pool
-
-        # Verify the function exists and has the documented behavior
-        source = inspect.getsource(sdk_pool.invalidate_bedrock_client)
-        assert "__sdk_session" in source, (
-            "invalidate_bedrock_client should reset __sdk_session"
-        )
+    def test_cert_utils_has_resolve_ca_cert_bundle(self):
+        """cert_utils module exports resolve_ca_cert_bundle."""
+        from utils.cert_utils import resolve_ca_cert_bundle as fn
+        assert callable(fn)

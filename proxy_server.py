@@ -17,7 +17,7 @@ token_usage_logger: Logger = get_server_logger("token_usage")
 
 ctx: ProxyGlobalContext
 
-from utils.sdk_pool import get_bedrock_client  # noqa: F401,E402 - re-exported for downstream use
+# sdk_pool.py removed — Bedrock SDK client pool no longer needed with Orchestration V2
 
 API_VERSION_2023_05_15 = "2023-05-15"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
