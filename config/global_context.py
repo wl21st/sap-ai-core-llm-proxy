@@ -106,6 +106,48 @@ class ProxyGlobalContext:
             len(config.subaccounts),
         )
 
+        # Dump startup summary: endpoints and available models
+        self._log_startup_summary(config)
+
+    def _log_startup_summary(self, config: ProxyConfig) -> None:
+        """Log a human-readable startup summary of subaccounts, endpoints, and models."""
+        sep = "=" * 60
+
+        logger.info(sep)
+        logger.info("SAP AI Core LLM Proxy — startup summary")
+        logger.info(sep)
+
+        # --- Subaccounts and orchestration endpoints ---
+        logger.info("Subaccounts (%d):", len(config.subaccounts))
+        for sub_name, sub_config in config.subaccounts.items():
+            orch_url = sub_config.orchestration_url or "(none — legacy mode)"
+            logger.info("  [%s]  orchestration_url: %s", sub_name, orch_url)
+            logger.info(
+                "  [%s]  resource_group:    %s", sub_name, sub_config.resource_group
+            )
+
+        # --- Available models ---
+        model_names = self.foundation_model_registry.get_model_names()
+        logger.info(sep)
+        logger.info("Available models (%d):", len(model_names))
+        for name in model_names:
+            logger.info("  - %s", name)
+
+        # --- Proxy endpoints ---
+        logger.info(sep)
+        logger.info("Proxy API endpoints:")
+        logger.info("  POST /v1/chat/completions        (OpenAI chat completions)")
+        logger.info("  POST /v1/messages                (Anthropic Messages API)")
+        logger.info("  POST /v1/embeddings              (OpenAI embeddings)")
+        logger.info("  GET  /v1/models                  (list available models)")
+        logger.info("  POST /openai/v1/chat/completions (OpenAI-native, GPT models)")
+        logger.info("  POST /anthropic/v1/messages      (Anthropic-native, Claude models)")
+        logger.info(
+            "  POST /gemini/v1beta/models/{m}:generateContent  (Gemini-native)"
+        )
+        logger.info("  GET  /health                     (health check)")
+        logger.info(sep)
+
     def get_token_manager(self, subaccount_name: str):
         """Get the token manager for a specific subaccount.
 
