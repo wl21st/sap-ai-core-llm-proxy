@@ -343,7 +343,11 @@ class TestTokenManagerCertificateHandling:
 
     def test_cert_bundle_parameter_passthrough(self, mock_subaccount):
         """Test that ca_cert_bundle parameter is correctly stored for various values."""
-        for cert_path in ["/etc/ssl/certs/ca-bundle.crt", "/usr/local/etc/openssl/cert.pem", None]:
+        for cert_path in [
+            "/etc/ssl/certs/ca-bundle.crt",
+            "/usr/local/etc/openssl/cert.pem",
+            None,
+        ]:
             manager = TokenManager(mock_subaccount, ca_cert_bundle=cert_path)
             assert manager.ca_cert_bundle == cert_path
 
@@ -401,6 +405,32 @@ class TestCertificateErrorDetection:
         assert is_certificate_error(error) is True
 
         error = OSError("Certificate Verify Failed")
+        assert is_certificate_error(error) is True
+
+    def test_is_certificate_error_botocore_ssl_validation_failed(self):
+        """Test detection of botocore SSLError after WiFi reconnect.
+
+        When WiFi drops and reconnects, macOS destroys cached SSL context state.
+        botocore wraps the resulting FileNotFoundError in a botocore.exceptions.SSLError
+        whose str() is 'SSL validation failed for <url> [Errno 2] No such file or directory'.
+        This must be treated as a recoverable SSL error so the cached client is invalidated
+        and retried with a fresh connection.
+        """
+        from utils.cert_errors import is_certificate_error
+        from botocore.exceptions import SSLError
+
+        error = SSLError(
+            endpoint_url="https://api.ai.prod.eu-central-1.aws.ml.hana.ondemand.com"
+            "/v2/inference/deployments/abc123/invoke-with-response-stream",
+            error=FileNotFoundError(2, "No such file or directory"),
+        )
+        assert is_certificate_error(error) is True
+
+    def test_is_certificate_error_ssl_validation_failed_generic(self):
+        """Test detection of generic 'SSL validation failed' message."""
+        from utils.cert_errors import is_certificate_error
+
+        error = Exception("SSL validation failed for https://example.com No such file")
         assert is_certificate_error(error) is True
 
 
