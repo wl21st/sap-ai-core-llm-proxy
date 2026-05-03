@@ -23,6 +23,7 @@ from load_balancer import load_balance_url
 from proxy_helpers import Converters, Detector
 from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
+from utils.circuit_breaker import CircuitBreakerOpenError, get_ssl_circuit_breaker
 from utils.logging_utils import get_server_logger, get_transport_logger
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
 from config import SubAccountConfig
@@ -51,36 +52,46 @@ def _handle_certificate_recovery(
     """Recover from certificate errors by invalidating session and retrying.
 
     Consolidates certificate error recovery logic shared by streaming and non-streaming
-    handlers.
+    handlers.  A per-model circuit breaker guards this function: after
+    ``DEFAULT_FAILURE_THRESHOLD`` consecutive recovery failures the circuit opens
+    and subsequent calls raise ``CircuitBreakerOpenError`` immediately (→ HTTP 503)
+    without touching the server.  The circuit moves to HALF_OPEN after the
+    cooldown period, allowing one probe request through.
 
     Returns:
         Tuple of (bedrock_client, response_status, response_body)
 
     Raises:
-        Exception: If recovery fails
+        CircuitBreakerOpenError: If the SSL recovery circuit is currently OPEN.
+        Exception: If recovery fails (recorded as a circuit failure).
     """
-    logger.warning(
-        "Certificate error detected: invalidating SDK session and retrying",
-        exc_info=True,
-    )
-    invalidate_bedrock_client(model, invalidate_session=True)
+    breaker = get_ssl_circuit_breaker(model)
 
-    bedrock_client = get_bedrock_client(
-        sub_account_config=sub_account_config,
-        model_name=model,
-        deployment_id=deployment_id,
-        ca_cert_bundle=ca_cert_bundle,
-    )
+    def _do_recovery():
+        logger.warning(
+            "Certificate error detected: invalidating SDK session and retrying",
+            exc_info=True,
+        )
+        invalidate_bedrock_client(model, invalidate_session=True)
 
-    if is_streaming:
-        response = invoke_bedrock_streaming(bedrock_client, body_json)
-    else:
-        response = invoke_bedrock_non_streaming(bedrock_client, body_json)
+        bedrock_client = get_bedrock_client(
+            sub_account_config=sub_account_config,
+            model_name=model,
+            deployment_id=deployment_id,
+            ca_cert_bundle=ca_cert_bundle,
+        )
 
-    response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-    response_body = response.get("body")
+        if is_streaming:
+            response = invoke_bedrock_streaming(bedrock_client, body_json)
+        else:
+            response = invoke_bedrock_non_streaming(bedrock_client, body_json)
 
-    return bedrock_client, response_status, response_body
+        response_status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        response_body = response.get("body")
+
+        return bedrock_client, response_status, response_body
+
+    return breaker.call(_do_recovery)
 
 
 @router.post("/v1/messages", dependencies=[Depends(verify_request_token)])
@@ -313,15 +324,29 @@ async def proxy_claude_request(request: Request):
                         status_code=500,
                     )
             except Exception as e:
-                if is_certificate_error(e):
+                if isinstance(e, CircuitBreakerOpenError):
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "overloaded_error",
+                                "message": str(e),
+                            },
+                        },
+                        status_code=503,
+                        headers={"Retry-After": str(int(e.retry_after) + 1)},
+                    )
+                elif is_certificate_error(e):
                     try:
-                        _, response_status, response_body = _handle_certificate_recovery(
-                            model,
-                            proxy_config.subaccounts[subaccount_name],
-                            extract_deployment_id(selected_url),
-                            body_json,
-                            ca_cert_bundle,
-                            is_streaming=True,
+                        _, response_status, response_body = (
+                            _handle_certificate_recovery(
+                                model,
+                                proxy_config.subaccounts[subaccount_name],
+                                extract_deployment_id(selected_url),
+                                body_json,
+                                ca_cert_bundle,
+                                is_streaming=True,
+                            )
                         )
                         if response_status != 200 or response_body is None:
                             return JSONResponse(
@@ -334,6 +359,18 @@ async def proxy_claude_request(request: Request):
                                 },
                                 status_code=response_status or 500,
                             )
+                    except CircuitBreakerOpenError as cb_err:
+                        return JSONResponse(
+                            {
+                                "type": "error",
+                                "error": {
+                                    "type": "overloaded_error",
+                                    "message": str(cb_err),
+                                },
+                            },
+                            status_code=503,
+                            headers={"Retry-After": str(int(cb_err.retry_after) + 1)},
+                        )
                     except Exception as retry_error:
                         logger.error(
                             "Retry after cert error failed: %s",
@@ -388,7 +425,19 @@ async def proxy_claude_request(request: Request):
                 )
                 response_body = response.get("body")
         except Exception as e:
-            if is_certificate_error(e):
+            if isinstance(e, CircuitBreakerOpenError):
+                return JSONResponse(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "overloaded_error",
+                            "message": str(e),
+                        },
+                    },
+                    status_code=503,
+                    headers={"Retry-After": str(int(e.retry_after) + 1)},
+                )
+            elif is_certificate_error(e):
                 try:
                     _, response_status, response_body = _handle_certificate_recovery(
                         model,
@@ -397,6 +446,18 @@ async def proxy_claude_request(request: Request):
                         body_json,
                         ca_cert_bundle,
                         is_streaming=False,
+                    )
+                except CircuitBreakerOpenError as cb_err:
+                    return JSONResponse(
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "overloaded_error",
+                                "message": str(cb_err),
+                            },
+                        },
+                        status_code=503,
+                        headers={"Retry-After": str(int(cb_err.retry_after) + 1)},
                     )
                 except Exception as retry_error:
                     logger.error(
