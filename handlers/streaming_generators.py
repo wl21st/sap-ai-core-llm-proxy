@@ -86,7 +86,7 @@ def _format_sse_event(event_type: str, payload: dict[str, Any]) -> str:
 
 
 async def generate_bedrock_streaming_response(
-    response_body: Any,
+    response_body: object,
     tid: str,
     model: str = "unknown",
     subaccount_name: str = "unknown",
@@ -997,7 +997,7 @@ async def generate_streaming_response(
 
 
 def generate_bedrock_streaming_response_sync(
-    response_body: Any,
+    response_body: object,
     tid: str,
     model: str = "unknown",
     subaccount_name: str = "unknown",

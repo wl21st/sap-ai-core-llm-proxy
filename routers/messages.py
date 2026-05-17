@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -48,7 +49,7 @@ def _handle_certificate_recovery(
     body_json: str,
     ca_cert_bundle: str | None,
     is_streaming: bool,
-):
+) -> tuple[Any, Any, Any]:
     """Recover from certificate errors by invalidating session and retrying.
 
     Consolidates certificate error recovery logic shared by streaming and non-streaming
@@ -67,7 +68,7 @@ def _handle_certificate_recovery(
     """
     breaker = get_ssl_circuit_breaker(model)
 
-    def _do_recovery():
+    def _do_recovery() -> tuple[Any, Any, Any]:
         logger.warning(
             "Certificate error detected: invalidating SDK session and retrying",
             exc_info=True,
@@ -94,8 +95,8 @@ def _handle_certificate_recovery(
     return breaker.call(_do_recovery)
 
 
-@router.post("/v1/messages", dependencies=[Depends(verify_request_token)])
-async def proxy_claude_request(request: Request):
+@router.post("/v1/messages", dependencies=[Depends(verify_request_token)], response_model=None)
+async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResponse:
     """Handles requests compatible with the Anthropic Claude Messages API."""
     tid: str = str(uuid.uuid4())
 
