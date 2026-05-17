@@ -508,16 +508,21 @@ async def proxy_claude_request(request: Request):
 
             logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
 
+            user_id = request.headers.get("Authorization", "unknown")
+            if user_id and len(user_id) > 20:
+                user_id = f"{user_id[:20]}..."
+            ip_address = request.client.host if request.client else "unknown_ip"
             try:
-                user_id = request.headers.get("Authorization", "unknown")
-                if user_id and len(user_id) > 20:
-                    user_id = f"{user_id[:20]}..."
-                ip_address = request.client.host if request.client else "unknown_ip"
                 _usage_parser = AnthropicTokenUsageParser()
                 _usage_parser.parse_response(response_json)
                 _usage_parser.log(model, subaccount_name, user_id, ip_address)
             except Exception:
-                logger.warning("Token usage logging failed", exc_info=True)
+                logger.warning(
+                    "Token usage logging failed for model=%s subaccount=%s",
+                    model,
+                    subaccount_name,
+                    exc_info=True,
+                )
 
             return JSONResponse(response_json, status_code=response_status)
         else:

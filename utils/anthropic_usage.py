@@ -1,9 +1,11 @@
 """Anthropic token usage parsing and logging for the /v1/messages path."""
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-token_usage_logger = logging.getLogger("token_usage")
+from utils.logging_utils import get_server_logger
+
+token_usage_logger = get_server_logger("token_usage")
 _logger = logging.getLogger(__name__)
 
 
@@ -75,6 +77,10 @@ class AnthropicTokenUsageParser:
         """
         try:
             if not isinstance(chunk, dict):
+                _logger.warning(
+                    "AnthropicTokenUsageParser.feed_chunk: expected dict, got %s",
+                    type(chunk).__name__,
+                )
                 return
             chunk_type = chunk.get("type")
             if chunk_type == "message_start":
@@ -134,9 +140,9 @@ class AnthropicTokenUsageParser:
     @staticmethod
     def _extract_usage(usage: dict) -> AnthropicUsage:
         return AnthropicUsage(
-            input_tokens=int(usage.get("input_tokens", 0)),
-            output_tokens=int(usage.get("output_tokens", 0)),
-            cache_creation_input_tokens=int(usage.get("cache_creation_input_tokens", 0)),
-            cache_read_input_tokens=int(usage.get("cache_read_input_tokens", 0)),
-            thinking_tokens=int(usage.get("thinking_tokens", 0)),
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            cache_creation_input_tokens=int(usage.get("cache_creation_input_tokens") or 0),
+            cache_read_input_tokens=int(usage.get("cache_read_input_tokens") or 0),
+            thinking_tokens=int(usage.get("thinking_tokens") or 0),
         )

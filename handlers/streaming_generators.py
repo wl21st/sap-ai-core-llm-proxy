@@ -156,19 +156,30 @@ async def generate_bedrock_streaming_response(
                 yield response_line
                 transport_logger.info("DONE: tid=%s, Stream finished successfully", tid)
                 yield "data: [DONE]\n\n"
-                usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming")
+                usage_parser.feed_chunk(chunk)
+                try:
+                    usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming")
+                except Exception:
+                    logger.warning("Failed to log token usage after stream completion", exc_info=True)
                 break
             elif chunk_type == "error":
                 response_line = _format_sse_event("error", chunk)
                 transport_logger.info("ERR: tid=%s, %s", tid, response_line[:200])
                 yield response_line
+                try:
+                    usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming-BackendError")
+                except Exception:
+                    logger.warning("Failed to log token usage after backend error chunk", exc_info=True)
                 break
 
             usage_parser.feed_chunk(chunk)
 
     except Exception as e:
         logger.error("Error during streaming: %s", e, exc_info=True)
-        usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming-Error")
+        try:
+            usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming-Error")
+        except Exception:
+            logger.warning("Failed to log token usage after stream error", exc_info=True)
         error_chunk = {
             "type": "error",
             "error": {"type": "api_error", "message": str(e)},
