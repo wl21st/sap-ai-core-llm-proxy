@@ -16,7 +16,6 @@ from handlers.bedrock_handler import (
 )
 from handlers.streaming_generators import (
     generate_bedrock_streaming_response,
-    generate_claude_streaming_response,
 )
 from handlers.streaming_handler import make_backend_request
 from load_balancer import load_balance_url
