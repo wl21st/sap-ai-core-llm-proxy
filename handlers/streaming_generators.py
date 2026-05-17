@@ -23,6 +23,7 @@ from handlers.streaming_handler import (
     get_claude_stop_reason_from_gemini_chunk,
     get_claude_stop_reason_from_openai_chunk,
 )
+from utils.anthropic_usage import AnthropicTokenUsageParser
 from utils.auth_retry import AUTH_RETRY_MAX, log_auth_error_retry
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,10 @@ def _format_sse_event(event_type: str, payload: dict[str, Any]) -> str:
 async def generate_bedrock_streaming_response(
     response_body: Any,
     tid: str,
+    model: str = "unknown",
+    subaccount_name: str = "unknown",
+    user_id: str = "unknown",
+    ip_address: str = "unknown",
 ) -> AsyncGenerator[str, None]:
     """Generate streaming response from Bedrock SDK EventStream.
 
@@ -96,6 +101,10 @@ async def generate_bedrock_streaming_response(
     Args:
         response_body: AWS Bedrock EventStream iterator yielding chunk events
         tid: Trace UUID for logging correlation
+        model: Model name for token usage logging
+        subaccount_name: Subaccount name for token usage logging
+        user_id: User identifier for token usage logging
+        ip_address: Client IP address for token usage logging
 
     Yields:
         SSE-formatted response strings (event + data lines)
@@ -109,6 +118,7 @@ async def generate_bedrock_streaming_response(
         - message_stop: End of message stream
         - error: Error information
     """
+    usage_parser = AnthropicTokenUsageParser()
     try:
         for event in response_body:
             chunk = json.loads(event["chunk"]["bytes"])
@@ -146,6 +156,8 @@ async def generate_bedrock_streaming_response(
                 yield response_line
                 transport_logger.info("DONE: tid=%s, Stream finished successfully", tid)
                 yield "data: [DONE]\n\n"
+                usage_parser.feed_chunk(chunk)
+                usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming")
                 break
             elif chunk_type == "error":
                 response_line = _format_sse_event("error", chunk)
@@ -153,8 +165,11 @@ async def generate_bedrock_streaming_response(
                 yield response_line
                 break
 
+            usage_parser.feed_chunk(chunk)
+
     except Exception as e:
         logger.error("Error during streaming: %s", e, exc_info=True)
+        usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming-Error")
         error_chunk = {
             "type": "error",
             "error": {"type": "api_error", "message": str(e)},
