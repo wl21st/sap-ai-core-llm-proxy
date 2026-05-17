@@ -21,14 +21,15 @@ class TestAnthropicUsage:
         u = AnthropicUsage(input_tokens=10, output_tokens=5, thinking_tokens=3)
         assert u.total_tokens == 18
 
-    def test_total_tokens_includes_cache_fields(self):
+    def test_total_tokens_excludes_cache_fields(self):
         u = AnthropicUsage(
             input_tokens=100,
             output_tokens=50,
             cache_creation_input_tokens=20,
             cache_read_input_tokens=10,
         )
-        assert u.total_tokens == 180
+        # Cache tokens billed at different rates; tracked separately, not in total.
+        assert u.total_tokens == 150
 
 
 class TestAnthropicTokenUsageParserParseResponse:
@@ -124,6 +125,20 @@ class TestAnthropicTokenUsageParserFeedChunk:
         assert parser.usage.cache_creation_input_tokens == 7
         assert parser.usage.cache_read_input_tokens == 3
 
+    def test_message_start_populates_thinking_tokens(self):
+        parser = AnthropicTokenUsageParser()
+        parser.feed_chunk({
+            "type": "message_start",
+            "message": {
+                "usage": {
+                    "input_tokens": 20,
+                    "thinking_tokens": 8,
+                }
+            },
+        })
+        assert parser.usage.input_tokens == 20
+        assert parser.usage.thinking_tokens == 8
+
     def test_message_delta_populates_output_tokens(self):
         parser = AnthropicTokenUsageParser()
         parser.feed_chunk({"type": "message_delta", "usage": {"output_tokens": 120}})
@@ -152,7 +167,7 @@ class TestAnthropicTokenUsageParserFeedChunk:
         assert u.input_tokens == 50
         assert u.output_tokens == 30
         assert u.cache_read_input_tokens == 10
-        assert u.total_tokens == 90
+        assert u.total_tokens == 80  # cache tokens excluded from total
 
     def test_none_message_in_message_start_silently_ignored(self):
         # None message is guarded by `or {}` — no exception, no warning, tokens stay zero

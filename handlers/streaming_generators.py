@@ -156,7 +156,6 @@ async def generate_bedrock_streaming_response(
                 yield response_line
                 transport_logger.info("DONE: tid=%s, Stream finished successfully", tid)
                 yield "data: [DONE]\n\n"
-                usage_parser.feed_chunk(chunk)
                 usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming")
                 break
             elif chunk_type == "error":
@@ -989,6 +988,13 @@ async def generate_streaming_response(
 def generate_bedrock_streaming_response_sync(
     response_body: Any,
     tid: str,
+    model: str = "unknown",
+    subaccount_name: str = "unknown",
+    user_id: str = "unknown",
+    ip_address: str = "unknown",
 ) -> Generator[str, None, None]:
-    async_gen = generate_bedrock_streaming_response(response_body, tid)
+    async_gen = generate_bedrock_streaming_response(
+        response_body, tid, model=model, subaccount_name=subaccount_name,
+        user_id=user_id, ip_address=ip_address,
+    )
     return _sync_iter_async_generator(async_gen)

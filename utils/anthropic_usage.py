@@ -17,13 +17,8 @@ class AnthropicUsage:
 
     @property
     def total_tokens(self) -> int:
-        return (
-            self.input_tokens
-            + self.output_tokens
-            + self.cache_creation_input_tokens
-            + self.cache_read_input_tokens
-            + self.thinking_tokens
-        )
+        # Cache tokens are billed at different rates; excluded here and logged separately.
+        return self.input_tokens + self.output_tokens + self.thinking_tokens
 
 
 class AnthropicTokenUsageParser:
