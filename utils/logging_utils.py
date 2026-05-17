@@ -247,5 +247,26 @@ def get_client_logger(name: str) -> logging.Logger:
     return logging.getLogger("app.client." + name)
 
 
+def extract_log_identity(request: "Request | None") -> tuple[str, str]:
+    """Extract user identity and IP address from a FastAPI request for usage logging.
+
+    Args:
+        request: FastAPI Request object, or None if unavailable
+
+    Returns:
+        Tuple of (user_id, ip_address). user_id is the token portion of the
+        Authorization header, truncated to 20 chars. ip_address is the client IP.
+    """
+    if request is None:
+        return "unknown", "unknown_ip"
+    auth = request.headers.get("Authorization", "")
+    parts = auth.split(" ", 1)
+    user_id = parts[1] if len(parts) == 2 else auth
+    if len(user_id) > 20:
+        user_id = f"{user_id[:20]}..."
+    ip_address = request.client.host if request.client else "unknown_ip"
+    return user_id, ip_address
+
+
 # Initialize logging when module is imported
 init_logging()
