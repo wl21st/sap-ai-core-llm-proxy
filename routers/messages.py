@@ -509,8 +509,9 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
 
             logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
 
-            user_id = request.headers.get("Authorization", "unknown")
-            if user_id and len(user_id) > 20:
+            auth = request.headers.get("Authorization", "")
+            user_id = auth.split(" ")[-1] if " " in auth else auth
+            if len(user_id) > 20:
                 user_id = f"{user_id[:20]}..."
             ip_address = request.client.host if request.client else "unknown_ip"
             try:
