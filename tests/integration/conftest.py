@@ -160,7 +160,7 @@ async def _log_response(response: httpx.Response) -> None:
     logger.info("🟢🟢🟢 HTTP RESPONSE END 🟢🟢🟢\n")
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def proxy_client(test_config, proxy_url, auth_token, check_server_running):
     """
     Create HTTP client configured for proxy server with request/response logging.
@@ -196,6 +196,18 @@ def models_to_test(test_config):
 def model_filter(test_config):
     """Get optional model filter test configuration."""
     return test_config.get("model_filter") or {}
+
+
+@pytest.fixture(scope="session")
+def model_filter_tests(test_config):
+    """
+    Get model filter integration test configuration.
+
+    Controls whether model-filter-specific integration tests run.
+    Disabled by default; enable by setting 'model_filter_tests.enabled: true'
+    in test_config.json with the appropriate filter scenarios.
+    """
+    return test_config.get("model_filter_tests") or {"enabled": False}
 
 
 @pytest.fixture

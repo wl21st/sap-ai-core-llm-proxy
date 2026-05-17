@@ -353,14 +353,25 @@ class TestChatCompletionsStreaming:
 
     async def test_sse_format(self, proxy_client, proxy_url, model, max_tokens):
         """Validate SSE message format."""
-        response = await proxy_client.post(
-            f"{proxy_url}/v1/chat/completions",
-            json={
+        if model == "gpt-5":
+            request_body_json = {
+                "model": model,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "reasoning_effort": "low",
+                "max_completion_tokens": 1024,
+                "stream": True,
+            }
+        else:
+            request_body_json = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Hello"}],
                 "max_tokens": max_tokens,
                 "stream": True,
-            },
+            }
+
+        response = await proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json=request_body_json,
         )
 
         ResponseValidator.validate_sse_response(model, response)
@@ -481,14 +492,25 @@ class TestChatCompletionsStreaming:
 
     async def test_done_signal(self, proxy_client, proxy_url, model, max_tokens):
         """Verify [DONE] signal at end of stream."""
-        response = await proxy_client.post(
-            f"{proxy_url}/v1/chat/completions",
-            json={
+        if model == "gpt-5":
+            request_body_json = {
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "reasoning_effort": "low",
+                "max_completion_tokens": 1024,
+                "stream": True,
+            }
+        else:
+            request_body_json = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Hi"}],
                 "max_tokens": max_tokens,
                 "stream": True,
-            },
+            }
+
+        response = await proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json=request_body_json,
         )
 
         assert response.status_code == 200
@@ -505,14 +527,25 @@ class TestChatCompletionsStreaming:
 
     async def test_single_done_signal(self, proxy_client, proxy_url, model, max_tokens):
         """Verify exactly ONE [DONE] signal at end of stream (no duplicates)."""
-        response = await proxy_client.post(
-            f"{proxy_url}/v1/chat/completions",
-            json={
+        if model == "gpt-5":
+            request_body_json = {
+                "model": model,
+                "messages": [{"role": "user", "content": "Say hello"}],
+                "reasoning_effort": "low",
+                "max_completion_tokens": 1024,
+                "stream": True,
+            }
+        else:
+            request_body_json = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Say hello"}],
                 "max_tokens": max_tokens,
                 "stream": True,
-            },
+            }
+
+        response = await proxy_client.post(
+            f"{proxy_url}/v1/chat/completions",
+            json=request_body_json,
         )
 
         assert response.status_code == 200
