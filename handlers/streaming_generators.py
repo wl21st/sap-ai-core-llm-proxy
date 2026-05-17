@@ -12,7 +12,7 @@ import json
 import logging
 import random
 import time
-from typing import Any, AsyncGenerator, Generator
+from typing import Any, AsyncGenerator, Generator, Iterable
 
 import httpx
 import requests
@@ -86,7 +86,7 @@ def _format_sse_event(event_type: str, payload: dict[str, Any]) -> str:
 
 
 async def generate_bedrock_streaming_response(
-    response_body: object,
+    response_body: Iterable[dict[str, Any]],
     tid: str,
     model: str = "unknown",
     subaccount_name: str = "unknown",
