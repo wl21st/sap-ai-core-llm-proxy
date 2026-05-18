@@ -19,7 +19,7 @@ Background:
 - Bedrock response includes cache_creation_input_tokens and cache_read_input_tokens
   in the usage field (snake_case, same as Anthropic API).
 - Minimum cacheable tokens: 4096 for Sonnet 4.5, Haiku 4.5; 1024 for Sonnet 4.6,
-  Claude 3.7 Sonnet.
+  Haiku 4.5 (new), Opus 4.7, Claude 3.7 Sonnet.
 
 Claude Code usage:
 - Claude Code DOES send cache_control (ephemeral) on system prompts and long
@@ -122,8 +122,10 @@ SIMPLE_QUESTION = "Explain the key difference between eventual consistency and s
 @pytest.mark.parametrize(
     "model",
     [
-        "anthropic--claude-4.5-sonnet",
-        "sonnet-4.5",
+        "anthropic--claude-4.5-haiku",
+        "sonnet-4.6",
+        "haiku-4.5",
+        "opus-4.7",
     ],
 )
 class TestCacheControlMessagesEndpoint:
@@ -460,8 +462,10 @@ class TestCacheControlMessagesEndpoint:
 @pytest.mark.parametrize(
     "model",
     [
-        "anthropic--claude-4.5-sonnet",
-        "sonnet-4.5",
+        "anthropic--claude-4.5-haiku",
+        "sonnet-4.6",
+        "haiku-4.5",
+        "opus-4.7",
     ],
 )
 class TestCacheControlChatCompletionsEndpoint:
@@ -592,8 +596,10 @@ class TestCacheControlTokenCostVerification:
     @pytest.mark.parametrize(
         "model",
         [
-            "anthropic--claude-4.5-sonnet",
-            "sonnet-4.5",
+            "anthropic--claude-4.5-haiku",
+            "sonnet-4.6",
+            "haiku-4.5",
+            "opus-4.7",
         ],
     )
     async def test_cost_reduction_across_repeated_requests(

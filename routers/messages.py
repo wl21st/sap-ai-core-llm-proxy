@@ -25,7 +25,7 @@ from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
 from utils.circuit_breaker import CircuitBreakerOpenError, get_ssl_circuit_breaker
 from utils.anthropic_usage import AnthropicTokenUsageParser
-from utils.logging_utils import get_server_logger, get_transport_logger
+from utils.logging_utils import extract_log_identity, get_server_logger, get_transport_logger
 from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
 from config import SubAccountConfig
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
@@ -509,10 +509,7 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
 
             logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
 
-            user_id = request.headers.get("Authorization", "unknown")
-            if user_id and len(user_id) > 20:
-                user_id = f"{user_id[:20]}..."
-            ip_address = request.client.host if request.client else "unknown_ip"
+            user_id, ip_address = extract_log_identity(request)
             try:
                 _usage_parser = AnthropicTokenUsageParser()
                 _usage_parser.parse_response(response_json)

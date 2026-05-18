@@ -34,7 +34,7 @@ MODEL_ALIASES = load_model_aliases()
 
 class Detector:
     @staticmethod
-    def is_claude_37_or_4(model: str):
+    def is_claude_family(model: str):
         """
         Check if the Claude model uses Converse API format (True) or InvokeModel format (False).
 
@@ -767,8 +767,8 @@ class Converters:
 
     @staticmethod
     def convert_claude_to_openai(response, model):
-        # Check if the model is Claude 3.7 or 4
-        if Detector.is_claude_37_or_4(model):
+        # Check if the model is Claude family
+        if Detector.is_claude_family(model):
             logger.info(
                 f"Detected Claude 3.7/4 model ('{model}'), using convert_claude37_to_openai."
             )

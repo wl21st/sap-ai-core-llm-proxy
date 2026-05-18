@@ -25,6 +25,7 @@ from handlers.streaming_handler import (
 )
 from utils.anthropic_usage import AnthropicTokenUsageParser
 from utils.auth_retry import AUTH_RETRY_MAX, log_auth_error_retry
+from utils.logging_utils import extract_log_identity
 
 logger = logging.getLogger(__name__)
 transport_logger = logging.getLogger("transport")
@@ -286,7 +287,7 @@ async def generate_streaming_response(
                 response.raise_for_status()
 
                 # --- Claude 3.7/4 Streaming Logic ---
-                if Detector.is_claude_model(model) and Detector.is_claude_37_or_4(
+                if Detector.is_claude_model(model) and Detector.is_claude_family(
                     model
                 ):
                     logger.info(
@@ -460,18 +461,7 @@ async def generate_streaming_response(
                             total_tokens,
                         )
 
-                        user_id = (
-                            request.headers.get("Authorization", "unknown")
-                            if request
-                            else "unknown"
-                        )
-                        if user_id and len(user_id) > 20:
-                            user_id = f"{user_id[:20]}..."
-                        ip_address = (
-                            request.client.host
-                            if request and request.client
-                            else "unknown_ip"
-                        )
+                        user_id, ip_address = extract_log_identity(request)
                         token_usage_logger.info(
                             "User: %s, IP: %s, Model: %s, SubAccount: %s, PromptTokens: %s, CompletionTokens: %s, TotalTokens: %s (Streaming)",
                             user_id,
@@ -631,18 +621,7 @@ async def generate_streaming_response(
                             total_tokens,
                         )
 
-                        user_id = (
-                            request.headers.get("Authorization", "unknown")
-                            if request
-                            else "unknown"
-                        )
-                        if user_id and len(user_id) > 20:
-                            user_id = f"{user_id[:20]}..."
-                        ip_address = (
-                            request.client.host
-                            if request and request.client
-                            else "unknown_ip"
-                        )
+                        user_id, ip_address = extract_log_identity(request)
                         token_usage_logger.info(
                             "User: %s, IP: %s, Model: %s, SubAccount: %s, PromptTokens: %s, CompletionTokens: %s, TotalTokens: %s (Streaming)",
                             user_id,
@@ -787,20 +766,9 @@ async def generate_streaming_response(
 
                 if not (
                     Detector.is_claude_model(model)
-                    and Detector.is_claude_37_or_4(model)
+                    and Detector.is_claude_family(model)
                 ):
-                    user_id = (
-                        request.headers.get("Authorization", "unknown")
-                        if request
-                        else "unknown"
-                    )
-                    if user_id and len(user_id) > 20:
-                        user_id = f"{user_id[:20]}..."
-                    ip_address = (
-                        request.client.host
-                        if request and request.client
-                        else "unknown_ip"
-                    )
+                    user_id, ip_address = extract_log_identity(request)
 
                     token_usage_logger.info(
                         "User: %s, IP: %s, Model: %s, SubAccount: %s, PromptTokens: %s, CompletionTokens: %s, TotalTokens: %s (Streaming)",

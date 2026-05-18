@@ -49,14 +49,14 @@ def handle_claude_request(payload, model, proxy_config):
 
     # Determine the endpoint path based on model and streaming settings
     if stream:
-        # Check if the model is Claude 3.7 or 4 for streaming endpoint
-        if Detector.is_claude_37_or_4(model):
+        # Check if the model is Claude family for streaming endpoint
+        if Detector.is_claude_family(model):
             endpoint_path = "/converse-stream"
         else:
             endpoint_path = "/invoke-with-response-stream"
     else:
-        # Check if the model is Claude 3.7 or 4
-        if Detector.is_claude_37_or_4(model):
+        # Check if the model is Claude family
+        if Detector.is_claude_family(model):
             endpoint_path = "/converse"
         else:
             endpoint_path = "/invoke"
@@ -64,7 +64,7 @@ def handle_claude_request(payload, model, proxy_config):
     endpoint_url = f"{selected_url.rstrip('/')}{endpoint_path}"
 
     # Convert the payload to the right format
-    if Detector.is_claude_37_or_4(model):
+    if Detector.is_claude_family(model):
         modified_payload = Converters.convert_openai_to_claude37(payload)
     else:
         modified_payload = Converters.convert_openai_to_claude(payload)
