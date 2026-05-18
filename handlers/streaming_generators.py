@@ -132,6 +132,9 @@ async def generate_bedrock_streaming_response(
 
             # Handle different chunk types according to Claude streaming format
             if chunk_type == "message_start":
+                msg_usage = (chunk.get("message") or {}).get("usage")
+                if isinstance(msg_usage, dict):
+                    AnthropicTokenUsageParser.normalize_usage_cache_fields(msg_usage)
                 response_line = _format_sse_event("message_start", chunk)
                 transport_logger.info("CHUNK: tid=%s, %s", tid, response_line[:200])
                 yield response_line
