@@ -287,7 +287,7 @@ async def generate_streaming_response(
                 response.raise_for_status()
 
                 # --- Claude 3.7/4 Streaming Logic ---
-                if Detector.is_claude_model(model) and Detector.is_claude_37_or_4(
+                if Detector.is_claude_model(model) and Detector.is_claude_family(
                     model
                 ):
                     logger.info(
@@ -766,7 +766,7 @@ async def generate_streaming_response(
 
                 if not (
                     Detector.is_claude_model(model)
-                    and Detector.is_claude_37_or_4(model)
+                    and Detector.is_claude_family(model)
                 ):
                     user_id, ip_address = extract_log_identity(request)
 

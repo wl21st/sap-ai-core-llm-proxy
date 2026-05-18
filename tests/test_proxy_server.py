@@ -27,7 +27,7 @@ from load_balancer import resolve_model_name, load_balance_url, reset_counters
 
 # Create convenience aliases for the test functions
 is_claude_model = Detector.is_claude_model
-is_claude_37_or_4 = Detector.is_claude_37_or_4
+is_claude_37_or_4 = Detector.is_claude_family
 is_gemini_model = Detector.is_gemini_model
 convert_openai_to_claude = Converters.convert_openai_to_claude
 convert_openai_to_claude37 = Converters.convert_openai_to_claude37

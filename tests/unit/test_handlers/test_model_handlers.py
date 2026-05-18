@@ -29,7 +29,7 @@ class TestHandleClaudeRequestStreamDefault:
             "default",
             "claude-4-sonnet",
         )
-        mock_detector.is_claude_37_or_4.return_value = True
+        mock_detector.is_claude_family.return_value = True
         mock_converters.convert_openai_to_claude37.return_value = {}
 
         payload = {
@@ -57,7 +57,7 @@ class TestHandleClaudeRequestStreamDefault:
             "default",
             "claude-4-sonnet",
         )
-        mock_detector.is_claude_37_or_4.return_value = True
+        mock_detector.is_claude_family.return_value = True
         mock_converters.convert_openai_to_claude37.return_value = {}
 
         payload = {
@@ -85,7 +85,7 @@ class TestHandleClaudeRequestStreamDefault:
             "default",
             "claude-4-sonnet",
         )
-        mock_detector.is_claude_37_or_4.return_value = True
+        mock_detector.is_claude_family.return_value = True
         mock_converters.convert_openai_to_claude37.return_value = {}
 
         payload = {
@@ -113,7 +113,7 @@ class TestHandleClaudeRequestStreamDefault:
             "default",
             "claude-3-5-sonnet",
         )
-        mock_detector.is_claude_37_or_4.return_value = False
+        mock_detector.is_claude_family.return_value = False
         mock_converters.convert_openai_to_claude.return_value = {}
 
         payload = {
