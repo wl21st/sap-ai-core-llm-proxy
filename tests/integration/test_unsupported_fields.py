@@ -1,9 +1,12 @@
 """
-Integration tests verifying that unsupported Anthropic fields are properly stripped.
+Integration tests for /v1/messages endpoint with unsupported Anthropic fields.
 
-Tests demonstrate that fields like 'metadata', 'output_config', and 'context_management'
-would fail if sent directly to Bedrock, and verifies the proxy correctly removes them
-before forwarding to Bedrock.
+Tests the Claude Messages API endpoint against a running proxy server to verify
+that unsupported fields (metadata, output_config, context_management) are stripped
+before reaching Bedrock.
+
+These tests hit the PROXY SERVER, not Bedrock directly.
+For direct Bedrock API tests, see tests/api/
 """
 
 import pytest
@@ -15,8 +18,8 @@ from .test_validators import ResponseValidator
 @pytest.mark.claude
 class TestUnsupportedFieldsStripping:
     """
-    Verify that unsupported Anthropic-specific fields are stripped before
-    reaching Bedrock, and that requests still succeed.
+    Verify that unsupported Anthropic-specific fields are stripped by proxy
+    before forwarding to Bedrock, and that requests still succeed.
     """
 
     @pytest.mark.parametrize(
