@@ -14,17 +14,6 @@ dependencies = [
     "requests==2.34.2",
     "uvicorn==0.47.0",
     "diskcache>=5.6.3",
-    "black==26.5.0",
-    "pyrefly==1.0.0",
-    "ruff==0.15.13",
-    "basedpyright==1.39.5",
-    "pytest-cov==7.1.0",
-    "lingua-language-detector==2.2.0",
-    "types-requests==2.33.0.20260513",
-    "pyright==1.1.409",
-    "pytest==9.0.3",
-    "filelock==3.29.0",
-    "mypy==2.1.0",
 ]
 
 [project.optional-dependencies]
