@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 import logging
 from config.config_models import SubAccountConfig, ServiceKey
 from config.config_parser import _build_mapping_for_subaccount

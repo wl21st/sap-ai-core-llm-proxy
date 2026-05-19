@@ -1,6 +1,6 @@
 import pytest
 import logging
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 from inspect_deployments import inspect_subaccount
 from config import SubAccountConfig, ServiceKey
 

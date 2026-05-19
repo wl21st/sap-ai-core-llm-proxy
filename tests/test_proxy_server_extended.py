@@ -5,20 +5,9 @@ Tests additional functionality including embedding requests, load balancing,
 request handlers, and streaming response generation.
 """
 
-import json
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import proxy_server
-from proxy_server import (
-    format_embedding_response,
-    handle_embedding_service_call,
-    load_balance_url,
-    handle_claude_request,
-    handle_gemini_request,
-    handle_default_request,
-    get_claude_stop_reason_from_gemini_chunk,
-    get_claude_stop_reason_from_openai_chunk,
-)
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from config import SubAccountConfig, ServiceKey
@@ -496,65 +485,6 @@ class TestProxyOpenAIStreamEndpoint:
 
         assert response.status_code == 200
         assert "text/event-stream" in response.headers["content-type"]
-
-
-class TestGenerateClaudeStreamingResponse:
-    """Test cases for generate_claude_streaming_response function (no Flask context needed)."""
-
-    @patch("proxy_server.requests.post")
-    def test_generate_claude_streaming_response_success(self, mock_post):
-        """Test successful Claude streaming response generation."""
-        from proxy_server import generate_claude_streaming_response
-
-        mock_response = Mock()
-        mock_response.iter_lines.return_value = [
-            b'data: {"type":"message_start","message":{"id":"msg_123"}}\n',
-            b'data: {"type":"content_block_delta","delta":{"text":"Hello"}}\n',
-            b'data: {"type":"message_stop"}\n',
-        ]
-        mock_response.__enter__ = Mock(return_value=mock_response)
-        mock_response.__exit__ = Mock(return_value=None)
-        mock_post.return_value = mock_response
-
-        result = generate_claude_streaming_response(
-            "https://test.com/api",
-            {"Authorization": "Bearer token"},
-            {"messages": [{"role": "user", "content": "test"}]},
-            "claude-3.5-sonnet",
-            "test-sub",
-        )
-
-        # Should be a generator
-        assert result is not None
-        # Convert to list to test content
-        chunks = list(result)
-        assert len(chunks) > 0
-
-    @patch("proxy_server.requests.post")
-    def test_generate_claude_streaming_response_error_handling(self, mock_post):
-        """Test error handling in Claude streaming response."""
-        from proxy_server import generate_claude_streaming_response
-        import requests
-
-        mock_response = Mock()
-        mock_response.__enter__ = Mock(return_value=mock_response)
-        mock_response.__exit__ = Mock(return_value=None)
-        mock_response.raise_for_status = Mock(
-            side_effect=requests.exceptions.HTTPError("HTTP Error")
-        )
-        mock_post.return_value = mock_response
-
-        result = generate_claude_streaming_response(
-            "https://test.com/api",
-            {"Authorization": "Bearer token"},
-            {"messages": [{"role": "user", "content": "test"}]},
-            "claude-3.5-sonnet",
-            "test-sub",
-        )
-
-        # Should raise exception on HTTP error
-        with pytest.raises(requests.exceptions.HTTPError):
-            list(result)
 
 
 if __name__ == "__main__":

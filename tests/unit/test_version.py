@@ -4,7 +4,6 @@ Unit tests for version.py - Version management utilities.
 Tests version information retrieval functions.
 """
 
-import pytest
 
 from version import get_version, get_git_hash, get_version_info, get_version_string
 

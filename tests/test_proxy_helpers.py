@@ -54,31 +54,148 @@ class TestDetector:
 
     def test_is_claude_37_or_4_with_version_37(self):
         """Test detection of Claude 3.7 models."""
-        assert Detector.is_claude_37_or_4("claude-3.7-sonnet") is True
-        assert Detector.is_claude_37_or_4("anthropic--claude-3.7") is True
+        assert Detector.is_claude_family("claude-3.7-sonnet") is True
+        assert Detector.is_claude_family("anthropic--claude-3.7") is True
 
     def test_is_claude_37_or_4_with_version_4(self):
         """Test detection of Claude 4.x models."""
-        assert Detector.is_claude_37_or_4("claude-4-sonnet") is True
-        assert Detector.is_claude_37_or_4("claude-4.0") is True
-        assert Detector.is_claude_37_or_4("claude-4.5-opus") is True
+        assert Detector.is_claude_family("claude-4-sonnet") is True
+        assert Detector.is_claude_family("claude-4.0") is True
+        assert Detector.is_claude_family("claude-4.5-opus") is True
 
     def test_is_claude_37_or_4_with_opus_models(self):
         """Test detection of Opus 4.x models."""
-        assert Detector.is_claude_37_or_4("opus-4.5") is True
-        assert Detector.is_claude_37_or_4("opus-4") is True
-        assert Detector.is_claude_37_or_4("anthropic--claude-4.5-opus") is True
+        assert Detector.is_claude_family("opus-4.5") is True
+        assert Detector.is_claude_family("opus-4") is True
+        assert Detector.is_claude_family("anthropic--claude-4.5-opus") is True
         # Opus 3.x should not match (only 4.x)
-        assert Detector.is_claude_37_or_4("claude-3-opus") is False
+        assert Detector.is_claude_family("claude-3-opus") is False
 
     def test_is_claude_37_or_4_excludes_35(self):
         """Test that Claude 3.5 models are excluded."""
-        assert Detector.is_claude_37_or_4("claude-3.5-sonnet") is False
+        assert Detector.is_claude_family("claude-3.5-sonnet") is False
 
     def test_is_claude_37_or_4_without_35_in_name(self):
         """Test models without 3.5 in name are detected as 3.7/4."""
-        assert Detector.is_claude_37_or_4("claude-sonnet") is True
-        assert Detector.is_claude_37_or_4("claude-opus") is True
+        assert Detector.is_claude_family("claude-sonnet") is True
+        assert Detector.is_claude_family("claude-opus") is True
+
+    # ------------------------------------------------------------------
+    # Parametrized: is_claude_model — Anthropic family coverage
+    # Dimensions: bare vs anthropic-- prefix, short name vs full id,
+    #             version with dot vs dash, sonnet/haiku/opus tiers
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            # --- bare claude prefix ---
+            "claude-4",
+            "claude-4.5",
+            "claude-4-5",           # version with dash instead of dot
+            "claude-4.5-sonnet",
+            "claude-4-5-sonnet",
+            "claude-4.5-haiku",
+            "claude-4-5-haiku",
+            "claude-4.5-opus",
+            "claude-4-5-opus",
+            # --- short variant names without version ---
+            "claude-sonnet",
+            "claude-haiku",
+            "claude-opus",
+            # --- anthropic-- prefix (SAP AI Core canonical form) ---
+            "anthropic--claude-4",
+            "anthropic--claude-4.5",
+            "anthropic--claude-4-5",
+            "anthropic--claude-4.5-sonnet",
+            "anthropic--claude-4-5-sonnet",
+            "anthropic--claude-4.5-haiku",
+            "anthropic--claude-4-5-haiku",
+            "anthropic--claude-4.5-opus",
+            "anthropic--claude-4-5-opus",
+            # --- legacy 3.x (still Claude family) ---
+            "claude-3.5-sonnet",
+            "claude-3-5-sonnet",
+            "anthropic--claude-3.5-sonnet",
+            "anthropic--claude-3-5-sonnet",
+            "claude-3.7-sonnet",
+            "anthropic--claude-3.7-sonnet",
+            # --- tier keywords standalone ---
+            "sonnet-4",
+            "sonnet-4.5",
+            "haiku-4",
+            "haiku-4.5",
+            "opus-4",
+            "opus-4.5",
+        ],
+    )
+    def test_is_claude_model_anthropic_family(self, model_name):
+        """is_claude_model returns True for the full Anthropic model-id namespace."""
+        assert Detector.is_claude_model(model_name) is True
+
+    # ------------------------------------------------------------------
+    # Parametrized: is_claude_37_or_4 — Converse API routing
+    # Covers: dot vs dash versions, short vs long, anthropic-- prefix,
+    #         all three tiers (sonnet/haiku/opus), True and False paths
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "model_name,expected",
+        [
+            # --- claude-4.x with dot version ---
+            ("claude-4.5-sonnet", True),
+            ("claude-4.5-haiku", True),
+            ("claude-4.5-opus", True),
+            ("claude-4.0-sonnet", True),
+            # --- claude-4.x with dash version ---
+            ("claude-4-5-sonnet", True),
+            ("claude-4-5-haiku", True),
+            ("claude-4-5-opus", True),
+            ("claude-4-0-sonnet", True),
+            # --- claude-4 short (no minor version) ---
+            ("claude-4", True),
+            ("claude-4-sonnet", True),
+            ("claude-4-haiku", True),
+            ("claude-4-opus", True),
+            # --- anthropic-- prefix with dot version ---
+            ("anthropic--claude-4.5-sonnet", True),
+            ("anthropic--claude-4.5-haiku", True),
+            ("anthropic--claude-4.5-opus", True),
+            ("anthropic--claude-4.0-sonnet", True),
+            # --- anthropic-- prefix with dash version ---
+            ("anthropic--claude-4-5-sonnet", True),
+            ("anthropic--claude-4-5-haiku", True),
+            ("anthropic--claude-4-5-opus", True),
+            # --- anthropic-- short names ---
+            ("anthropic--claude-4", True),
+            ("anthropic--claude-sonnet", True),
+            ("anthropic--claude-haiku", True),
+            ("anthropic--claude-opus", True),
+            # --- tier-only short names (sonnet-4, haiku-4, opus-4) ---
+            ("sonnet-4", True),
+            ("sonnet-4.5", True),
+            ("haiku-4", True),
+            ("haiku-4.5", True),
+            ("opus-4", True),
+            ("opus-4.5", True),
+            # --- claude-3.7 (Converse API) ---
+            ("claude-3.7-sonnet", True),
+            ("claude-3-7-sonnet", True),
+            ("anthropic--claude-3.7-sonnet", True),
+            ("anthropic--claude-3-7-sonnet", True),
+            # --- claude-3.5 (InvokeModel path) — must be False ---
+            ("claude-3.5-sonnet", False),
+            ("claude-3-5-sonnet", False),
+            ("anthropic--claude-3.5-sonnet", False),
+            ("anthropic--claude-3-5-sonnet", False),
+            # --- claude-3-opus (InvokeModel path) — must be False ---
+            ("claude-3-opus", False),
+            ("anthropic--claude-3-opus", False),
+        ],
+    )
+    def test_is_claude_37_or_4_anthropic_family(self, model_name, expected):
+        """is_claude_37_or_4 routes correctly for all Anthropic model-id patterns."""
+        assert Detector.is_claude_family(model_name) is expected
 
     def test_is_gemini_model_with_gemini_keyword(self):
         """Test detection of Gemini models."""
@@ -619,67 +736,6 @@ class TestConvertersStreamingChunks:
         assert '"finish_reason": "stop"' in result
 
 
-class TestConvertersBedrockFormat:
-    """Test Bedrock-specific conversion methods."""
-
-    def test_convert_claude_request_for_bedrock_basic(self):
-        """Test Claude request to Bedrock format conversion."""
-        payload = {
-            "model": "claude-3.5-sonnet",
-            "messages": [{"role": "user", "content": "Test"}],
-            "max_tokens": 1000,
-            "temperature": 0.7,
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert result["model"] == "claude-3.5-sonnet"
-        assert result["max_tokens"] == 1000
-        assert result["temperature"] == 0.7
-        assert result["anthropic_version"] == "bedrock-2023-05-31"
-
-    def test_convert_claude_request_for_bedrock_removes_cache_control(self):
-        """Test that cache_control fields are removed."""
-        payload = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Test",
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                }
-            ]
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        content_item = result["messages"][0]["content"][0]
-        assert "cache_control" not in content_item
-        assert content_item["text"] == "Test"
-
-    def test_convert_claude_request_for_bedrock_with_tools(self):
-        """Test Bedrock conversion preserves tools."""
-        payload = {
-            "messages": [{"role": "user", "content": "Test"}],
-            "tools": [
-                {
-                    "name": "calculator",
-                    "description": "Calculate math",
-                    "input_schema": {"type": "object"},
-                }
-            ],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert "tools" in result
-        assert len(result["tools"]) == 1
-        assert result["tools"][0]["name"] == "calculator"
-
 
 class TestConvertersErrorHandling:
     """Test error handling in conversion methods."""
@@ -747,7 +803,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_claude37(payload)
+            _result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
 
     def test_convert_openai_to_claude37_invalid_temperature(self):
@@ -834,7 +890,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_claude37(payload)
+            _result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
 
     def test_convert_openai_to_claude37_unsupported_role(self):
@@ -1109,7 +1165,7 @@ class TestConvertersOpenAIToGeminiEdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_gemini(payload)
+            _result = Converters.convert_openai_to_gemini(payload)
             mock_warning.assert_called()
 
     def test_convert_openai_to_gemini_with_top_p(self):
@@ -1128,7 +1184,7 @@ class TestConvertersOpenAIToGeminiEdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_gemini(payload)
+            _result = Converters.convert_openai_to_gemini(payload)
             mock_warning.assert_called()
 
 
@@ -1188,52 +1244,6 @@ class TestConvertersClaudeToGeminiEdgeCases:
         assert len(result["tools"]) == 1
         assert result["tools"][0]["function_declarations"][0]["name"] == "search"
 
-
-class TestConvertersBedrockEdgeCases:
-    """Test edge cases for Bedrock conversion."""
-
-    def test_convert_claude_request_for_bedrock_string_content_normalization(self):
-        """Test conversion of string content to list format."""
-        payload = {"messages": [{"role": "user", "content": "Plain string"}]}
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        # String content should be converted to list format
-        assert isinstance(result["messages"][0]["content"], list)
-        assert result["messages"][0]["content"][0]["type"] == "text"
-        assert result["messages"][0]["content"][0]["text"] == "Plain string"
-
-    def test_convert_claude_request_for_bedrock_system_array_preserved(self):
-        """Test that system field is preserved as-is."""
-        payload = {
-            "system": [{"type": "text", "text": "System prompt"}],
-            "messages": [{"role": "user", "content": "Test"}],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert result["system"] == [{"type": "text", "text": "System prompt"}]
-
-    def test_convert_claude_request_for_bedrock_all_fields_copied(self):
-        """Test that all supported fields are copied."""
-        payload = {
-            "model": "claude-3",
-            "max_tokens": 1000,
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "top_k": 50,
-            "stop_sequences": ["STOP"],
-            "messages": [{"role": "user", "content": "Test"}],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert result["model"] == "claude-3"
-        assert result["max_tokens"] == 1000
-        assert result["temperature"] == 0.7
-        assert result["top_p"] == 0.9
-        assert result["top_k"] == 50
-        assert result["stop_sequences"] == ["STOP"]
 
 
 class TestConvertersClaude37ResponseEdgeCases:
@@ -1395,7 +1405,7 @@ class TestConvertersResponseErrorHandling:
         }
 
         with patch("proxy_helpers.logger.info") as mock_info:
-            result = Converters.convert_claude_to_openai(response, "claude-3.7-sonnet")
+            _result = Converters.convert_claude_to_openai(response, "claude-3.7-sonnet")
             # Should log that it's using claude37 conversion
             assert any("3.7/4" in str(call) for call in mock_info.call_args_list)
 

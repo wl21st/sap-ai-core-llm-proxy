@@ -45,20 +45,19 @@ def resolve_model_name(model_name: str, proxy_config) -> str | None:
         fallback_models = []
         if "opus" in model_lower:
             fallback_models = [
+                "anthropic--claude-4.7-opus",
                 "anthropic--claude-4.5-opus",
-                "anthropic--claude-4-opus",
             ]
         elif "haiku" in model_lower:
             fallback_models = [
+                "anthropic--claude-4.5-haiku",
                 "anthropic--claude-4-haiku",
-                "anthropic--claude-3.5-haiku",
             ]
         else:
             # Default to sonnet for unspecified or sonnet variants
             fallback_models = [
+                "anthropic--claude-4.6-sonnet",
                 "anthropic--claude-4.5-sonnet",
-                "anthropic--claude-4-sonnet",
-                "anthropic--claude-3.7-sonnet",
             ]
 
         for fallback in fallback_models:
@@ -112,20 +111,19 @@ def load_balance_url(selected_model_name: str, proxy_config) -> tuple[str, str, 
             model_lower = selected_model_name.lower()
             if "opus" in model_lower:
                 fallback_models = [
+                    "anthropic--claude-4.7-opus",
                     "anthropic--claude-4.5-opus",
-                    "anthropic--claude-4-opus",
                 ]
             elif "haiku" in model_lower:
                 fallback_models = [
+                    "anthropic--claude-4.5-haiku",
                     "anthropic--claude-4-haiku",
-                    "anthropic--claude-3.5-haiku",
                 ]
             else:
                 # Default to sonnet for unspecified or sonnet variants
                 fallback_models = [
+                    "anthropic--claude-4.6-sonnet",
                     "anthropic--claude-4.5-sonnet",
-                    "anthropic--claude-4-sonnet",
-                    "anthropic--claude-3.7-sonnet",
                 ]
             for fallback in fallback_models:
                 if (
@@ -244,7 +242,3 @@ def reset_counters():
     global _load_balance_counters
     _load_balance_counters.clear()
 
-
-def get_counters() -> dict:
-    """Get the current load balancing counters. Useful for testing and debugging."""
-    return _load_balance_counters.copy()

@@ -46,8 +46,7 @@ def clean_cache():
 
     yield before_count
 
-    after_count = 0
     try:
-        after_count = clear_deployment_cache()
+        clear_deployment_cache()
     except:
         pass

@@ -9,7 +9,7 @@ import re
 from logging import Logger
 
 from typing import Optional
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from config.config_models import ProxyConfig, SubAccountConfig, ServiceKey, ModelFilters
 from utils.logging_utils import get_server_logger
@@ -21,7 +21,6 @@ from utils.sdk_utils import (
 from utils.exceptions import (
     ConfigValidationError,
     DeploymentFetchError,
-    DeploymentResolutionError,
 )
 from utils.error_ids import ErrorIDs
 from proxy_helpers import MODEL_ALIASES, Detector

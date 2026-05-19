@@ -34,7 +34,7 @@ MODEL_ALIASES = load_model_aliases()
 
 class Detector:
     @staticmethod
-    def is_claude_37_or_4(model: str):
+    def is_claude_family(model: str):
         """
         Check if the Claude model uses Converse API format (True) or InvokeModel format (False).
 
@@ -692,83 +692,9 @@ class Converters:
         return gemini_payload
 
     @staticmethod
-    def convert_claude_request_for_bedrock(payload):
-        """
-        Convert a Claude Messages API request to Bedrock Claude format.
-        Handle tool conversion for Bedrock compatibility.
-        """
-        logger.debug(
-            f"Original Claude payload for Bedrock conversion: {json.dumps(payload, indent=2)}"
-        )
-
-        bedrock_payload = {}
-
-        # Copy basic fields
-        for field in [
-            "model",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "top_k",
-            "stop_sequences",
-        ]:
-            if field in payload:
-                bedrock_payload[field] = payload[field]
-
-        # Handle system field - keep as array format
-        if "system" in payload:
-            bedrock_payload["system"] = payload["system"]
-
-        # Handle messages - remove cache_control fields
-        if "messages" in payload:
-            cleaned_messages = []
-            for message in payload["messages"]:
-                cleaned_message = {"role": message["role"]}
-
-                # Handle content
-                if isinstance(message["content"], list):
-                    cleaned_content = []
-                    for content_item in message["content"]:
-                        if isinstance(content_item, dict):
-                            # Remove cache_control field
-                            cleaned_item = {
-                                k: v
-                                for k, v in content_item.items()
-                                if k != "cache_control"
-                            }
-                            cleaned_content.append(cleaned_item)
-                        else:
-                            cleaned_content.append(content_item)
-                    cleaned_message["content"] = cleaned_content
-                else:
-                    cleaned_message["content"] = [
-                        {"type": "text", "text": message["content"]}
-                    ]
-
-                cleaned_messages.append(cleaned_message)
-            bedrock_payload["messages"] = cleaned_messages
-
-        # Handle tools conversion if present
-        if "tools" in payload and payload["tools"]:
-            bedrock_payload["tools"] = payload["tools"]
-            logger.debug(f"Tools present in request: {len(payload['tools'])} tools")
-
-        # Handle anthropic_beta if present (but not in payload, should be in headers)
-        # Remove it from payload as it should be in headers only
-
-        # Set anthropic_version if not present
-        if "anthropic_version" not in bedrock_payload:
-            bedrock_payload["anthropic_version"] = "bedrock-2023-05-31"
-
-        logger.debug(
-            f"Converted Bedrock Claude payload: {json.dumps(bedrock_payload, indent=2)}"
-        )
-        return bedrock_payload
-
-    @staticmethod
     def convert_claude_to_openai(response, model):
-        # Check if the model is Claude 3.7 or 4
-        if Detector.is_claude_37_or_4(model):
+        # Check if the model is Claude family
+        if Detector.is_claude_family(model):
             logger.info(
                 f"Detected Claude 3.7/4 model ('{model}'), using convert_claude37_to_openai."
             )

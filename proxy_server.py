@@ -32,28 +32,6 @@ DEFAULT_GPT_MODEL = "gpt-4.1"
 
 """SAP API Reference are documented at https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/example-payloads-for-inferencing-third-party-models"""
 
-# Bedrock handler - extracted to handlers/bedrock_handler.py
-
-# Streaming generators - extracted to handlers/streaming_generators.py (Phase 6d)
-from handlers.streaming_generators import (
-    generate_claude_streaming_response_sync,
-)
-
-
-# Backward-compatible alias for tests
-def generate_claude_streaming_response(
-    url: str,
-    headers: dict,
-    payload: dict,
-    model: str,
-    subaccount_name: str,
-    token_manager=None,
-):
-    return generate_claude_streaming_response_sync(
-        url, headers, payload, model, subaccount_name, token_manager
-    )
-
-
 # Global configuration
 proxy_config: ProxyConfig = ProxyConfig()
 

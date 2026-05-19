@@ -7,8 +7,7 @@ including clearing cache, getting cache stats, and monitoring cache expiration.
 
 import logging
 import os
-import shutil
-from datetime import datetime, timedelta
+from datetime import timedelta
 from diskcache import Cache
 
 logger = logging.getLogger(__name__)

@@ -12,18 +12,14 @@ import json
 import logging
 import random
 import time
-from typing import Any, AsyncGenerator, Generator
+from typing import Any, AsyncGenerator, Iterable
 
 import httpx
-import requests
 from fastapi import Request
 
 from proxy_helpers import Converters, Detector
-from handlers.streaming_handler import (
-    get_claude_stop_reason_from_gemini_chunk,
-    get_claude_stop_reason_from_openai_chunk,
-)
-from utils.auth_retry import AUTH_RETRY_MAX, log_auth_error_retry
+from utils.anthropic_usage import AnthropicTokenUsageParser
+from utils.logging_utils import extract_log_identity
 
 logger = logging.getLogger(__name__)
 transport_logger = logging.getLogger("transport")
@@ -85,8 +81,12 @@ def _format_sse_event(event_type: str, payload: dict[str, Any]) -> str:
 
 
 async def generate_bedrock_streaming_response(
-    response_body: Any,
+    response_body: Iterable[dict[str, Any]],
     tid: str,
+    model: str = "unknown",
+    subaccount_name: str = "unknown",
+    user_id: str = "unknown",
+    ip_address: str = "unknown",
 ) -> AsyncGenerator[str, None]:
     """Generate streaming response from Bedrock SDK EventStream.
 
@@ -96,6 +96,10 @@ async def generate_bedrock_streaming_response(
     Args:
         response_body: AWS Bedrock EventStream iterator yielding chunk events
         tid: Trace UUID for logging correlation
+        model: Model name for token usage logging
+        subaccount_name: Subaccount name for token usage logging
+        user_id: User identifier for token usage logging
+        ip_address: Client IP address for token usage logging
 
     Yields:
         SSE-formatted response strings (event + data lines)
@@ -109,6 +113,7 @@ async def generate_bedrock_streaming_response(
         - message_stop: End of message stream
         - error: Error information
     """
+    usage_parser = AnthropicTokenUsageParser()
     try:
         for event in response_body:
             chunk = json.loads(event["chunk"]["bytes"])
@@ -121,6 +126,9 @@ async def generate_bedrock_streaming_response(
 
             # Handle different chunk types according to Claude streaming format
             if chunk_type == "message_start":
+                msg_usage = (chunk.get("message") or {}).get("usage")
+                if isinstance(msg_usage, dict):
+                    AnthropicTokenUsageParser.normalize_usage_cache_fields(msg_usage)
                 response_line = _format_sse_event("message_start", chunk)
                 transport_logger.info("CHUNK: tid=%s, %s", tid, response_line[:200])
                 yield response_line
@@ -146,36 +154,35 @@ async def generate_bedrock_streaming_response(
                 yield response_line
                 transport_logger.info("DONE: tid=%s, Stream finished successfully", tid)
                 yield "data: [DONE]\n\n"
+                usage_parser.feed_chunk(chunk)
+                try:
+                    usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming")
+                except Exception:
+                    logger.warning("Failed to log token usage after stream completion", exc_info=True)
                 break
             elif chunk_type == "error":
                 response_line = _format_sse_event("error", chunk)
                 transport_logger.info("ERR: tid=%s, %s", tid, response_line[:200])
                 yield response_line
+                try:
+                    usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming-BackendError")
+                except Exception:
+                    logger.warning("Failed to log token usage after backend error chunk", exc_info=True)
                 break
+
+            usage_parser.feed_chunk(chunk)
 
     except Exception as e:
         logger.error("Error during streaming: %s", e, exc_info=True)
+        try:
+            usage_parser.log(model, subaccount_name, user_id, ip_address, "Streaming-Error")
+        except Exception:
+            logger.warning("Failed to log token usage after stream error", exc_info=True)
         error_chunk = {
             "type": "error",
             "error": {"type": "api_error", "message": str(e)},
         }
         yield _format_sse_event("error", error_chunk)
-
-
-def _sync_iter_async_generator(
-    async_gen: AsyncGenerator[Any, None],
-) -> Generator[Any, None, None]:
-    loop = asyncio.new_event_loop()
-    try:
-        while True:
-            try:
-                item = loop.run_until_complete(async_gen.__anext__())
-            except StopAsyncIteration:
-                break
-            yield item
-    finally:
-        loop.run_until_complete(async_gen.aclose())
-        loop.close()
 
 
 async def generate_streaming_response(
@@ -261,7 +268,7 @@ async def generate_streaming_response(
                 response.raise_for_status()
 
                 # --- Claude 3.7/4 Streaming Logic ---
-                if Detector.is_claude_model(model) and Detector.is_claude_37_or_4(
+                if Detector.is_claude_model(model) and Detector.is_claude_family(
                     model
                 ):
                     logger.info(
@@ -435,18 +442,7 @@ async def generate_streaming_response(
                             total_tokens,
                         )
 
-                        user_id = (
-                            request.headers.get("Authorization", "unknown")
-                            if request
-                            else "unknown"
-                        )
-                        if user_id and len(user_id) > 20:
-                            user_id = f"{user_id[:20]}..."
-                        ip_address = (
-                            request.client.host
-                            if request and request.client
-                            else "unknown_ip"
-                        )
+                        user_id, ip_address = extract_log_identity(request)
                         token_usage_logger.info(
                             "User: %s, IP: %s, Model: %s, SubAccount: %s, PromptTokens: %s, CompletionTokens: %s, TotalTokens: %s (Streaming)",
                             user_id,
@@ -606,18 +602,7 @@ async def generate_streaming_response(
                             total_tokens,
                         )
 
-                        user_id = (
-                            request.headers.get("Authorization", "unknown")
-                            if request
-                            else "unknown"
-                        )
-                        if user_id and len(user_id) > 20:
-                            user_id = f"{user_id[:20]}..."
-                        ip_address = (
-                            request.client.host
-                            if request and request.client
-                            else "unknown_ip"
-                        )
+                        user_id, ip_address = extract_log_identity(request)
                         token_usage_logger.info(
                             "User: %s, IP: %s, Model: %s, SubAccount: %s, PromptTokens: %s, CompletionTokens: %s, TotalTokens: %s (Streaming)",
                             user_id,
@@ -762,20 +747,9 @@ async def generate_streaming_response(
 
                 if not (
                     Detector.is_claude_model(model)
-                    and Detector.is_claude_37_or_4(model)
+                    and Detector.is_claude_family(model)
                 ):
-                    user_id = (
-                        request.headers.get("Authorization", "unknown")
-                        if request
-                        else "unknown"
-                    )
-                    if user_id and len(user_id) > 20:
-                        user_id = f"{user_id[:20]}..."
-                    ip_address = (
-                        request.client.host
-                        if request and request.client
-                        else "unknown_ip"
-                    )
+                    user_id, ip_address = extract_log_identity(request)
 
                     token_usage_logger.info(
                         "User: %s, IP: %s, Model: %s, SubAccount: %s, PromptTokens: %s, CompletionTokens: %s, TotalTokens: %s (Streaming)",
@@ -970,399 +944,3 @@ async def generate_streaming_response(
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
 
-
-async def generate_claude_streaming_response(
-    url: str,
-    headers: dict,
-    payload: dict,
-    model: str,
-    subaccount_name: str,
-    token_manager=None,
-) -> AsyncGenerator[bytes, None]:
-    """Generate streaming response in Anthropic Claude Messages API format."""
-    logger.info(
-        "Starting Claude streaming response for model '%s' using subAccount '%s'",
-        model,
-        subaccount_name,
-    )
-    logger.debug(
-        "Forwarding payload to API (Claude streaming): %s",
-        json.dumps(payload, indent=2),
-    )
-    logger.debug("Request URL: %s", url)
-    logger.debug("Request headers: %s", headers)
-
-    timeout_config = httpx.Timeout(600)
-
-    if Detector.is_claude_model(model):
-        logger.info(
-            "Backend is Claude model, converting response format for '%s'",
-            model,
-        )
-        try:
-            success = False
-            for attempt in range(AUTH_RETRY_MAX + 1):
-                async with httpx.AsyncClient(timeout=timeout_config) as client:
-                    async with client.stream(
-                        "POST", url, headers=headers, json=payload
-                    ) as http_response:
-                        if http_response.status_code in [401, 403]:
-                            if attempt == 0 and token_manager is not None:
-                                logger.warning(
-                                    log_auth_error_retry(
-                                        http_response.status_code,
-                                        f"model '{model}'",
-                                    )
-                                )
-                                token_manager.invalidate_token()
-                                new_token = token_manager.get_token()
-                                headers["Authorization"] = f"Bearer {new_token}"
-                                continue
-                            logger.error(
-                                log_auth_error_retry(
-                                    http_response.status_code,
-                                    f"model '{model}'",
-                                )
-                            )
-                            http_response.raise_for_status()
-
-                        http_response.raise_for_status()
-                        logger.debug(
-                            "Claude backend response status: %s",
-                            http_response.status_code,
-                        )
-
-                        message_start_data = {
-                            "type": "message_start",
-                            "message": {
-                                "id": f"msg_{random.randint(10000000, 99999999)}",
-                                "type": "message",
-                                "role": "assistant",
-                                "content": [],
-                                "model": model,
-                                "stop_reason": None,
-                                "stop_sequence": None,
-                                "usage": {"input_tokens": 0, "output_tokens": 0},
-                            },
-                        }
-                        message_start_event = f"event: message_start\ndata: {json.dumps(message_start_data)}\n\n"
-                        yield message_start_event.encode("utf-8")
-
-                        content_block_start_data = {
-                            "type": "content_block_start",
-                            "index": 0,
-                            "content_block": {"type": "text", "text": ""},
-                        }
-                        content_block_start_event = f"event: content_block_start\ndata: {json.dumps(content_block_start_data)}\n\n"
-                        yield content_block_start_event.encode("utf-8")
-
-                        chunk_count = 0
-                        stop_reason = None
-
-                        async for line in http_response.aiter_lines():
-                            chunk_count += 1
-                            if not line:
-                                continue
-
-                            line_str = line.strip()
-                            logger.debug(
-                                "Claude backend chunk %s: %s", chunk_count, line_str
-                            )
-
-                            if line_str.startswith("data: "):
-                                data_content = line_str[6:].strip()
-
-                                if data_content == "[DONE]":
-                                    break
-
-                                try:
-                                    try:
-                                        parsed_data = json.loads(data_content)
-                                    except json.JSONDecodeError:
-                                        parsed_data = ast.literal_eval(data_content)
-
-                                    if "contentBlockDelta" in parsed_data:
-                                        text_content = parsed_data["contentBlockDelta"][
-                                            "delta"
-                                        ].get("text", "")
-                                        if text_content:
-                                            delta_data = {
-                                                "type": "content_block_delta",
-                                                "index": 0,
-                                                "delta": {
-                                                    "type": "text_delta",
-                                                    "text": text_content,
-                                                },
-                                            }
-                                            delta_event = f"event: content_block_delta\ndata: {json.dumps(delta_data)}\n\n"
-                                            yield delta_event.encode("utf-8")
-
-                                    elif "contentBlockStop" in parsed_data:
-                                        content_block_stop_data = {
-                                            "type": "content_block_stop",
-                                            "index": parsed_data[
-                                                "contentBlockStop"
-                                            ].get("contentBlockIndex", 0),
-                                        }
-                                        content_block_stop_event = f"event: content_block_stop\ndata: {json.dumps(content_block_stop_data)}\n\n"
-                                        yield content_block_stop_event.encode("utf-8")
-
-                                    elif "messageStop" in parsed_data:
-                                        stop_reason = parsed_data["messageStop"].get(
-                                            "stopReason", "end_turn"
-                                        )
-
-                                    elif "metadata" in parsed_data:
-                                        usage_info = parsed_data.get(
-                                            "metadata", {}
-                                        ).get("usage", {})
-                                        message_delta_data = {
-                                            "type": "message_delta",
-                                            "delta": {
-                                                "stop_reason": stop_reason
-                                                or "end_turn",
-                                                "stop_sequence": None,
-                                            },
-                                            "usage": {
-                                                "output_tokens": usage_info.get(
-                                                    "outputTokens", 0
-                                                )
-                                            },
-                                        }
-                                        message_delta_event = f"event: message_delta\ndata: {json.dumps(message_delta_data)}\n\n"
-                                        yield message_delta_event.encode("utf-8")
-
-                                        message_stop_event = f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
-                                        yield message_stop_event.encode("utf-8")
-
-                                except (
-                                    json.JSONDecodeError,
-                                    ValueError,
-                                    SyntaxError,
-                                ) as e:
-                                    logger.warning(
-                                        "Could not parse Claude backend data: %s, error: %s",
-                                        data_content,
-                                        e,
-                                    )
-                                    continue
-
-                        logger.info(
-                            "Claude backend conversion completed with %s chunks",
-                            chunk_count,
-                        )
-                        success = True
-                        break
-
-            if not success:
-                raise Exception("Failed to get valid response for Claude streaming")
-        except Exception as e:
-            logger.error(
-                "Error in Claude backend conversion for '%s': %s",
-                model,
-                e,
-                exc_info=True,
-            )
-            raise
-        return
-
-    logger.info("Converting non-Claude model '%s' stream to Claude format", model)
-
-    message_start_data = {
-        "type": "message_start",
-        "message": {
-            "id": f"msg_{random.randint(10000000, 99999999)}",
-            "type": "message",
-            "role": "assistant",
-            "content": [],
-            "model": model,
-            "stop_reason": None,
-            "stop_sequence": None,
-            "usage": {"input_tokens": 0, "output_tokens": 0},
-        },
-    }
-    message_start_event = (
-        f"event: message_start\ndata: {json.dumps(message_start_data)}\n\n"
-    )
-    logger.debug("Sending message_start event: %s", message_start_event)
-    yield message_start_event.encode("utf-8")
-
-    content_block_start_data = {
-        "type": "content_block_start",
-        "index": 0,
-        "content_block": {"type": "text", "text": ""},
-    }
-    content_block_start_event = (
-        f"event: content_block_start\ndata: {json.dumps(content_block_start_data)}\n\n"
-    )
-    logger.debug("Sending content_block_start event: %s", content_block_start_event)
-    yield content_block_start_event.encode("utf-8")
-
-    stop_reason = None
-    chunk_count = 0
-
-    try:
-        success = False
-        for attempt in range(AUTH_RETRY_MAX + 1):
-            async with httpx.AsyncClient(timeout=timeout_config) as client:
-                async with client.stream(
-                    "POST", url, headers=headers, json=payload
-                ) as http_response:
-                    if http_response.status_code in [401, 403]:
-                        if attempt == 0 and token_manager is not None:
-                            logger.warning(
-                                log_auth_error_retry(
-                                    http_response.status_code, f"model '{model}'"
-                                )
-                            )
-                            token_manager.invalidate_token()
-                            new_token = token_manager.get_token()
-                            headers["Authorization"] = f"Bearer {new_token}"
-                            continue
-                        logger.error(
-                            log_auth_error_retry(
-                                http_response.status_code, f"model '{model}'"
-                            )
-                        )
-                        http_response.raise_for_status()
-
-                    http_response.raise_for_status()
-
-                    async for line in http_response.aiter_lines():
-                        chunk_count += 1
-                        if not line:
-                            continue
-
-                        line_str = line.strip()
-                        logger.debug(
-                            "Streaming chunk %s for model '%s': %s",
-                            chunk_count,
-                            model,
-                            line_str,
-                        )
-
-                        if line_str.startswith("data: "):
-                            data_content = line_str[6:].strip()
-                            if data_content == "[DONE]":
-                                break
-
-                            try:
-                                parsed_data = json.loads(data_content)
-                            except json.JSONDecodeError:
-                                logger.warning(
-                                    "Failed to parse chunk as JSON: %s", data_content
-                                )
-                                continue
-
-                            if Detector.is_gemini_model(model):
-                                delta_chunk = (
-                                    Converters.convert_gemini_chunk_to_claude_delta(
-                                        parsed_data
-                                    )
-                                )
-                            else:
-                                delta_chunk = (
-                                    Converters.convert_openai_chunk_to_claude_delta(
-                                        parsed_data
-                                    )
-                                )
-
-                            if delta_chunk:
-                                delta_event = f"event: content_block_delta\ndata: {json.dumps(delta_chunk)}\n\n"
-                                yield delta_event.encode("utf-8")
-
-                            if Detector.is_gemini_model(model):
-                                stop_reason = get_claude_stop_reason_from_gemini_chunk(
-                                    parsed_data
-                                )
-                            else:
-                                stop_reason = get_claude_stop_reason_from_openai_chunk(
-                                    parsed_data
-                                )
-
-                    success = True
-                    break
-
-        if not success:
-            raise Exception("Failed to get valid response for Claude streaming")
-    except Exception as e:
-        logger.error(
-            "Error in streaming response from '%s': %s",
-            subaccount_name,
-            e,
-            exc_info=True,
-        )
-        raise
-
-    content_block_stop_data = {"type": "content_block_stop", "index": 0}
-    content_block_stop_event = (
-        f"event: content_block_stop\ndata: {json.dumps(content_block_stop_data)}\n\n"
-    )
-    yield content_block_stop_event.encode("utf-8")
-
-    message_delta_data = {
-        "type": "message_delta",
-        "delta": {
-            "stop_reason": stop_reason or "end_turn",
-            "stop_sequence": None,
-        },
-    }
-    message_delta_event = (
-        f"event: message_delta\ndata: {json.dumps(message_delta_data)}\n\n"
-    )
-    yield message_delta_event.encode("utf-8")
-
-    message_stop_event = (
-        f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
-    )
-    yield message_stop_event.encode("utf-8")
-
-
-def generate_streaming_response_sync(
-    url: str,
-    headers: dict,
-    payload: dict,
-    model: str,
-    subaccount_name: str,
-    tid: str,
-) -> Generator[str | bytes, None, None]:
-    with requests.post(
-        url, headers=headers, json=payload, stream=True, timeout=600
-    ) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if not line:
-                continue
-            if isinstance(line, bytes):
-                yield line + b"\n"
-            else:
-                yield f"{line}\n"
-
-
-def generate_claude_streaming_response_sync(
-    url: str,
-    headers: dict,
-    payload: dict,
-    model: str,
-    subaccount_name: str,
-    token_manager=None,
-) -> Generator[bytes, None, None]:
-    with requests.post(
-        url, headers=headers, json=payload, stream=True, timeout=600
-    ) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if not line:
-                continue
-            if isinstance(line, bytes):
-                yield line + b"\n"
-            else:
-                yield f"{line}\n".encode("utf-8")
-
-
-def generate_bedrock_streaming_response_sync(
-    response_body: Any,
-    tid: str,
-) -> Generator[str, None, None]:
-    async_gen = generate_bedrock_streaming_response(response_body, tid)
-    return _sync_iter_async_generator(async_gen)

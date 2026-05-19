@@ -5,10 +5,8 @@ Tests certificate discovery, validation, retry logic, and error handling.
 """
 
 import os
-import ssl
 import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import pytest
 
 from auth import TokenManager

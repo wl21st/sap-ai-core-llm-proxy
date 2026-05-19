@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -16,16 +17,14 @@ from handlers.bedrock_handler import (
 )
 from handlers.streaming_generators import (
     generate_bedrock_streaming_response,
-    generate_claude_streaming_response,
 )
-from handlers.streaming_handler import make_backend_request
 from load_balancer import load_balance_url
-from proxy_helpers import Converters, Detector
+from proxy_helpers import Detector
 from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
 from utils.circuit_breaker import CircuitBreakerOpenError, get_ssl_circuit_breaker
-from utils.logging_utils import get_server_logger, get_transport_logger
-from utils.retry import unified_retry as bedrock_retry, retry_on_rate_limit
+from utils.anthropic_usage import AnthropicTokenUsageParser
+from utils.logging_utils import extract_log_identity, get_server_logger, get_transport_logger
 from config import SubAccountConfig
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
@@ -48,7 +47,7 @@ def _handle_certificate_recovery(
     body_json: str,
     ca_cert_bundle: str | None,
     is_streaming: bool,
-):
+) -> tuple[Any, Any, Any]:
     """Recover from certificate errors by invalidating session and retrying.
 
     Consolidates certificate error recovery logic shared by streaming and non-streaming
@@ -67,7 +66,7 @@ def _handle_certificate_recovery(
     """
     breaker = get_ssl_circuit_breaker(model)
 
-    def _do_recovery():
+    def _do_recovery() -> tuple[Any, Any, Any]:
         logger.warning(
             "Certificate error detected: invalidating SDK session and retrying",
             exc_info=True,
@@ -94,8 +93,8 @@ def _handle_certificate_recovery(
     return breaker.call(_do_recovery)
 
 
-@router.post("/v1/messages", dependencies=[Depends(verify_request_token)])
-async def proxy_claude_request(request: Request):
+@router.post("/v1/messages", dependencies=[Depends(verify_request_token)], response_model=None)
+async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResponse:
     """Handles requests compatible with the Anthropic Claude Messages API."""
     tid: str = str(uuid.uuid4())
 
@@ -397,8 +396,19 @@ async def proxy_claude_request(request: Request):
                         status_code=500,
                     )
 
+            _stream_user_id = request.headers.get("Authorization", "unknown")
+            if _stream_user_id and len(_stream_user_id) > 20:
+                _stream_user_id = f"{_stream_user_id[:20]}..."
+            _stream_ip = request.client.host if request.client else "unknown_ip"
             return StreamingResponse(
-                generate_bedrock_streaming_response(response_body, tid),
+                generate_bedrock_streaming_response(
+                    response_body,
+                    tid,
+                    model=model,
+                    subaccount_name=subaccount_name,
+                    user_id=_stream_user_id,
+                    ip_address=_stream_ip,
+                ),
                 media_type="text/event-stream",
             )
 
@@ -496,6 +506,22 @@ async def proxy_claude_request(request: Request):
             response_json = json.loads(chunk_data)
 
             logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
+
+            if isinstance(response_json.get("usage"), dict):
+                AnthropicTokenUsageParser.normalize_usage_cache_fields(response_json["usage"])
+
+            user_id, ip_address = extract_log_identity(request)
+            try:
+                _usage_parser = AnthropicTokenUsageParser()
+                _usage_parser.parse_response(response_json)
+                _usage_parser.log(model, subaccount_name, user_id, ip_address)
+            except Exception:
+                logger.warning(
+                    "Token usage logging failed for model=%s subaccount=%s",
+                    model,
+                    subaccount_name,
+                    exc_info=True,
+                )
 
             return JSONResponse(response_json, status_code=response_status)
         else:

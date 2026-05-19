@@ -27,7 +27,7 @@ from load_balancer import resolve_model_name, load_balance_url, reset_counters
 
 # Create convenience aliases for the test functions
 is_claude_model = Detector.is_claude_model
-is_claude_37_or_4 = Detector.is_claude_37_or_4
+is_claude_37_or_4 = Detector.is_claude_family
 is_gemini_model = Detector.is_gemini_model
 convert_openai_to_claude = Converters.convert_openai_to_claude
 convert_openai_to_claude37 = Converters.convert_openai_to_claude37
@@ -1703,33 +1703,6 @@ class TestClaudeRequestConversions:
         assert result["generation_config"]["maxOutputTokens"] == 1000
         assert result["generation_config"]["temperature"] == 0.7
         assert len(result["tools"]) == 1
-
-    def test_convert_claude_request_for_bedrock(self):
-        """Test convert_claude_request_for_bedrock function."""
-        claude_payload = {
-            "model": "claude-3.5-sonnet",
-            "max_tokens": 1000,
-            "temperature": 0.7,
-            "system": "You are helpful",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "tools": [
-                {
-                    "name": "get_weather",
-                    "description": "Get weather",
-                    "input_schema": {},
-                }
-            ],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(claude_payload)
-
-        assert result["model"] == "claude-3.5-sonnet"
-        assert result["max_tokens"] == 1000
-        assert result["temperature"] == 0.7
-        assert result["system"] == "You are helpful"
-        assert len(result["messages"]) == 1
-        assert result["anthropic_version"] == "bedrock-2023-05-31"
-        assert "tools" in result
 
 
 # ============================================================================

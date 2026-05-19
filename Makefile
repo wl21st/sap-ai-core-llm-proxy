@@ -41,7 +41,7 @@ endif
 .PHONY: all build build-debug build-universal clean install test package sync \
         version-show version-bump-patch version-bump-minor version-bump-major \
         tag tag-push release-prepare release-github release-docker release-all \
-        workflow-commit-and-tag build-all-platforms
+        workflow-commit-and-tag build-all-platforms test-api
 
 all: build
 
@@ -99,7 +99,7 @@ build-bundle: install-build generate-version
 test:
 	@echo "Running tests (excluding integration tests)..."
 	@if [ -d "tests" ]; then \
-		$(UV) sync --extra dev && $(UV) run pytest tests/ --ignore=tests/integration/; \
+		$(UV) sync --extra dev && $(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/; \
 	else \
 		echo "Warning: tests/ directory not found. Skipping tests."; \
 	fi
@@ -156,6 +156,26 @@ test-integration-model:
 		exit 1; \
 	fi
 	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
+
+# Run direct Bedrock API tests
+# Config path resolution: CONFIG var > SAP_AI_PROXY_CONFIG env > config.json
+# Examples:
+#   make test-api                          # uses config.json in project root
+#   make test-api CONFIG=~/my-config.json  # explicit path
+#   SAP_AI_PROXY_CONFIG=~/my-config.json make test-api
+CONFIG ?=
+test-api:
+	@echo "Running direct Bedrock API tests..."
+	@command -v uv >/dev/null || { echo "Error: uv not found. Install from https://github.com/astral-sh/uv"; exit 1; }
+	@echo "Checking if SAP AI Core SDK is installed..."
+	@$(UV) run python3 -c "import gen_ai_hub" 2>/dev/null || { \
+		echo "Error: SAP AI Core SDK (gen_ai_hub) not installed"; \
+		echo "  Install: pip install gen-ai-hub-sdk"; \
+		exit 1; \
+	}
+	$(UV) sync --extra dev && $(UV) run pytest tests/api/ -v -m "bedrock" \
+		--override-ini="addopts=-v --tb=short --strict-markers --disable-warnings --color=yes --cov=proxy_helpers --cov-report=html --cov-report=term-missing --cov-report=xml" \
+		$(if $(CONFIG),--config $(CONFIG),)
 
 # Install test dependencies
 install-test-deps:
@@ -419,6 +439,7 @@ help:
 	@echo "  make test-verbose              - Run tests with verbose output"
 	@echo "  make test-file FILE=...        - Run specific test file"
 	@echo "  make test-pattern PATTERN=...  - Run tests matching pattern"
+	@echo "  make test-api                  - Run direct Bedrock API tests"
 	@echo "  make test-integration          - Run integration tests against localhost"
 	@echo "  make test-integration-smoke    - Run integration smoke tests"
 	@echo "  make test-integration-streaming - Run integration streaming tests"

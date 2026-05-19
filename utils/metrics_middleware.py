@@ -6,7 +6,6 @@ Tracks request counts per endpoint and model.
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):

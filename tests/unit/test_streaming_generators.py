@@ -3,7 +3,7 @@
 import asyncio
 import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from fastapi import Request
 import httpx
 
