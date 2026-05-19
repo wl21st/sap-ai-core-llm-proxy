@@ -3,10 +3,10 @@
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
-from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
-from routers.chat import router, proxy_openai_stream, _handle_non_streaming_request
+from routers.chat import proxy_openai_stream, _handle_non_streaming_request
 
 
 @pytest.mark.skip(reason="Tests require complex mocking of internal implementation")
@@ -46,7 +46,7 @@ class TestChatRouterRequestHandling:
 
                 mock_gen.return_value = mock_stream()
 
-                response = await proxy_openai_stream(mock_request)
+                _response = await proxy_openai_stream(mock_request)
 
                 assert mock_request.body.call_count >= 1
                 assert mock_request.json.call_count >= 1

@@ -803,7 +803,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_claude37(payload)
+            _result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
 
     def test_convert_openai_to_claude37_invalid_temperature(self):
@@ -890,7 +890,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_claude37(payload)
+            _result = Converters.convert_openai_to_claude37(payload)
             mock_warning.assert_called()
 
     def test_convert_openai_to_claude37_unsupported_role(self):
@@ -1165,7 +1165,7 @@ class TestConvertersOpenAIToGeminiEdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_gemini(payload)
+            _result = Converters.convert_openai_to_gemini(payload)
             mock_warning.assert_called()
 
     def test_convert_openai_to_gemini_with_top_p(self):
@@ -1184,7 +1184,7 @@ class TestConvertersOpenAIToGeminiEdgeCases:
         }
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
-            result = Converters.convert_openai_to_gemini(payload)
+            _result = Converters.convert_openai_to_gemini(payload)
             mock_warning.assert_called()
 
 
@@ -1405,7 +1405,7 @@ class TestConvertersResponseErrorHandling:
         }
 
         with patch("proxy_helpers.logger.info") as mock_info:
-            result = Converters.convert_claude_to_openai(response, "claude-3.7-sonnet")
+            _result = Converters.convert_claude_to_openai(response, "claude-3.7-sonnet")
             # Should log that it's using claude37 conversion
             assert any("3.7/4" in str(call) for call in mock_info.call_args_list)
 

@@ -17,7 +17,7 @@ import sys
 import argparse
 import requests
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 
 def load_config(config_path: str = "config.json") -> Dict[str, Any]:

@@ -1,4 +1,3 @@
-import pytest
 from proxy_helpers import Detector
 
 
