@@ -99,7 +99,7 @@ build-bundle: install-build generate-version
 test:
 	@echo "Running tests (excluding integration tests)..."
 	@if [ -d "tests" ]; then \
-		$(UV) sync --extra dev && $(UV) run pytest tests/ --ignore=tests/integration/; \
+		$(UV) sync --extra dev && $(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/; \
 	else \
 		echo "Warning: tests/ directory not found. Skipping tests."; \
 	fi

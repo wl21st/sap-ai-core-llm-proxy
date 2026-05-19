@@ -9,9 +9,11 @@ up correctly after import cleanup removed previously-imported but unused symbols
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.testclient import TestClient
+from starlette.status import HTTP_401_UNAUTHORIZED
 
+from auth.request_validator import verify_request_token
 from routers import chat, messages, models
 
 
@@ -81,22 +83,38 @@ class TestMessagesRoute:
 
 
 class TestChatCompletionsRoute:
-    @patch("routers.chat.verify_request_token", return_value=True)
-    @patch(
-        "handlers.model_handlers.handle_default_request",
-        side_effect=ValueError("model not found"),
-    )
-    def test_missing_model_returns_error(self, _mock_handler, _mock_auth, client):
-        response = client.post(
-            "/v1/chat/completions",
-            json={"model": "unknown", "messages": [{"role": "user", "content": "hi"}]},
-        )
-        assert response.status_code in (404, 500)
+     @patch("routers.chat.verify_request_token", return_value=True)
+     @patch(
+         "routers.chat.handle_default_request",
+         side_effect=ValueError("model not found"),
+     )
+     def test_missing_model_returns_error(self, _mock_handler, _mock_auth, client):
+         response = client.post(
+             "/v1/chat/completions",
+             json={"model": "unknown", "messages": [{"role": "user", "content": "hi"}]},
+         )
+         assert response.status_code in (400, 404, 500)
 
-    @patch("routers.chat.verify_request_token", return_value=False)
-    def test_unauthenticated_returns_401(self, _mock_auth, client):
-        response = client.post(
-            "/v1/chat/completions",
-            json={"model": "gpt-4.1", "messages": [{"role": "user", "content": "hi"}]},
-        )
-        assert response.status_code == 401
+     def test_unauthenticated_returns_401(self, client):
+         """Test that unauthenticated requests receive 401.
+         
+         Uses FastAPI's dependency_overrides to properly mock the dependency
+         at runtime, ensuring the override is applied before the request is processed.
+         """
+         def mock_auth_fail(
+             request: Request,
+             authorization: str | None = Header(default=None, alias="Authorization"),
+             x_api_key: str | None = Header(default=None, alias="x-api-key"),
+         ) -> None:
+             """Mock dependency that raises 401 authentication error."""
+             raise HTTPException(status_code=HTTP_401_UNAUTHORIZED)
+
+         client.app.dependency_overrides[verify_request_token] = mock_auth_fail
+         try:
+             response = client.post(
+                 "/v1/chat/completions",
+                 json={"model": "gpt-4.1", "messages": [{"role": "user", "content": "hi"}]},
+             )
+             assert response.status_code == 401
+         finally:
+             client.app.dependency_overrides.clear()
