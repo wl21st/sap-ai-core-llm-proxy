@@ -66,7 +66,9 @@ def bedrock_client_factory(first_subaccount):
             raise ValueError(f"Model {model} (mapped to {deployment_model}) not configured in subaccount")
 
         if deployment_id is None:
-            deployment_id = deployment_urls[0]
+            deployment_url = deployment_urls[0]
+            # Extract deployment ID from URL (e.g., https://api.../deployments/abc123 -> abc123)
+            deployment_id = deployment_url.split("/deployments/")[-1]
 
         # Get Bedrock client via SDK
         client = get_bedrock_client(
