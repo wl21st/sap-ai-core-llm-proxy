@@ -13,11 +13,9 @@ from utils.sdk_utils import (
 from config.config_models import ServiceKey
 from utils.exceptions import (
     DeploymentFetchError,
-    CacheError,
     AuthenticationError,
     DeploymentResolutionError,
 )
-from utils.error_ids import ErrorIDs
 
 
 @pytest.fixture

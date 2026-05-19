@@ -5,20 +5,9 @@ Tests additional functionality including embedding requests, load balancing,
 request handlers, and streaming response generation.
 """
 
-import json
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import proxy_server
-from proxy_server import (
-    format_embedding_response,
-    handle_embedding_service_call,
-    load_balance_url,
-    handle_claude_request,
-    handle_gemini_request,
-    handle_default_request,
-    get_claude_stop_reason_from_gemini_chunk,
-    get_claude_stop_reason_from_openai_chunk,
-)
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from config import SubAccountConfig, ServiceKey

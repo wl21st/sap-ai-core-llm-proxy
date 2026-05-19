@@ -12,19 +12,13 @@ import json
 import logging
 import random
 import time
-from typing import Any, AsyncGenerator, Generator, Iterable
+from typing import Any, AsyncGenerator, Iterable
 
 import httpx
-import requests
 from fastapi import Request
 
 from proxy_helpers import Converters, Detector
-from handlers.streaming_handler import (
-    get_claude_stop_reason_from_gemini_chunk,
-    get_claude_stop_reason_from_openai_chunk,
-)
 from utils.anthropic_usage import AnthropicTokenUsageParser
-from utils.auth_retry import AUTH_RETRY_MAX, log_auth_error_retry
 from utils.logging_utils import extract_log_identity
 
 logger = logging.getLogger(__name__)
@@ -189,22 +183,6 @@ async def generate_bedrock_streaming_response(
             "error": {"type": "api_error", "message": str(e)},
         }
         yield _format_sse_event("error", error_chunk)
-
-
-def _sync_iter_async_generator(
-    async_gen: AsyncGenerator[Any, None],
-) -> Generator[Any, None, None]:
-    loop = asyncio.new_event_loop()
-    try:
-        while True:
-            try:
-                item = loop.run_until_complete(async_gen.__anext__())
-            except StopAsyncIteration:
-                break
-            yield item
-    finally:
-        loop.run_until_complete(async_gen.aclose())
-        loop.close()
 
 
 async def generate_streaming_response(
@@ -966,17 +944,3 @@ async def generate_streaming_response(
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
 
-
-def generate_bedrock_streaming_response_sync(
-    response_body: object,
-    tid: str,
-    model: str = "unknown",
-    subaccount_name: str = "unknown",
-    user_id: str = "unknown",
-    ip_address: str = "unknown",
-) -> Generator[str, None, None]:
-    async_gen = generate_bedrock_streaming_response(
-        response_body, tid, model=model, subaccount_name=subaccount_name,
-        user_id=user_id, ip_address=ip_address,
-    )
-    return _sync_iter_async_generator(async_gen)

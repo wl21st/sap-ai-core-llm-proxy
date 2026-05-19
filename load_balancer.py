@@ -242,7 +242,3 @@ def reset_counters():
     global _load_balance_counters
     _load_balance_counters.clear()
 
-
-def get_counters() -> dict:
-    """Get the current load balancing counters. Useful for testing and debugging."""
-    return _load_balance_counters.copy()

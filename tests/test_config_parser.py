@@ -6,7 +6,6 @@ Tests model filtering logic including regex validation, filter precedence, and e
 
 import pytest
 import re
-from unittest.mock import Mock, patch, mock_open
 from config.config_parser import (
     validate_regex_patterns,
     apply_model_filters,

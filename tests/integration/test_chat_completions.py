@@ -327,7 +327,6 @@ class TestChatCompletionsStreaming:
                 "max_completion_tokens": max_tokens,
                 "stream": True,  # Required for sonnet-4.5
             }
-            use_streaming = True
         else:
             request_data = {
                 "model": model,
@@ -335,7 +334,6 @@ class TestChatCompletionsStreaming:
                 "max_completion_tokens": max_tokens,
                 "stream": True,
             }
-            use_streaming = True
 
         response = await proxy_client.post(
             f"{proxy_url}/v1/chat/completions",
@@ -606,7 +604,6 @@ class TestChatCompletionsSmoke:
                 "max_tokens": max_tokens,
                 "stream": False,  # Required for sonnet-4.5
             }
-            use_streaming = False
         else:
             request_data = {
                 "model": model,
@@ -614,7 +611,6 @@ class TestChatCompletionsSmoke:
                 "max_tokens": max_tokens,
                 "stream": False,
             }
-            use_streaming = False
 
         response = await proxy_client.post(
             f"{proxy_url}/v1/chat/completions",
@@ -652,7 +648,6 @@ class TestChatCompletionsSmoke:
                 "max_tokens": max_tokens,
                 "stream": True,  # Required for sonnet-4.5
             }
-            use_streaming = True
         else:
             request_data = {
                 "model": model,
@@ -660,7 +655,6 @@ class TestChatCompletionsSmoke:
                 "max_tokens": max_tokens,
                 "stream": True,
             }
-            use_streaming = True
 
         response = await proxy_client.post(
             f"{proxy_url}/v1/chat/completions",

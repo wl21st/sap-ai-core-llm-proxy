@@ -5,10 +5,8 @@ Fixtures for connecting directly to SAP AI Core Bedrock using account_key.json
 from ~/.aicore/config.json
 """
 
-import json
 import os
 import pytest
-from pathlib import Path
 from typing import Optional
 
 from config import ProxyConfig, SubAccountConfig
