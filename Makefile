@@ -41,7 +41,7 @@ endif
 .PHONY: all build build-debug build-universal clean install test package sync \
         version-show version-bump-patch version-bump-minor version-bump-major \
         tag tag-push release-prepare release-github release-docker release-all \
-        workflow-commit-and-tag build-all-platforms
+        workflow-commit-and-tag build-all-platforms test-api
 
 all: build
 
@@ -156,6 +156,11 @@ test-integration-model:
 		exit 1; \
 	fi
 	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
+
+# Run direct Bedrock API tests
+test-api:
+	@echo "Running direct Bedrock API tests..."
+	$(UV) sync --extra dev && $(UV) run pytest tests/api/ -v
 
 # Install test dependencies
 install-test-deps:
@@ -419,6 +424,7 @@ help:
 	@echo "  make test-verbose              - Run tests with verbose output"
 	@echo "  make test-file FILE=...        - Run specific test file"
 	@echo "  make test-pattern PATTERN=...  - Run tests matching pattern"
+	@echo "  make test-api                  - Run direct Bedrock API tests"
 	@echo "  make test-integration          - Run integration tests against localhost"
 	@echo "  make test-integration-smoke    - Run integration smoke tests"
 	@echo "  make test-integration-streaming - Run integration streaming tests"
