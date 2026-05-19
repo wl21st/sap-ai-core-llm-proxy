@@ -327,3 +327,163 @@ class TestBedrockUnsupportedFieldsDirectAPI:
             f"Response: {response}. Thinking should be supported."
         )
         print(f"✓ Confirmed: Thinking config accepted for {model} (HTTP {status})")
+
+    @pytest.mark.parametrize("model", TEST_MODELS)
+    def test_cache_control_in_system_message(self, model: str, bedrock_client_factory):
+        """
+        TEST: Bedrock behavior with cache_control in system messages.
+
+        Cache control is a prompt caching feature - test if Bedrock accepts it.
+        """
+        try:
+            client = bedrock_client_factory(model)
+        except Exception as e:
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
+
+        # Payload with cache_control in system message
+        payload = {
+            "modelId": "anthropic.claude-sonnet-4-20250514",
+            "anthropic_version": "bedrock-2023-05-31",
+            "system": [
+                {
+                    "type": "text",
+                    "text": "You are a helpful research assistant.",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "What is Python?"}],
+                }
+            ],
+            "max_tokens": 500,
+        }
+
+        status, response = self.invoke_bedrock(client, payload)
+
+        # Document the actual behavior (accept, reject, or ignore)
+        if status == 200:
+            print(f"✓ Bedrock accepts/ignores cache_control in system for {model} (HTTP {status})")
+        elif status == 400:
+            print(f"✓ Bedrock rejects cache_control in system for {model} (HTTP {status})")
+
+        # For now, just document behavior without strict assertion
+        print(f"  Response: {response if status != 200 else 'Success'}")
+
+    @pytest.mark.parametrize("model", TEST_MODELS)
+    def test_cache_control_in_tool_definition(self, model: str, bedrock_client_factory):
+        """
+        TEST: Bedrock behavior with cache_control in tool definitions.
+
+        Prompt caching for tools - test if Bedrock accepts cache_control in tool definitions.
+        """
+        try:
+            client = bedrock_client_factory(model)
+        except Exception as e:
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
+
+        # Payload with cache_control in tools
+        payload = {
+            "modelId": "anthropic.claude-sonnet-4-20250514",
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Search for Python documentation"}],
+                }
+            ],
+            "tools": [
+                {
+                    "name": "search_knowledge_base",
+                    "description": "Search the internal knowledge base for relevant documents.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"}
+                        },
+                        "required": ["query"],
+                    },
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "max_tokens": 500,
+        }
+
+        status, response = self.invoke_bedrock(client, payload)
+
+        # Document the actual behavior
+        if status == 200:
+            print(f"✓ Bedrock accepts/ignores cache_control in tools for {model} (HTTP {status})")
+        elif status == 400:
+            print(f"✓ Bedrock rejects cache_control in tools for {model} (HTTP {status})")
+
+        print(f"  Response: {response if status != 200 else 'Success'}")
+
+    @pytest.mark.parametrize("model", TEST_MODELS)
+    def test_cache_control_combined_system_and_tools(self, model: str, bedrock_client_factory):
+        """
+        TEST: Bedrock behavior with cache_control in both system messages and tools.
+
+        Comprehensive test with cache_control in multiple locations (Anthropic prompt caching feature).
+        """
+        try:
+            client = bedrock_client_factory(model)
+        except Exception as e:
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
+
+        # Payload with cache_control everywhere
+        payload = {
+            "modelId": "anthropic.claude-sonnet-4-20250514",
+            "anthropic_version": "bedrock-2023-05-31",
+            "system": [
+                {
+                    "type": "text",
+                    "text": "You are a research assistant with access to a knowledge base.",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Find information about Mars rovers"}],
+                }
+            ],
+            "tools": [
+                {
+                    "name": "search_knowledge_base",
+                    "description": "Search the internal knowledge base for relevant documents.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"}
+                        },
+                        "required": ["query"],
+                    },
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {
+                    "name": "get_doc_by_id",
+                    "description": "Retrieve a specific document by its ID.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "doc_id": {"type": "string", "description": "Document ID"}
+                        },
+                        "required": ["doc_id"],
+                    },
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ],
+            "max_tokens": 1024,
+        }
+
+        status, response = self.invoke_bedrock(client, payload)
+
+        # Document the actual behavior
+        if status == 200:
+            print(f"✓ Bedrock accepts/ignores combined cache_control for {model} (HTTP {status})")
+        elif status == 400:
+            print(f"✓ Bedrock rejects cache_control in combined payload for {model} (HTTP {status})")
+
+        print(f"  Response: {response if status != 200 else 'Success'}")
