@@ -509,6 +509,9 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
 
             logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
 
+            if isinstance(response_json.get("usage"), dict):
+                AnthropicTokenUsageParser.normalize_usage_cache_fields(response_json["usage"])
+
             user_id, ip_address = extract_log_identity(request)
             try:
                 _usage_parser = AnthropicTokenUsageParser()

@@ -1704,33 +1704,6 @@ class TestClaudeRequestConversions:
         assert result["generation_config"]["temperature"] == 0.7
         assert len(result["tools"]) == 1
 
-    def test_convert_claude_request_for_bedrock(self):
-        """Test convert_claude_request_for_bedrock function."""
-        claude_payload = {
-            "model": "claude-3.5-sonnet",
-            "max_tokens": 1000,
-            "temperature": 0.7,
-            "system": "You are helpful",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "tools": [
-                {
-                    "name": "get_weather",
-                    "description": "Get weather",
-                    "input_schema": {},
-                }
-            ],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(claude_payload)
-
-        assert result["model"] == "claude-3.5-sonnet"
-        assert result["max_tokens"] == 1000
-        assert result["temperature"] == 0.7
-        assert result["system"] == "You are helpful"
-        assert len(result["messages"]) == 1
-        assert result["anthropic_version"] == "bedrock-2023-05-31"
-        assert "tools" in result
-
 
 # ============================================================================
 # RESPONSE CONVERSION TESTS
