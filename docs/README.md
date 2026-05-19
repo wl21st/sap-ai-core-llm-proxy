@@ -59,6 +59,11 @@ Issue tracking and problem documentation.
 Test result reports and test documentation.
 - Test execution results and reports
 
+### 🗂️ [history/](./history/)
+Archived explorations and dated test reports.
+- **2026-05-16-cache-control-exploration.md** - Archived cache-control exploration notes
+- **2025-12-04-claude-code-2-0-field-support-tests.md** - Archived Claude Code field support test report
+
 ---
 
 ## 🎯 Quick Navigation
