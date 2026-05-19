@@ -18,6 +18,85 @@ from typing import Tuple
 
 logger_module = None  # Will import on first use
 
+# Long system prompt to exceed Bedrock minimum cacheable token threshold (4096+ tokens)
+# Used in cache_control tests to trigger actual cache creation
+LONG_SYSTEM_PROMPT = (
+    "You are an expert software engineer specializing in distributed systems, "
+    "cloud architecture, and performance optimisation. "
+    "Your role is to provide clear, concise, and technically accurate answers. "
+    "Always consider trade-offs, scalability concerns, and real-world constraints. "
+    "When reviewing code, focus on correctness, readability, and maintainability. "
+    "When designing systems, think about fault tolerance, latency, and cost. "
+    "\n\n"
+    "Background knowledge you must apply:\n"
+    + "- CAP theorem: Consistency, Availability, and Partition tolerance are the three "
+    "properties of distributed systems; you can guarantee at most two simultaneously.\n"
+    + "- BASE semantics: Basically Available, Soft state, Eventually consistent — the "
+    "pragmatic alternative to ACID for high-scale distributed databases.\n"
+    + "- Consensus algorithms: Raft and Paxos provide strong consistency guarantees in "
+    "replicated state machines at the cost of latency during leader election.\n"
+    + "- Event sourcing: Store state as an immutable log of events rather than mutable "
+    "records; replay the log to reconstruct state at any point in time.\n"
+    + "- CQRS: Separate the read model from the write model to allow independent scaling "
+    "and optimisation of query and command paths.\n"
+    + "- Circuit breaker pattern: Prevent cascading failures by detecting when a downstream "
+    "service is unavailable and short-circuiting calls for a cool-down period.\n"
+    + "- Backpressure: When a consumer cannot keep up with a producer, signal the producer "
+    "to slow down rather than buffering indefinitely and causing OOM errors.\n"
+    + "- Idempotency: Design operations so that applying them multiple times has the same "
+    "effect as applying them once; critical for at-least-once delivery systems.\n"
+    + "- Distributed tracing: Use correlation IDs and span propagation (e.g., OpenTelemetry) "
+    "to trace requests across microservice boundaries.\n"
+    + "- Service mesh: A dedicated infrastructure layer (e.g., Istio, Linkerd) for handling "
+    "service-to-service communication, including retries, mTLS, and observability.\n"
+    + "- Saga pattern: Manage long-running distributed transactions through a sequence of "
+    "local transactions coordinated by events or an orchestrator.\n"
+    + "- Two-phase commit: A blocking distributed protocol that ensures atomicity across "
+    "multiple nodes; rarely used in modern systems due to its blocking nature.\n"
+    + "- Sharding: Horizontally partition data across multiple nodes to distribute load; "
+    "requires careful key selection to avoid hot spots.\n"
+    + "- Consistent hashing: A technique to distribute keys across nodes such that only a "
+    "fraction of keys need to be remapped when nodes are added or removed.\n"
+    + "- Vector clocks and Lamport timestamps: Mechanisms for establishing causal ordering "
+    "of events in distributed systems without relying on synchronised wall clocks.\n"
+    + "- Bloom filters: Probabilistic data structure that efficiently tests set membership "
+    "with a controllable false-positive rate; zero false negatives.\n"
+    + "- LSM trees: Log-structured merge-trees optimise write throughput by batching writes "
+    "in memory (memtable) and flushing sorted files (SSTables) to disk.\n"
+    + "- B-trees vs LSM trees: B-trees favour read-heavy workloads with lower read "
+    "amplification; LSM trees favour write-heavy workloads with lower write amplification.\n"
+    + "- Write-ahead logging (WAL): Durability guarantee where changes are written to a log "
+    "before being applied to the main data structure; enables crash recovery.\n"
+    + "- MVCC (Multi-Version Concurrency Control): Allow readers and writers to proceed "
+    "concurrently by maintaining multiple versions of data rather than using locks.\n"
+    + "- Zero-copy I/O: Transfer data between kernel and userspace without unnecessary "
+    "copies (e.g., sendfile, io_uring) to reduce CPU overhead in high-throughput systems.\n"
+    + "- Memory-mapped files: Map file contents directly into the process address space; "
+    "the OS manages paging, avoiding explicit read/write syscalls.\n"
+    + "- Connection pooling: Reuse expensive connections (database, HTTP) across multiple "
+    "requests to amortise connection establishment overhead.\n"
+    + "- Rate limiting algorithms: Token bucket, leaky bucket, and fixed/sliding window "
+    "counters each have different bursty-traffic characteristics.\n"
+    + "- Content Delivery Networks (CDNs): Distribute static assets to edge nodes close to "
+    "users; reduces origin load and improves perceived latency globally.\n"
+    + "- Blue-green deployments: Maintain two identical production environments; switch "
+    "traffic between them for zero-downtime releases.\n"
+    + "- Canary releases: Gradually roll out a new version to a small subset of traffic; "
+    "monitor error rates before increasing the rollout percentage.\n"
+    + "- Feature flags: Decouple code deployment from feature activation; enable runtime "
+    "toggling of functionality without redeployment.\n"
+    + "- Chaos engineering: Deliberately inject failures (latency, errors, node crashes) "
+    "into production-like environments to discover systemic weaknesses proactively.\n"
+    # Extended padding to exceed 4096 token minimum for all models
+    + "Security and compliance: Zero-trust, least privilege, defense in depth. "
+    "Machine learning: Feature stores, model registries, shadow deployments, A/B testing. "
+    "Architecture: Hexagonal patterns, domain-driven design, anti-corruption layers, outbox pattern. "
+    "DevOps: Trunk-based development, GitOps, immutable infrastructure, observability. "
+    "Networking: TCP/IP, BGP, anycast, eBPF. Service discovery and load balancing strategies. "
+    "Performance: Profiling, flame graphs, bottleneck identification, optimization techniques. "
+    "Reliability: SLOs, error budgets, incident management, post-mortems, blameless culture. "
+) * 3  # Triple the length to ensure it exceeds minimum on all models
+
 
 # Models to test - three families: Sonnet, Opus, Haiku
 TEST_MODELS = [
@@ -333,28 +412,30 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         """
         TEST: Bedrock behavior with cache_control in system messages.
 
-        Cache control is a prompt caching feature - test if Bedrock accepts it.
+        Cache control is a prompt caching feature - verify Bedrock accepts and documents it.
+        Note: Direct API tests may not create cache if system prompt is not the exact repeated prompt.
+        Cache creation happens when the same prompt is sent again within TTL window.
         """
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
             pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
-        # Payload with cache_control in system message
+        # Payload with cache_control in system message (using long prompt to exceed cache minimum)
         payload = {
             "modelId": "anthropic.claude-sonnet-4-20250514",
             "anthropic_version": "bedrock-2023-05-31",
             "system": [
                 {
                     "type": "text",
-                    "text": "You are a helpful research assistant.",
+                    "text": LONG_SYSTEM_PROMPT,
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
             "messages": [
                 {
                     "role": "user",
-                    "content": [{"type": "text", "text": "What is Python?"}],
+                    "content": [{"type": "text", "text": "Explain consistency models in distributed systems"}],
                 }
             ],
             "max_tokens": 500,
@@ -362,101 +443,154 @@ class TestBedrockUnsupportedFieldsDirectAPI:
 
         status, response = self.invoke_bedrock(client, payload)
 
-        # Document the actual behavior (accept, reject, or ignore)
-        if status == 200:
-            print(f"✓ Bedrock accepts/ignores cache_control in system for {model} (HTTP {status})")
-        elif status == 400:
-            print(f"✓ Bedrock rejects cache_control in system for {model} (HTTP {status})")
+        assert status == 200, (
+            f"Expected cache_control in system to be accepted (HTTP 200), got {status}. "
+            f"Response: {response}"
+        )
 
-        # For now, just document behavior without strict assertion
-        print(f"  Response: {response if status != 200 else 'Success'}")
+        # Check response structure - should have cache-related fields in usage
+        usage = response.get("usage", {})
+        assert "cache_creation" in usage or "cache_creation_input_tokens" in usage, (
+            f"Response missing cache-related fields in usage. "
+            f"Got usage keys: {list(usage.keys())}. "
+            f"Full usage: {usage}"
+        )
+
+        # Document cache behavior (creation may be 0 on first unique request, but field should exist)
+        cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
+        cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+        cache_creation_detail = usage.get("cache_creation", {})
+
+        print(f"✓ Confirmed: Bedrock accepts cache_control in system for {model}")
+        print(f"  cache_creation_input_tokens: {cache_creation_tokens}")
+        print(f"  cache_read_input_tokens: {cache_read_tokens}")
+        print(f"  cache_creation detail: {cache_creation_detail}")
 
     @pytest.mark.parametrize("model", TEST_MODELS)
     def test_cache_control_in_tool_definition(self, model: str, bedrock_client_factory):
         """
         TEST: Bedrock behavior with cache_control in tool definitions.
 
-        Prompt caching for tools - test if Bedrock accepts cache_control in tool definitions.
+        Prompt caching for tools - verify Bedrock accepts cache_control on tool schemas.
+        Cache creation depends on whether exact same tools are sent in subsequent requests.
         """
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
             pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
-        # Payload with cache_control in tools
-        payload = {
-            "modelId": "anthropic.claude-sonnet-4-20250514",
-            "anthropic_version": "bedrock-2023-05-31",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "Search for Python documentation"}],
-                }
-            ],
-            "tools": [
-                {
-                    "name": "search_knowledge_base",
-                    "description": "Search the internal knowledge base for relevant documents.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "Search query"}
-                        },
-                        "required": ["query"],
+        # Create tools with cache_control markers
+        tools = [
+            {
+                "name": "search_knowledge_base",
+                "description": "Search the internal knowledge base for relevant documents about software engineering, "
+                "distributed systems, and cloud architecture. Supports full-text search with optional filters.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "filters": {"type": "object", "description": "Optional filters like date range or category"},
+                        "limit": {"type": "integer", "description": "Max results to return (1-100)"},
                     },
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            "max_tokens": 500,
-        }
+                    "required": ["query"],
+                },
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "name": "get_doc_by_id",
+                "description": "Retrieve a specific document by its ID. Includes full text, metadata, and related documents.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {"type": "string", "description": "Document ID"},
+                        "include_related": {"type": "boolean", "description": "Include related documents"},
+                    },
+                    "required": ["doc_id"],
+                },
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
 
-        status, response = self.invoke_bedrock(client, payload)
-
-        # Document the actual behavior
-        if status == 200:
-            print(f"✓ Bedrock accepts/ignores cache_control in tools for {model} (HTTP {status})")
-        elif status == 400:
-            print(f"✓ Bedrock rejects cache_control in tools for {model} (HTTP {status})")
-
-        print(f"  Response: {response if status != 200 else 'Success'}")
-
-    @pytest.mark.parametrize("model", TEST_MODELS)
-    def test_cache_control_combined_system_and_tools(self, model: str, bedrock_client_factory):
-        """
-        TEST: Bedrock behavior with cache_control in both system messages and tools.
-
-        Comprehensive test with cache_control in multiple locations (Anthropic prompt caching feature).
-        """
-        try:
-            client = bedrock_client_factory(model)
-        except Exception as e:
-            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
-
-        # Payload with cache_control everywhere
         payload = {
             "modelId": "anthropic.claude-sonnet-4-20250514",
             "anthropic_version": "bedrock-2023-05-31",
             "system": [
                 {
                     "type": "text",
-                    "text": "You are a research assistant with access to a knowledge base.",
+                    "text": LONG_SYSTEM_PROMPT,
+                }
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Search for information about distributed consensus algorithms"}],
+                }
+            ],
+            "tools": tools,
+            "max_tokens": 500,
+        }
+
+        status, response = self.invoke_bedrock(client, payload)
+
+        assert status == 200, (
+            f"Expected cache_control in tools to be accepted (HTTP 200), got {status}. "
+            f"Response: {response}"
+        )
+
+        # Verify response includes cache fields (even if values are 0 on first unique request)
+        usage = response.get("usage", {})
+        assert "cache_creation" in usage or "cache_creation_input_tokens" in usage, (
+            f"Response missing cache-related fields in usage. "
+            f"Got usage keys: {list(usage.keys())}. "
+            f"Full usage: {usage}"
+        )
+
+        cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
+        cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+
+        print(f"✓ Confirmed: Bedrock accepts cache_control in tools for {model}")
+        print(f"  cache_creation_input_tokens: {cache_creation_tokens}")
+        print(f"  cache_read_input_tokens: {cache_read_tokens}")
+
+    @pytest.mark.parametrize("model", TEST_MODELS)
+    def test_cache_control_combined_system_and_tools(self, model: str, bedrock_client_factory):
+        """
+        TEST: Bedrock behavior with cache_control in both system messages and tools.
+
+        Comprehensive test verifying Bedrock accepts cache_control in multiple locations.
+        """
+        try:
+            client = bedrock_client_factory(model)
+        except Exception as e:
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
+
+        # Payload with cache_control in system and tools (comprehensive caching scenario)
+        payload = {
+            "modelId": "anthropic.claude-sonnet-4-20250514",
+            "anthropic_version": "bedrock-2023-05-31",
+            "system": [
+                {
+                    "type": "text",
+                    "text": LONG_SYSTEM_PROMPT,
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
             "messages": [
                 {
                     "role": "user",
-                    "content": [{"type": "text", "text": "Find information about Mars rovers"}],
+                    "content": [{"type": "text", "text": "Find information about distributed systems and provide recommendations"}],
                 }
             ],
             "tools": [
                 {
                     "name": "search_knowledge_base",
-                    "description": "Search the internal knowledge base for relevant documents.",
+                    "description": "Search the internal knowledge base for relevant documents about software engineering, "
+                    "distributed systems, and cloud architecture.",
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "query": {"type": "string", "description": "Search query"}
+                            "query": {"type": "string", "description": "Search query"},
+                            "filters": {"type": "object", "description": "Optional filters"},
                         },
                         "required": ["query"],
                     },
@@ -464,7 +598,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
                 },
                 {
                     "name": "get_doc_by_id",
-                    "description": "Retrieve a specific document by its ID.",
+                    "description": "Retrieve a specific document by its ID with full text and metadata.",
                     "input_schema": {
                         "type": "object",
                         "properties": {
@@ -480,10 +614,24 @@ class TestBedrockUnsupportedFieldsDirectAPI:
 
         status, response = self.invoke_bedrock(client, payload)
 
-        # Document the actual behavior
-        if status == 200:
-            print(f"✓ Bedrock accepts/ignores combined cache_control for {model} (HTTP {status})")
-        elif status == 400:
-            print(f"✓ Bedrock rejects cache_control in combined payload for {model} (HTTP {status})")
+        assert status == 200, (
+            f"Expected combined cache_control to be accepted (HTTP 200), got {status}. "
+            f"Response: {response}"
+        )
 
-        print(f"  Response: {response if status != 200 else 'Success'}")
+        # Verify response structure - cache-related fields should exist
+        usage = response.get("usage", {})
+        assert "cache_creation" in usage or "cache_creation_input_tokens" in usage, (
+            f"Response missing cache-related fields. "
+            f"Got usage keys: {list(usage.keys())}. "
+            f"Full usage: {usage}"
+        )
+
+        cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
+        cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+        cache_creation_detail = usage.get("cache_creation", {})
+
+        print(f"✓ Confirmed: Bedrock accepts combined cache_control for {model}")
+        print(f"  cache_creation_input_tokens: {cache_creation_tokens}")
+        print(f"  cache_read_input_tokens: {cache_read_tokens}")
+        print(f"  cache_creation detail: {cache_creation_detail}")
