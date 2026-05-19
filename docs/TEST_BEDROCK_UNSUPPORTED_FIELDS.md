@@ -70,35 +70,38 @@
 **Implication:** Proxy should support thinking but adapt to model capabilities
 
 ### 7. Cache Control in System (`test_cache_control_in_system_message`)
-**Finding:** ✅ **Bedrock accepts/ignores cache_control in system messages**
-- Payload: `system: [{type: "text", text: "...", cache_control: {type: "ephemeral"}}]`
-- Expected: HTTP 200 (accepted/ignored)
-- Actual: HTTP 200 ✓
-- **Implication:** Prompt caching feature - Bedrock doesn't error on this field
+**Finding:** ✅ **Bedrock accepts cache_control in system messages and includes cache metrics**
+- Payload: `system: [{type: "text", text: LONG_SYSTEM_PROMPT, cache_control: {type: "ephemeral"}}]`
+- Expected: HTTP 200 with cache-related fields in usage
+- Actual: HTTP 200 ✓ with `cache_creation`, `cache_creation_input_tokens`, `cache_read_input_tokens` fields
+- Response includes: `cache_creation: {ephemeral_1h_input_tokens, ephemeral_5m_input_tokens}`
+- **Implication:** Bedrock implements prompt caching - not just accepting the field, but tracking cache metrics
 
 ### 8. Cache Control in Tools (`test_cache_control_in_tool_definition`)
-**Finding:** ✅ **Bedrock accepts/ignores cache_control in tool definitions**
-- Payload: Tools with `cache_control: {type: "ephemeral"}` in input_schema
-- Expected: HTTP 200 (accepted/ignored)
-- Actual: HTTP 200 ✓
-- **Implication:** Tool-level prompt caching - Bedrock supports this syntax
+**Finding:** ✅ **Bedrock accepts cache_control in tool definitions and returns cache metrics**
+- Payload: Tools with `cache_control: {type: "ephemeral"}` in input_schema + long system prompt
+- Expected: HTTP 200 with cache-related fields in usage
+- Actual: HTTP 200 ✓ with cache metrics present
+- Response includes all cache fields confirming tool-level caching support
+- **Implication:** Tool definitions can be cached as part of prompt prefix, reducing token costs on repeated requests
 
 ### 9. Cache Control Combined (`test_cache_control_combined_system_and_tools`)
-**Finding:** ✅ **Bedrock accepts multiple cache_control locations**
-- Payload: cache_control in system message + multiple tool definitions
-- Expected: HTTP 200
-- Actual: HTTP 200 ✓
-- **Implication:** Comprehensive prompt caching scenario works end-to-end
+**Finding:** ✅ **Bedrock accepts cache_control across multiple locations and aggregates cache metrics**
+- Payload: cache_control on system message + cache_control on multiple tool definitions
+- Expected: HTTP 200 with comprehensive cache metrics
+- Actual: HTTP 200 ✓ with `cache_creation` detail breakdown and aggregate token counts
+- Response structure: `{cache_creation: {ephemeral_1h_input_tokens, ephemeral_5m_input_tokens}, cache_creation_input_tokens, cache_read_input_tokens}`
+- **Implication:** Comprehensive prompt caching scenario works end-to-end; Bedrock aggregates cache metrics across all cacheable content
 
 ## Key Findings
 
-| Field | Status | Action Required |
-|-------|--------|-----------------|
-| `metadata` | Accepted/Ignored | Optional to strip |
-| `output_config` | Rejected (400) | **MUST strip** |
-| `context_management` | Rejected (400) | **MUST strip** |
-| `thinking` | Accepted | Support and forward (with model-specific adaptation) |
-| `cache_control` | Accepted/Ignored | Optional to forward (prompt caching feature) |
+| Field | Status | Response Metric | Action Required |
+|-------|--------|-----------------|-----------------|
+| `metadata` | Accepted/Ignored | Not in usage | Optional to strip |
+| `output_config` | Rejected (400) | N/A | **MUST strip** |
+| `context_management` | Rejected (400) | N/A | **MUST strip** |
+| `thinking` | Accepted | Not in usage | Support and forward (with model-specific adaptation) |
+| `cache_control` | **Actively Used** | `cache_creation`, `cache_creation_input_tokens`, `cache_read_input_tokens` | **MUST preserve** |
 
 ## Technical Requirements
 
@@ -115,14 +118,48 @@
 ## Impact on Proxy
 
 ### Fields to Strip Before Forwarding
-1. `output_config` (always)
-2. `context_management` (always)
+1. `output_config` (always - causes HTTP 400)
+2. `context_management` (always - causes HTTP 400)
 3. `metadata` (optional, but recommended for cleanliness)
 
-### Fields to Preserve
-1. `thinking` (model-specific adaptation needed for Opus)
-2. `anthropic_version`
-3. `messages` with proper content structure
+### Fields to Preserve and Forward
+1. `cache_control` (CRITICAL - enables prompt caching cost savings)
+   - On system message text blocks: `cache_control: {type: "ephemeral"}`
+   - On tool input schemas: `cache_control: {type: "ephemeral"}`
+   - Bedrock returns cache metrics in response usage for tracking savings
+2. `thinking` (model-specific adaptation needed for Opus)
+3. `anthropic_version`
+4. `messages` with proper content structure
+
+### Cache Control Behavior
+- **When cache_control is present**: Bedrock returns `cache_creation_input_tokens` and `cache_read_input_tokens` in usage
+- **Token costs**: 
+  - Cache write (creation): 1.25x input token cost
+  - Cache read: 0.10x input token cost
+  - Significant savings on repeated requests with identical cached prefix
+- **TTL**: Ephemeral cache entries expire after 5 minutes; 1-hour cache available with paid tier
+- **Minimum cacheable**: >1024 tokens for Sonnet 4.6, >4096 tokens for Haiku/Opus/Sonnet 4.5
+
+## Test Methodology
+
+### Cache Control Validation Approach
+The cache_control tests use response body inspection to verify **actual cache usage**, not just field acceptance:
+
+1. **Long System Prompt**: Tests use a >4096 token system prompt to exceed Bedrock's minimum cacheable threshold
+2. **Response Inspection**: Tests check for cache-related fields in the response `usage` object:
+   - `cache_creation` (dict with TTL breakdown)
+   - `cache_creation_input_tokens` (tokens written to cache)
+   - `cache_read_input_tokens` (tokens read from cache)
+3. **Multiple Scenarios**: Tests validate cache_control in three locations:
+   - System message text blocks
+   - Tool input schemas
+   - Combined system + tools (comprehensive scenario)
+4. **All Models**: Tests run across Sonnet, Opus, and Haiku families to confirm cross-model support
+
+### Minimum Cacheable Tokens
+- **Sonnet 4.6 / Claude 3.7**: ≥1024 tokens
+- **Haiku 4.5 / Opus 4.7 / Sonnet 4.5**: ≥4096 tokens
+- Test prompt exceeds 4096 tokens via `LONG_SYSTEM_PROMPT * 3` repetition
 
 ## Test Execution
 
@@ -132,6 +169,9 @@ make test-api
 
 # Run specific model test
 pytest tests/api/test_bedrock_unsupported_fields.py -k "sonnet"
+
+# Run only cache_control tests
+pytest tests/api/test_bedrock_unsupported_fields.py -k "cache_control" -v
 ```
 
 ## Related Documentation
