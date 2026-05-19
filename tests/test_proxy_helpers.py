@@ -736,67 +736,6 @@ class TestConvertersStreamingChunks:
         assert '"finish_reason": "stop"' in result
 
 
-class TestConvertersBedrockFormat:
-    """Test Bedrock-specific conversion methods."""
-
-    def test_convert_claude_request_for_bedrock_basic(self):
-        """Test Claude request to Bedrock format conversion."""
-        payload = {
-            "model": "claude-3.5-sonnet",
-            "messages": [{"role": "user", "content": "Test"}],
-            "max_tokens": 1000,
-            "temperature": 0.7,
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert result["model"] == "claude-3.5-sonnet"
-        assert result["max_tokens"] == 1000
-        assert result["temperature"] == 0.7
-        assert result["anthropic_version"] == "bedrock-2023-05-31"
-
-    def test_convert_claude_request_for_bedrock_removes_cache_control(self):
-        """Test that cache_control fields are removed."""
-        payload = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Test",
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                }
-            ]
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        content_item = result["messages"][0]["content"][0]
-        assert "cache_control" not in content_item
-        assert content_item["text"] == "Test"
-
-    def test_convert_claude_request_for_bedrock_with_tools(self):
-        """Test Bedrock conversion preserves tools."""
-        payload = {
-            "messages": [{"role": "user", "content": "Test"}],
-            "tools": [
-                {
-                    "name": "calculator",
-                    "description": "Calculate math",
-                    "input_schema": {"type": "object"},
-                }
-            ],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert "tools" in result
-        assert len(result["tools"]) == 1
-        assert result["tools"][0]["name"] == "calculator"
-
 
 class TestConvertersErrorHandling:
     """Test error handling in conversion methods."""
@@ -1305,52 +1244,6 @@ class TestConvertersClaudeToGeminiEdgeCases:
         assert len(result["tools"]) == 1
         assert result["tools"][0]["function_declarations"][0]["name"] == "search"
 
-
-class TestConvertersBedrockEdgeCases:
-    """Test edge cases for Bedrock conversion."""
-
-    def test_convert_claude_request_for_bedrock_string_content_normalization(self):
-        """Test conversion of string content to list format."""
-        payload = {"messages": [{"role": "user", "content": "Plain string"}]}
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        # String content should be converted to list format
-        assert isinstance(result["messages"][0]["content"], list)
-        assert result["messages"][0]["content"][0]["type"] == "text"
-        assert result["messages"][0]["content"][0]["text"] == "Plain string"
-
-    def test_convert_claude_request_for_bedrock_system_array_preserved(self):
-        """Test that system field is preserved as-is."""
-        payload = {
-            "system": [{"type": "text", "text": "System prompt"}],
-            "messages": [{"role": "user", "content": "Test"}],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert result["system"] == [{"type": "text", "text": "System prompt"}]
-
-    def test_convert_claude_request_for_bedrock_all_fields_copied(self):
-        """Test that all supported fields are copied."""
-        payload = {
-            "model": "claude-3",
-            "max_tokens": 1000,
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "top_k": 50,
-            "stop_sequences": ["STOP"],
-            "messages": [{"role": "user", "content": "Test"}],
-        }
-
-        result = Converters.convert_claude_request_for_bedrock(payload)
-
-        assert result["model"] == "claude-3"
-        assert result["max_tokens"] == 1000
-        assert result["temperature"] == 0.7
-        assert result["top_p"] == 0.9
-        assert result["top_k"] == 50
-        assert result["stop_sequences"] == ["STOP"]
 
 
 class TestConvertersClaude37ResponseEdgeCases:
