@@ -91,7 +91,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
-            pytest.skip(f"Could not get Bedrock client for {model}: {e}")
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
         # Invalid payload with unsupported metadata field
         payload = {
@@ -128,7 +128,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
-            pytest.skip(f"Could not get Bedrock client for {model}: {e}")
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
         # Invalid payload with unsupported output_config field
         payload = {
@@ -167,7 +167,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
-            pytest.skip(f"Could not get Bedrock client for {model}: {e}")
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
         # Invalid payload with unsupported context_management field
         payload = {
@@ -204,7 +204,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
-            pytest.skip(f"Could not get Bedrock client for {model}: {e}")
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
         # Invalid payload with all unsupported fields
         payload = {
@@ -241,7 +241,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
-            pytest.skip(f"Could not get Bedrock client for {model}: {e}")
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
         # Valid payload - no unsupported fields
         payload = {
@@ -277,7 +277,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         try:
             client = bedrock_client_factory(model)
         except Exception as e:
-            pytest.skip(f"Could not get Bedrock client for {model}: {e}")
+            pytest.fail(f"Failed to get Bedrock client for {model}. Check SAP AI Core credentials: {e}")
 
         # Valid thinking config - no nested context_management
         payload = {

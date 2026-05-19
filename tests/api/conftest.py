@@ -34,10 +34,10 @@ def proxy_config() -> Optional[ProxyConfig]:
 
 
 @pytest.fixture(scope="session")
-def first_subaccount(proxy_config) -> Optional[SubAccountConfig]:
-    """Get first available subaccount from config."""
+def first_subaccount(proxy_config) -> SubAccountConfig:
+    """Get first available subaccount from config. Fails if not configured."""
     if not proxy_config or not proxy_config.subaccounts:
-        return None
+        pytest.fail("No SAP AI Core config found. Check config.json and service_key_json path.")
     subaccount_name = next(iter(proxy_config.subaccounts.keys()))
     return proxy_config.subaccounts[subaccount_name]
 
@@ -46,7 +46,7 @@ def first_subaccount(proxy_config) -> Optional[SubAccountConfig]:
 def bedrock_client_factory(first_subaccount):
     """Factory fixture to get Bedrock clients for different models."""
     if not first_subaccount:
-        pytest.skip("No SAP AI Core subaccount configured")
+        pytest.fail("No SAP AI Core subaccount available")
 
     # Map test model names to SAP AI Core deployment names
     MODEL_MAPPING = {
