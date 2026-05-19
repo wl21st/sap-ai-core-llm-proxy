@@ -7,7 +7,6 @@ Phase 6d: Streaming generators extraction
 """
 
 import ast
-import asyncio
 import json
 import logging
 import random
@@ -943,4 +942,3 @@ async def generate_streaming_response(
             }
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
-

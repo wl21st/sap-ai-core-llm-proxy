@@ -26,15 +26,15 @@
 
 ## 5. Add unit API tests
 
-- [ ] 5.1 Create `tests/unit/test_api_routes_post_cleanup.py` with unit tests for `/v1/chat/completions`, `/v1/messages`, and `/v1/models` using FastAPI `TestClient` and mocked backends
-- [ ] 5.2 Run `make test` to confirm new unit tests pass
+- [x] 5.1 Create `tests/unit/test_api_routes_post_cleanup.py` with unit tests for `/v1/chat/completions`, `/v1/messages`, and `/v1/models` using FastAPI `TestClient` and mocked backends
+- [x] 5.2 Run `make test` to confirm new unit tests pass
 
 ## 6. Add integration smoke tests
 
-- [ ] 6.1 Create `tests/integration/test_cleanup_smoke.py` with smoke tests asserting no 500s on `/v1/chat/completions`, `/v1/messages`, and `/v1/models` after cleanup
-- [ ] 6.2 Run `make test-integration-smoke` against a live server to confirm
+- [x] 6.1 Create `tests/integration/test_cleanup_smoke.py` with smoke tests asserting no 500s on `/v1/chat/completions`, `/v1/messages`, and `/v1/models` after cleanup
+- [x] 6.2 Run `make test-integration-smoke` against a live server to confirm
 
 ## 7. Final validation
 
-- [ ] 7.1 Run `ruff check . --select F401,F811,F841` to confirm zero remaining violations
-- [ ] 7.2 Run `make test` for final green-light confirmation
+- [x] 7.1 Run `ruff check . --select F401,F811,F841` to confirm zero remaining violations
+- [x] 7.2 Run `make test` for final green-light confirmation

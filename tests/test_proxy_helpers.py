@@ -802,9 +802,9 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             "max_tokens": None,
         }
 
-        with patch("proxy_helpers.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as _mock_warning:
             _result = Converters.convert_openai_to_claude37(payload)
-            mock_warning.assert_called()
+            _mock_warning.assert_called()
 
     def test_convert_openai_to_claude37_invalid_temperature(self):
         """Test handling of invalid temperature."""
@@ -903,7 +903,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             ]
         }
 
-        with patch("proxy_helpers.logger.warning") as mock_warning:
+        with patch("proxy_helpers.logger.warning") as _mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
             # System should be converted to first user message, tool should be skipped
             # Should have system as first user message + user message
