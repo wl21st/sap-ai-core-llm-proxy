@@ -1,7 +1,7 @@
 # Bedrock Unsupported Fields Test Record
 
 **Date:** May 18, 2026  
-**Status:** ✅ All 18 tests passing  
+**Status:** ✅ All 27 tests passing  
 **Purpose:** Validate which Anthropic API fields are unsupported by AWS Bedrock, confirming proxy must strip them
 
 ## Test Suite Overview
@@ -12,6 +12,8 @@
 - `anthropic--claude-4.6-sonnet` (Sonnet)
 - `anthropic--claude-4.7-opus` (Opus)
 - `anthropic--claude-4.5-haiku` (Haiku)
+
+**Test Count:** 27 total (6 test methods × 3 models each, plus 3 new cache_control tests)
 
 ## Test Cases
 
@@ -67,6 +69,27 @@
 
 **Implication:** Proxy should support thinking but adapt to model capabilities
 
+### 7. Cache Control in System (`test_cache_control_in_system_message`)
+**Finding:** ✅ **Bedrock accepts/ignores cache_control in system messages**
+- Payload: `system: [{type: "text", text: "...", cache_control: {type: "ephemeral"}}]`
+- Expected: HTTP 200 (accepted/ignored)
+- Actual: HTTP 200 ✓
+- **Implication:** Prompt caching feature - Bedrock doesn't error on this field
+
+### 8. Cache Control in Tools (`test_cache_control_in_tool_definition`)
+**Finding:** ✅ **Bedrock accepts/ignores cache_control in tool definitions**
+- Payload: Tools with `cache_control: {type: "ephemeral"}` in input_schema
+- Expected: HTTP 200 (accepted/ignored)
+- Actual: HTTP 200 ✓
+- **Implication:** Tool-level prompt caching - Bedrock supports this syntax
+
+### 9. Cache Control Combined (`test_cache_control_combined_system_and_tools`)
+**Finding:** ✅ **Bedrock accepts multiple cache_control locations**
+- Payload: cache_control in system message + multiple tool definitions
+- Expected: HTTP 200
+- Actual: HTTP 200 ✓
+- **Implication:** Comprehensive prompt caching scenario works end-to-end
+
 ## Key Findings
 
 | Field | Status | Action Required |
@@ -74,7 +97,8 @@
 | `metadata` | Accepted/Ignored | Optional to strip |
 | `output_config` | Rejected (400) | **MUST strip** |
 | `context_management` | Rejected (400) | **MUST strip** |
-| `thinking` | Accepted | Support and forward |
+| `thinking` | Accepted | Support and forward (with model-specific adaptation) |
+| `cache_control` | Accepted/Ignored | Optional to forward (prompt caching feature) |
 
 ## Technical Requirements
 
