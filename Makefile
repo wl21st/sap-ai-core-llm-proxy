@@ -157,10 +157,10 @@ test-integration-model:
 	fi
 	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
 
-# Run direct Bedrock API tests
+# Run direct Bedrock API tests (uses config.json and SAP AI Core SDK)
 test-api:
-	@echo "Running direct Bedrock API tests..."
-	$(UV) sync --extra dev && $(UV) run pytest tests/api/ -v
+	@echo "Running direct Bedrock API tests using config.json..."
+	$(UV) sync --extra dev && $(UV) run pytest tests/api/ -v -m "bedrock"
 
 # Install test dependencies
 install-test-deps:
