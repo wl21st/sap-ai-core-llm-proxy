@@ -13,8 +13,6 @@ from typing import Optional
 
 from config import ProxyConfig, SubAccountConfig
 from utils.logging_utils import get_server_logger
-from utils.sdk_pool import get_bedrock_client
-from gen_ai_hub.proxy.native.amazon.clients import ClientWrapper
 
 logger = get_server_logger(__name__)
 
@@ -23,9 +21,42 @@ logger = get_server_logger(__name__)
 def proxy_config() -> Optional[ProxyConfig]:
     """Load proxy config from project config.json."""
     try:
-        from config import load_proxy_config
         config_path = Path(__file__).parent.parent.parent / "config.json"
-        config = load_proxy_config(str(config_path))
+        with open(config_path) as f:
+            config_data = json.load(f)
+
+        # Create SubAccountConfig objects for each subaccount
+        subaccounts = {}
+        for name, sa_data in config_data.get("subAccounts", {}).items():
+            sub_config = SubAccountConfig(
+                name=name,
+                resource_group=sa_data.get("resource_group", "default"),
+                service_key_json=sa_data.get("service_key_json", ""),
+                model_to_deployment_urls=sa_data.get("model_to_deployment_urls", {}),
+            )
+
+            # Load service key from file if path is valid
+            service_key_path = sub_config.service_key_json
+            if service_key_path and Path(service_key_path).exists():
+                with open(service_key_path) as f:
+                    service_key_json = json.load(f)
+                from config.config_models import ServiceKey
+                sub_config.service_key = ServiceKey(
+                    client_id=service_key_json.get("clientid"),
+                    client_secret=service_key_json.get("clientsecret"),
+                    auth_url=service_key_json.get("url"),
+                    identity_zone_id=service_key_json.get("identityzoneid"),
+                    api_url=service_key_json.get("serviceurls", {}).get("AI_API_URL"),
+                )
+
+            subaccounts[name] = sub_config
+
+        config = ProxyConfig(
+            subaccounts=subaccounts,
+            secret_authentication_tokens=config_data.get("secret_authentication_tokens", []),
+            port=config_data.get("port", 3001),
+            host=config_data.get("host", "127.0.0.1"),
+        )
         logger.info(f"Loaded proxy config with {len(config.subaccounts)} subaccounts")
         return config
     except Exception as e:
@@ -55,8 +86,10 @@ def bedrock_client_factory(first_subaccount):
         "haiku-4.5": "anthropic--claude-4.5-haiku",
     }
 
-    def get_client(model: str, deployment_id: Optional[str] = None) -> ClientWrapper:
+    def get_client(model: str, deployment_id: Optional[str] = None):
         """Get a Bedrock client for the given model."""
+        from utils.sdk_pool import get_bedrock_client
+
         # Map test model name to deployment name
         deployment_model = MODEL_MAPPING.get(model, model)
 
