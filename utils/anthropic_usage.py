@@ -87,8 +87,9 @@ class AnthropicTokenUsageParser:
                 usage = (chunk.get("message") or {}).get("usage") or {}
                 if isinstance(usage, dict):
                     self._usage.input_tokens = usage.get("input_tokens", self._usage.input_tokens)
-                    self._usage.cache_creation_input_tokens = usage.get(
-                        "cache_creation_input_tokens", self._usage.cache_creation_input_tokens
+                    self._usage.cache_creation_input_tokens = (
+                        self._resolve_cache_creation_tokens(usage)
+                        or self._usage.cache_creation_input_tokens
                     )
                     self._usage.cache_read_input_tokens = usage.get(
                         "cache_read_input_tokens", self._usage.cache_read_input_tokens
@@ -138,11 +139,39 @@ class AnthropicTokenUsageParser:
         )
 
     @staticmethod
+    def normalize_usage_cache_fields(usage: dict) -> dict:
+        """Normalize Bedrock's nested cache_creation format to the flat Anthropic API fields.
+
+        Mutates and returns the usage dict so callers can pass the result directly
+        to JSONResponse without an extra copy.
+        """
+        resolved = AnthropicTokenUsageParser._resolve_cache_creation_tokens(usage)
+        if resolved and not int(usage.get("cache_creation_input_tokens") or 0):
+            usage["cache_creation_input_tokens"] = resolved
+        return usage
+
+    @staticmethod
+    def _resolve_cache_creation_tokens(usage: dict) -> int:
+        """Return cache_creation_input_tokens, falling back to the nested cache_creation dict.
+
+        Bedrock introduced a new format where cache_creation_input_tokens stays 0 and
+        the actual counts live in usage["cache_creation"]["ephemeral_5m_input_tokens"]
+        and usage["cache_creation"]["ephemeral_1h_input_tokens"].
+        """
+        flat = int(usage.get("cache_creation_input_tokens") or 0)
+        if flat:
+            return flat
+        nested = usage.get("cache_creation")
+        if isinstance(nested, dict):
+            return sum(int(v or 0) for v in nested.values())
+        return 0
+
+    @staticmethod
     def _extract_usage(usage: dict) -> AnthropicUsage:
         return AnthropicUsage(
             input_tokens=int(usage.get("input_tokens") or 0),
             output_tokens=int(usage.get("output_tokens") or 0),
-            cache_creation_input_tokens=int(usage.get("cache_creation_input_tokens") or 0),
+            cache_creation_input_tokens=AnthropicTokenUsageParser._resolve_cache_creation_tokens(usage),
             cache_read_input_tokens=int(usage.get("cache_read_input_tokens") or 0),
             thinking_tokens=int(usage.get("thinking_tokens") or 0),
         )
