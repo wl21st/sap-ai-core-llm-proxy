@@ -2,7 +2,12 @@
 Pytest configuration for direct Bedrock API tests.
 
 Fixtures for connecting directly to SAP AI Core Bedrock using account_key.json
-from ~/.aicore/config.json
+from a proxy config file.
+
+Config path resolution (first match wins):
+  1. --config pytest CLI option
+  2. SAP_AI_PROXY_CONFIG env var
+  3. config.json in the project root (current working directory)
 """
 
 import os
@@ -15,14 +20,39 @@ from utils.logging_utils import get_server_logger
 logger = get_server_logger(__name__)
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--config",
+        action="store",
+        default=None,
+        help="Path to proxy config.json (overrides SAP_AI_PROXY_CONFIG env var)",
+    )
+
+
+def pytest_configure(config):
+    config_path = _resolve_config_path(config)
+    print(f"\n[api tests] effective config: {os.path.abspath(config_path)}\n")
+
+
+def _resolve_config_path(config: pytest.Config) -> str:
+    """Resolve config path: CLI option > env var > project-root config.json."""
+    cli = config.getoption("--config", default=None)
+    if cli:
+        return cli
+    env = os.environ.get("SAP_AI_PROXY_CONFIG")
+    if env:
+        return env
+    return "config.json"
+
+
 @pytest.fixture(scope="session")
-def proxy_config() -> Optional[ProxyConfig]:
-    """Load proxy config from ~/.aicore/config.json."""
+def proxy_config(pytestconfig) -> Optional[ProxyConfig]:
+    """Load proxy config from the resolved config path."""
+    config_path = _resolve_config_path(pytestconfig)
     try:
         from config import load_proxy_config
-        config_path = os.path.expanduser("~/.aicore/config.json")
         config = load_proxy_config(config_path)
-        logger.info(f"Loaded proxy config with {len(config.subaccounts)} subaccounts")
+        logger.info(f"Loaded proxy config from {config_path} with {len(config.subaccounts)} subaccounts")
         return config
     except Exception as e:
         logger.warning(f"Could not load SAP AI Core config from {config_path}: {e}")

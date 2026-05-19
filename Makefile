@@ -157,33 +157,25 @@ test-integration-model:
 	fi
 	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
 
-# Run direct Bedrock API tests (uses config.json and SAP AI Core SDK)
+# Run direct Bedrock API tests
+# Config path resolution: CONFIG var > SAP_AI_PROXY_CONFIG env > config.json
+# Examples:
+#   make test-api                          # uses config.json in project root
+#   make test-api CONFIG=~/my-config.json  # explicit path
+#   SAP_AI_PROXY_CONFIG=~/my-config.json make test-api
+CONFIG ?=
 test-api:
-	@echo "Running direct Bedrock API tests using config.json..."
+	@echo "Running direct Bedrock API tests..."
 	@command -v uv >/dev/null || { echo "Error: uv not found. Install from https://github.com/astral-sh/uv"; exit 1; }
 	@echo "Checking if SAP AI Core SDK is installed..."
 	@$(UV) run python3 -c "import gen_ai_hub" 2>/dev/null || { \
 		echo "Error: SAP AI Core SDK (gen_ai_hub) not installed"; \
-		echo ""; \
-		echo "To install and run tests:"; \
-		echo "  1. Install SAP AI Core SDK: pip install gen-ai-hub-sdk"; \
-		echo "  2. Configure credentials in ~/.aicore/config.json (SAP AI Core service key)"; \
-		echo "  3. Then run: make test-api"; \
+		echo "  Install: pip install gen-ai-hub-sdk"; \
 		exit 1; \
 	}
-	@echo "Checking if SAP AI Core credentials exist..."
-	@if [ ! -f ~/.aicore/config.json ]; then \
-		echo "Warning: SAP AI Core credentials not found at ~/.aicore/config.json"; \
-		echo ""; \
-		echo "Tests require valid SAP AI Core credentials. Please:"; \
-		echo "  1. Obtain your SAP AI Core service key from your SAP AI Core subaccount"; \
-		echo "  2. Save it to ~/.aicore/config.json"; \
-		echo "  3. Update config.json service_key_json path to point to the credentials file"; \
-		echo ""; \
-		echo "Then run: make test-api"; \
-		exit 1; \
-	fi
-	$(UV) sync --extra dev && $(UV) run pytest tests/api/ -v -m "bedrock"
+	$(UV) sync --extra dev && $(UV) run pytest tests/api/ -v -m "bedrock" \
+		--override-ini="addopts=-v --tb=short --strict-markers --disable-warnings --color=yes --cov=proxy_helpers --cov-report=html --cov-report=term-missing --cov-report=xml" \
+		$(if $(CONFIG),--config $(CONFIG),)
 
 # Install test dependencies
 install-test-deps:
