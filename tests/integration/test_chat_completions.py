@@ -319,7 +319,6 @@ class TestChatCompletionsStreaming:
                 "reasoning_effort": "low",
                 "stream": False,
             }
-            use_streaming = True
         elif model == "sonnet-4.5":
             request_data = {
                 "model": model,
@@ -596,7 +595,6 @@ class TestChatCompletionsSmoke:
                 "stream": False,
                 "reasoning_effort": "low",
             }
-            use_streaming = False
         elif model == "sonnet-4.5":
             request_data = {
                 "model": model,
@@ -640,7 +638,6 @@ class TestChatCompletionsSmoke:
                 "stream": False,
                 "reasoning_effort": "low",
             }
-            use_streaming = False
         elif model == "sonnet-4.5":
             request_data = {
                 "model": model,
