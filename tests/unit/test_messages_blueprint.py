@@ -495,3 +495,57 @@ class TestSystemMessageHandling:
         assert body["messages"][0]["role"] == "user"
         assert body["messages"][0]["content"] == "Hello"
 
+    @patch("routers.messages.verify_request_token", return_value=True)
+    @patch("routers.messages.load_balance_url")
+    @patch("routers.messages.get_bedrock_client")
+    @patch("routers.messages.Detector")
+    @patch("routers.messages.extract_deployment_id")
+    def test_system_message_is_removed_even_when_not_first_and_streaming(
+        self,
+        mock_extract_id,
+        mock_detector,
+        mock_get_client,
+        mock_load_balance,
+        mock_validate,
+        sdk_client,
+    ):
+        """System-role messages should never reach Bedrock's messages array."""
+        client, mock_config, mock_ctx = sdk_client
+        mock_load_balance.return_value = (
+            "https://test.url/deployment-id",
+            "test_subaccount",
+            "test_resource_group",
+            "anthropic--claude-4.5-sonnet",
+        )
+        mock_detector.is_claude_model.return_value = True
+        mock_extract_id.return_value = "deployment-id"
+        mock_get_client.return_value = MagicMock()
+
+        ok_response = Mock()
+        ok_response.get.side_effect = lambda key, default=None: {
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+            "body": MagicMock(),
+        }.get(key, default)
+
+        with patch("routers.messages.invoke_bedrock_streaming", return_value=ok_response) as mock_invoke:
+            with patch("routers.messages.generate_bedrock_streaming_response", return_value=iter([])):
+                client.post(
+                    "/v1/messages",
+                    json={
+                        "model": "anthropic--claude-4.5-sonnet",
+                        "messages": [
+                            {"role": "user", "content": "Hello"},
+                            {"role": "system", "content": "Be concise"},
+                        ],
+                        "stream": True,
+                    },
+                )
+
+        mock_invoke.assert_called_once()
+
+        import json
+
+        body = json.loads(mock_invoke.call_args[0][1])
+        assert not any(m.get("role") == "system" for m in body["messages"])
+        assert body["messages"] == [{"role": "user", "content": "Hello"}]
+        assert body["system"] == "Be concise"

@@ -193,21 +193,37 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
             isinstance(thinking_cfg_preview, dict),
         )
 
-        # Extract system message if present in the messages array
-        # Claude's Messages API requires system prompt as a top-level parameter, not in messages
+        # Claude's Messages API requires system prompts at top-level, never inside messages.
         system_message = None
-        messages_list = list(conversation) if isinstance(conversation, list) else []
-        if messages_list and messages_list[0].get("role") == "system":
-            system_content = messages_list[0].get("content", "")
-            if isinstance(system_content, str):
-                system_message = system_content
-            elif isinstance(system_content, list):
-                # Extract text from nested content array (same logic as convert_openai_to_claude37)
-                system_message = Converters._extract_text_from_content(system_content)
-            # Always remove the system message from the list, even if content is empty
-            # (to prevent "Unexpected role system" error from Bedrock)
-            logger.info("Extracted system message from messages array: %s...", system_message[:100] if system_message else "(empty)")
-            messages_list = messages_list[1:]
+        messages_list = []
+        if isinstance(conversation, list):
+            for message in conversation:
+                if not isinstance(message, dict):
+                    messages_list.append(message)
+                    continue
+
+                if message.get("role") != "system":
+                    messages_list.append(message)
+                    continue
+
+                system_content = message.get("content", "")
+                extracted_system_message = ""
+                if isinstance(system_content, str):
+                    extracted_system_message = system_content
+                elif isinstance(system_content, list):
+                    extracted_system_message = Converters._extract_text_from_content(
+                        system_content
+                    )
+
+                if system_message is None:
+                    system_message = extracted_system_message
+                elif extracted_system_message:
+                    system_message = f"{system_message}\n\n{extracted_system_message}" if system_message else extracted_system_message
+
+                logger.info(
+                    "Extracted system message from messages array: %s...",
+                    extracted_system_message[:100] if extracted_system_message else "(empty)",
+                )
 
         for message in messages_list:
             content = message.get("content")
@@ -281,6 +297,16 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
                         required_min_tokens,
                         budget_tokens,
                     )
+
+        logger.debug(
+            "Final Bedrock Claude payload summary: message_roles=%s, has_system=%s",
+            [
+                message.get("role")
+                for message in body.get("messages", [])
+                if isinstance(message, dict)
+            ],
+            bool(body.get("system")),
+        )
 
         body_json = json.dumps(body)
 
