@@ -298,7 +298,7 @@ class TestConvertersOpenAIToClaudeRequests:
         assert result["inferenceConfig"]["temperature"] == 0.5
 
     def test_convert_openai_to_claude37_with_system_message(self):
-        """Test Claude 3.7 conversion with system message prepended."""
+        """Test Claude 3.7 conversion with system message as top-level parameter."""
         payload = {
             "messages": [
                 {"role": "system", "content": "System prompt"},
@@ -308,11 +308,12 @@ class TestConvertersOpenAIToClaudeRequests:
 
         result = Converters.convert_openai_to_claude37(payload)
 
-        # System message should be prepended as first user message
-        assert len(result["messages"]) == 2
+        # System message should be moved to top-level parameter (not in messages array)
+        assert len(result["messages"]) == 1
         assert result["messages"][0]["role"] == "user"
-        assert result["messages"][0]["content"][0]["text"] == "System prompt"
-        assert result["messages"][1]["content"][0]["text"] == "User message"
+        assert result["messages"][0]["content"][0]["text"] == "User message"
+        assert "system" in result
+        assert result["system"][0]["text"] == "System prompt"
 
     def test_convert_openai_to_claude37_with_stop_sequences(self):
         """Test conversion with stop sequences."""
@@ -905,9 +906,12 @@ class TestConvertersOpenAIToClaude37EdgeCases:
 
         with patch("proxy_helpers.logger.warning") as _mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
-            # System should be converted to first user message, tool should be skipped
-            # Should have system as first user message + user message
-            assert len(result["messages"]) == 2
+            # System should be moved to top-level parameter, tool should be skipped
+            # Should have only the user message in messages array
+            assert len(result["messages"]) == 1
+            assert result["messages"][0]["role"] == "user"
+            assert "system" in result
+
 
 
 class TestConvertersClaudeStreaming:

@@ -204,10 +204,10 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
             elif isinstance(system_content, list):
                 # Extract text from nested content array (same logic as convert_openai_to_claude37)
                 system_message = Converters._extract_text_from_content(system_content)
-            if system_message:
-                logger.info("Extracted system message from messages array: %s...", system_message[:100])
-                # Remove system message from the list
-                messages_list = messages_list[1:]
+            # Always remove the system message from the list, even if content is empty
+            # (to prevent "Unexpected role system" error from Bedrock)
+            logger.info("Extracted system message from messages array: %s...", system_message[:100] if system_message else "(empty)")
+            messages_list = messages_list[1:]
 
         for message in messages_list:
             content = message.get("content")
