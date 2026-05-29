@@ -1,5 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
+**Quick Reference** for the SAP AI Core LLM Proxy project. For detailed guidance, see `CLAUDE.md`.
+
 **Generated:** 2026-01-19
 **Commit:** f358537
 **Branch:** main
@@ -12,25 +14,26 @@ SAP AI Core LLM Proxy - transforms SAP AI Core APIs into OpenAI/Anthropic-compat
 ./
 ├── proxy_server.py (2563 lines) - Main Flask app, endpoints, load balancing
 ├── proxy_helpers.py (1430 lines) - Model detection, format conversion
+├── routers/ - FastAPI routers for individual endpoints
+├── handlers/ - Bedrock, streaming, format conversion handlers
 ├── auth/ - Token management, request validation (thread-safe)
 ├── config/ - Pydantic-based configuration parsing
 ├── utils/ - Logging, error handlers, SDK pooling
-├── tests/ - Unit (tests/unit/) and integration (tests/integration/) tests
-└── openspec/ - Spec-driven development workflow (see openspec/AGENTS.md)
+└── tests/ - Unit (tests/unit/) and integration (tests/integration/) tests
 ```
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Add endpoint | proxy_server.py | Add Flask route, use verify_request_token() |
+| Add endpoint | routers/ or proxy_server.py | Add Flask/FastAPI route, use verify_request_token() |
 | Add model provider | proxy_helpers.py | Add detection function + converters |
 | Modify format conversion | proxy_helpers.py:Converters | Bidirectional converters for OpenAI/Claude/Gemini |
 | Token caching | auth/token_manager.py:TokenManager | 5-min buffer before expiry, thread-safe |
 | Load balancing | proxy_server.py:load_balance_url() | Round-robin across subaccounts + deployments |
 | Configuration | config/config_parser.py | Multi-subaccount JSON config |
 | SDK client caching | utils/sdk_pool.py | Thread-safe lazy initialization |
-| Streaming | proxy_server.py:generate_streaming_response() | SSE with on-the-fly format conversion |
+| Streaming | routers/messages.py, handlers/ | SSE with on-the-fly format conversion |
 
 ## CRITICAL IMPLEMENTATION DETAILS
 
@@ -83,7 +86,7 @@ SAP AI Core LLM Proxy - transforms SAP AI Core APIs into OpenAI/Anthropic-compat
 - Use `threading.Lock` for shared state (tokens, SDK clients)
 - See `_sdk_session_lock` pattern in utils/sdk_pool.py
 
-### Flask Routes
+### FastAPI/Flask Routes
 - Add `logging.info()` at start of each route handler
 - Verify tokens with `verify_request_token()` (auth/request_validator.py)
 
@@ -99,15 +102,15 @@ SAP AI Core LLM Proxy - transforms SAP AI Core APIs into OpenAI/Anthropic-compat
 
 ### Setup & Running
 ```bash
-uv sync                                  # Install dependencies (uses uv, not pip)
-uvx --from . sap-ai-proxy -c config.json  # Run server (primary method - recommended)
-uvx --from . sap-ai-proxy -c config.json -d  # Debug mode
-python proxy_server.py -c config.json  # Alternative method (legacy)
+uv sync                                    # Install dependencies (uses uv, not pip)
+uvx --from . sap-ai-proxy -c config.json    # Run server (primary method - recommended)
+uvx --from . sap-ai-proxy -c config.json -d # Debug mode
+python proxy_server.py -c config.json    # Alternative method (legacy)
 ```
 
 ### Testing
 ```bash
-make test                    # Unit tests only (50+ tests, 28% coverage)
+make test                    # Unit tests only (600+ tests)
 make test-integration         # Integration tests (requires running server)
 make test-cov                # With coverage report
 uv run pytest tests/test_name.py::test_function  # Single test
@@ -137,15 +140,15 @@ make version-bump-patch      # Bump version (0.1.0 → 0.1.1)
 - SDK clients cached per deployment ID with thread-safe lazy initialization
 
 ### Additional Documentation
-- **CLAUDE.md** - Detailed Claude Code-specific guidance (372 lines)
-- **openspec/AGENTS.md** - Spec-driven development workflow (457 lines)
+- **CLAUDE.md** - Detailed development guidance for Claude Code
 - **docs/ARCHITECTURE.md** - Comprehensive architecture documentation
 - **docs/TESTING.md** - Testing guide
+- **docs/RELEASE_WORKFLOW.md** - Release process
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (5972 symbols, 8424 relationships, 66 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (6184 symbols, 8685 relationships, 71 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -185,3 +188,4 @@ This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (5972 symbols, 
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+

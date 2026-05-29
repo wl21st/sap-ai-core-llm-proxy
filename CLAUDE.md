@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Quick Reference:** See `AGENTS.md` for a concise project overview, command reference, and critical implementation details.
+
 ## Project Overview
 
 This is an SAP AI Core LLM Proxy Server that transforms SAP AI Core LLM APIs into OpenAI-compatible APIs. It supports multiple model providers (Claude, GPT, Gemini) and implements load balancing across multiple SAP AI Core subaccounts.
@@ -14,101 +16,6 @@ This is an SAP AI Core LLM Proxy Server that transforms SAP AI Core LLM APIs int
 - OpenAI Embeddings API (`/v1/embeddings`)
 - Streaming support via Server-Sent Events (SSE)
 
-## Development Commands
-
-### Setup
-```bash
-# Install dependencies (using uv - recommended)
-uv sync
-
-# Install with dev dependencies
-uv sync --extra dev
-
-# Install build dependencies
-uv sync --extra build
-```
-
-### Running the Server
-```bash
-# Using uvx (primary method - recommended)
-uvx --from . sap-ai-proxy --config config.json
-uvx --from . sap-ai-proxy --config config.json --debug
-
-# From GitHub repository (run without cloning)
-uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy --config config.json
-
-# After publishing to PyPI (run from anywhere)
-uvx sap-ai-proxy --config config.json
-
-# Alternative methods (legacy)
-python proxy_server.py --config config.json
-python proxy_server.py --config config.json --debug
-uv run python proxy_server.py --config config.json
-```
-
-### Testing
-```bash
-# Run all unit tests (excludes integration tests)
-make test
-
-# Run tests with coverage report
-make test-cov
-
-# Run verbose tests
-make test-verbose
-
-# Run specific test file
-make test-file FILE=tests/test_proxy_server.py
-
-# Run tests matching a pattern
-make test-pattern PATTERN=token
-
-# Run integration tests (requires running server)
-make test-integration
-
-# Run integration smoke tests (quick validation)
-make test-integration-smoke
-
-# Run integration streaming tests
-make test-integration-streaming
-
-# Run integration tests for specific model
-make test-integration-model MODEL=gpt-4.1
-```
-
-### Building
-```bash
-# Build binary executable
-make build
-
-# Build with tests
-make build-tested
-
-# Build debug version (with console)
-make build-debug
-```
-
-### Linting & Type Checking
-```bash
-# Format code with black
-uv run black .
-
-# Check formatting with black
-uv run black . --check
-
-# Run ruff linter
-uv run ruff check .
-
-# Auto-fix with ruff
-uv run ruff check . --fix
-
-# Type checking with basedpyright
-uv run basedpyright
-
-# Run pylint
-uv run pylint proxy_server.py proxy_helpers.py
-```
-
 ## Architecture
 
 ### Core Structure
@@ -119,6 +26,8 @@ The codebase consists of:
 - **`config/`** - Configuration management using Pydantic models
 - **`auth/`** - Authentication and token management (modular structure)
 - **`utils/`** - Logging, error handlers, SDK utilities
+- **`routers/`** - FastAPI routers for individual endpoints (messages, chat, embeddings, etc.)
+- **`handlers/`** - Bedrock, streaming, and format conversion handlers
 
 ### Key Components
 
@@ -254,6 +163,105 @@ This project follows **PEP 8** conventions:
 
 **See:** `PYTHON_CONVENTIONS.md` for detailed conventions.
 
+## Development Workflow
+
+### Development Commands
+
+See `AGENTS.md` for quick command reference. Detailed explanations below.
+
+#### Setup
+```bash
+# Install dependencies (using uv - recommended)
+uv sync
+
+# Install with dev dependencies
+uv sync --extra dev
+
+# Install build dependencies
+uv sync --extra build
+```
+
+#### Running the Server
+```bash
+# Using uvx (primary method - recommended)
+uvx --from . sap-ai-proxy --config config.json
+uvx --from . sap-ai-proxy --config config.json --debug
+
+# From GitHub repository (run without cloning)
+uvx --from git+https://github.com/wl21st/sap-ai-core-llm-proxy sap-ai-proxy --config config.json
+
+# After publishing to PyPI (run from anywhere)
+uvx sap-ai-proxy --config config.json
+
+# Alternative methods (legacy)
+python proxy_server.py --config config.json
+python proxy_server.py --config config.json --debug
+uv run python proxy_server.py --config config.json
+```
+
+#### Testing
+```bash
+# Run all unit tests (excludes integration tests)
+make test
+
+# Run tests with coverage report
+make test-cov
+
+# Run verbose tests
+make test-verbose
+
+# Run specific test file
+make test-file FILE=tests/test_proxy_server.py
+
+# Run tests matching a pattern
+make test-pattern PATTERN=token
+
+# Run integration tests (requires running server)
+make test-integration
+
+# Run integration smoke tests (quick validation)
+make test-integration-smoke
+
+# Run integration streaming tests
+make test-integration-streaming
+
+# Run integration tests for specific model
+make test-integration-model MODEL=gpt-4.1
+```
+
+#### Building
+```bash
+# Build binary executable
+make build
+
+# Build with tests
+make build-tested
+
+# Build debug version (with console)
+make build-debug
+```
+
+#### Linting & Type Checking
+```bash
+# Format code with black
+uv run black .
+
+# Check formatting with black
+uv run black . --check
+
+# Run ruff linter
+uv run ruff check .
+
+# Auto-fix with ruff
+uv run ruff check . --fix
+
+# Type checking with basedpyright
+uv run basedpyright
+
+# Run pylint
+uv run pylint proxy_server.py proxy_helpers.py
+```
+
 ## Critical Implementation Details
 
 ### 1. Token Management
@@ -291,7 +299,7 @@ This project follows **PEP 8** conventions:
 ## Testing Strategy
 
 ### Unit Tests (`tests/`)
-- **50 passing tests** with **28% coverage** (focused on critical paths)
+- **600+ passing tests** with high coverage (focused on critical paths)
 - Mock external dependencies (HTTP, SDK calls, file I/O)
 - Test dataclasses, model detection, conversion functions, token management, load balancing
 
@@ -341,7 +349,7 @@ See `docs/ARCHITECTURE.md` for complete technical debt analysis.
 5. Add tests in `tests/test_proxy_helpers.py`
 
 ### Adding a New Endpoint
-1. Define Flask route in `proxy_server.py`
+1. Define Flask route in `proxy_server.py` (or FastAPI router in `routers/`)
 2. Add authentication with `verify_request_token()`
 3. Implement load balancing with `load_balance_url()`
 4. Add format conversion if needed
@@ -363,6 +371,8 @@ See `docs/ARCHITECTURE.md` for complete technical debt analysis.
 
 - `proxy_server.py` - Main Flask application (2501 lines)
 - `proxy_helpers.py` - Model detection and format conversion (1414 lines)
+- `routers/` - FastAPI routers for individual endpoints
+- `handlers/` - Request/response handlers
 - `config/` - Configuration management with Pydantic
 - `auth/` - Authentication and token management
 - `utils/` - Logging, error handling, SDK utilities
@@ -396,6 +406,7 @@ make release-github
 
 ## Additional Resources
 
+- **Quick Reference:** `AGENTS.md` - Concise project overview, commands, and implementation details
 - **Architecture Diagrams:** `docs/ARCHITECTURE.md` - System overview, request flow, data models
 - **Testing Guide:** `docs/TESTING.md` - Comprehensive testing documentation
 - **Release Workflow:** `docs/RELEASE_WORKFLOW.md` - Complete release process
@@ -406,7 +417,7 @@ make release-github
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (5972 symbols, 8424 relationships, 66 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (6184 symbols, 8685 relationships, 71 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -446,3 +457,4 @@ This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (5972 symbols, 
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
