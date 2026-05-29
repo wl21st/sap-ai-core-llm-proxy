@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from copy import deepcopy
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -19,7 +20,7 @@ from handlers.streaming_generators import (
     generate_bedrock_streaming_response,
 )
 from load_balancer import load_balance_url
-from proxy_helpers import Detector
+from proxy_helpers import Detector, Converters
 from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
 from utils.circuit_breaker import CircuitBreakerOpenError, get_ssl_circuit_breaker
@@ -192,7 +193,23 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
             isinstance(thinking_cfg_preview, dict),
         )
 
-        for message in conversation:
+        # Extract system message if present in the messages array
+        # Claude's Messages API requires system prompt as a top-level parameter, not in messages
+        system_message = None
+        messages_list = list(conversation) if isinstance(conversation, list) else []
+        if messages_list and messages_list[0].get("role") == "system":
+            system_content = messages_list[0].get("content", "")
+            if isinstance(system_content, str):
+                system_message = system_content
+            elif isinstance(system_content, list):
+                # Extract text from nested content array (same logic as convert_openai_to_claude37)
+                system_message = Converters._extract_text_from_content(system_content)
+            if system_message:
+                logger.info("Extracted system message from messages array: %s...", system_message[:100])
+                # Remove system message from the list
+                messages_list = messages_list[1:]
+
+        for message in messages_list:
             content = message.get("content")
             if isinstance(content, list):
                 items_to_remove = []
@@ -204,11 +221,19 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
                 for i in reversed(items_to_remove):
                     content.pop(i)
 
-        body = request_body_json.copy()
+        body = deepcopy(request_body_json)
         logger.info("Original request body keys: %s", list(body.keys()))
         body.pop("model", None)
         body.pop("stream", None)
         body["anthropic_version"] = API_VERSION_BEDROCK_2023_05_31
+        
+        # Ensure messages array doesn't contain system message
+        body["messages"] = messages_list
+
+        # Add system message as top-level parameter if extracted
+        if system_message:
+            body["system"] = system_message
+            logger.info("Added system message to top-level parameter")
 
         unsupported_fields = ["context_management", "metadata", "output_config"]
         for field in unsupported_fields:

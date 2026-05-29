@@ -527,16 +527,10 @@ class Converters:
                     )
             else:
                 # Skip any other unsupported roles
-                logger.warning(
-                    f"Skipping message with unsupported role for Claude /converse: {role}"
-                )
-                continue
-
-        # add the system_message to the converted_messages as the first element
-        if system_message:
-            converted_messages.insert(
-                0, {"role": "user", "content": [{"text": system_message}]}
-            )
+                 logger.warning(
+                     f"Skipping message with unsupported role for Claude /converse: {role}"
+                 )
+                 continue
 
         # Construct the final Claude 3.7 payload
         claude_payload = {"messages": converted_messages}
@@ -552,11 +546,10 @@ class Converters:
                 f"Tools present in request: {len(payload['tools'])} tools forwarded to SAP AI Core"
             )
 
-        # Add system message if it exists
-        # Claude 3.7 doesn't support the system_message as a top-level parameter
-        # if system_message:
-        # Claude /converse API supports a top-level system prompt as a list of blocks
-        # claude_payload["system"] = [{"text": system_message}]
+        # Add system message as top-level parameter (as required by Bedrock Messages API)
+        if system_message:
+            claude_payload["system"] = [{"text": system_message}]
+            logger.debug(f"Added top-level system parameter: {system_message[:100]}...")
 
         logger.debug(
             f"Converted Claude 3.7 payload: {json.dumps(claude_payload, indent=2)}"

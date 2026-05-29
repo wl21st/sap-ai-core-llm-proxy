@@ -403,3 +403,4 @@ class TestStreamingDefault:
 
         mock_stream.assert_called_once()
         mock_non_stream.assert_not_called()
+
