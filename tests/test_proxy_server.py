@@ -528,12 +528,12 @@ class TestConversionFunctions:
         assert "inferenceConfig" in result
         assert result["inferenceConfig"]["maxTokens"] == 2000
         assert result["inferenceConfig"]["temperature"] == 0.5
-        # System message is inserted as first user message, then original user message
-        assert len(result["messages"]) == 2
+        # System message must be a top-level field — not injected as a user message.
+        # Sending role "system" inside messages[] causes ValidationException on Bedrock.
+        assert result["system"] == [{"text": "System prompt"}]
+        assert len(result["messages"]) == 1
         assert result["messages"][0]["role"] == "user"
-        assert result["messages"][0]["content"][0]["text"] == "System prompt"
-        assert result["messages"][1]["role"] == "user"
-        assert result["messages"][1]["content"][0]["text"] == "User message"
+        assert result["messages"][0]["content"][0]["text"] == "User message"
 
     def test_convert_claude_to_openai(self):
         """Test Claude to OpenAI conversion."""

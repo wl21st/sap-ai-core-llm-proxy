@@ -532,14 +532,17 @@ class Converters:
                 )
                 continue
 
-        # add the system_message to the converted_messages as the first element
-        if system_message:
-            converted_messages.insert(
-                0, {"role": "user", "content": [{"text": system_message}]}
-            )
-
         # Construct the final Claude 3.7 payload
         claude_payload = {"messages": converted_messages}
+
+        # Add system prompt as a top-level field (required by Bedrock /converse API).
+        # The Anthropic Messages API and Bedrock Converse API both require system to be
+        # a top-level parameter — not a message with role "system" inside messages[].
+        # Injecting it as a "user" role message caused:
+        #   ValidationException: messages: Unexpected role "system". The Messages API
+        #   accepts a top-level 'system' parameter, not 'system' as an input message role.
+        if system_message:
+            claude_payload["system"] = [{"text": system_message}]
 
         # Add inferenceConfig only if it's not empty
         if inference_config:
@@ -551,12 +554,6 @@ class Converters:
             logger.debug(
                 f"Tools present in request: {len(payload['tools'])} tools forwarded to SAP AI Core"
             )
-
-        # Add system message if it exists
-        # Claude 3.7 doesn't support the system_message as a top-level parameter
-        # if system_message:
-        # Claude /converse API supports a top-level system prompt as a list of blocks
-        # claude_payload["system"] = [{"text": system_message}]
 
         logger.debug(
             f"Converted Claude 3.7 payload: {json.dumps(claude_payload, indent=2)}"
