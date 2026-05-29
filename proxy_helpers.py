@@ -367,6 +367,11 @@ class Converters:
         return ""
 
     @staticmethod
+    def extract_text_from_content(content) -> str:
+        """Public wrapper for content text extraction used outside Converters."""
+        return Converters._extract_text_from_content(content)
+
+    @staticmethod
     def convert_openai_to_claude(payload):
         """
         Converts an OpenAI API request payload to Claude Messages API format (older models).
@@ -532,12 +537,6 @@ class Converters:
                 )
                 continue
 
-        # add the system_message to the converted_messages as the first element
-        if system_message:
-            converted_messages.insert(
-                0, {"role": "user", "content": [{"text": system_message}]}
-            )
-
         # Construct the final Claude 3.7 payload
         claude_payload = {"messages": converted_messages}
 
@@ -552,11 +551,10 @@ class Converters:
                 f"Tools present in request: {len(payload['tools'])} tools forwarded to SAP AI Core"
             )
 
-        # Add system message if it exists
-        # Claude 3.7 doesn't support the system_message as a top-level parameter
-        # if system_message:
-        # Claude /converse API supports a top-level system prompt as a list of blocks
-        # claude_payload["system"] = [{"text": system_message}]
+        # Add system message as top-level parameter (as required by Bedrock Messages API)
+        if system_message:
+            claude_payload["system"] = [{"text": system_message}]
+            logger.debug(f"Added top-level system parameter: {system_message[:100]}...")
 
         logger.debug(
             f"Converted Claude 3.7 payload: {json.dumps(claude_payload, indent=2)}"
@@ -633,9 +631,9 @@ class Converters:
             else:
                 first_user_content_text = first_user_content
 
-            claude_messages[0]["content"] = (
-                f"{system_prompt}\\n\\n{first_user_content_text}"
-            )
+            claude_messages[0][
+                "content"
+            ] = f"{system_prompt}\\n\\n{first_user_content_text}"
 
         for message in claude_messages:
             role = "user" if message["role"] == "user" else "model"
@@ -898,9 +896,9 @@ class Converters:
 
             # Add prompt_tokens_details if cache tokens are present
             if prompt_tokens_details:
-                openai_response["usage"]["prompt_tokens_details"] = (
-                    prompt_tokens_details
-                )
+                openai_response["usage"][
+                    "prompt_tokens_details"
+                ] = prompt_tokens_details
                 logger.debug(
                     f"Added prompt_tokens_details to response: {prompt_tokens_details}"
                 )

@@ -92,7 +92,7 @@ class TestDetector:
             # --- bare claude prefix ---
             "claude-4",
             "claude-4.5",
-            "claude-4-5",           # version with dash instead of dot
+            "claude-4-5",  # version with dash instead of dot
             "claude-4.5-sonnet",
             "claude-4-5-sonnet",
             "claude-4.5-haiku",
@@ -298,7 +298,7 @@ class TestConvertersOpenAIToClaudeRequests:
         assert result["inferenceConfig"]["temperature"] == 0.5
 
     def test_convert_openai_to_claude37_with_system_message(self):
-        """Test Claude 3.7 conversion with system message prepended."""
+        """Test Claude 3.7 conversion with system message as top-level parameter."""
         payload = {
             "messages": [
                 {"role": "system", "content": "System prompt"},
@@ -308,11 +308,12 @@ class TestConvertersOpenAIToClaudeRequests:
 
         result = Converters.convert_openai_to_claude37(payload)
 
-        # System message should be prepended as first user message
-        assert len(result["messages"]) == 2
+        # System message should be moved to top-level parameter (not in messages array)
+        assert len(result["messages"]) == 1
         assert result["messages"][0]["role"] == "user"
-        assert result["messages"][0]["content"][0]["text"] == "System prompt"
-        assert result["messages"][1]["content"][0]["text"] == "User message"
+        assert result["messages"][0]["content"][0]["text"] == "User message"
+        assert "system" in result
+        assert result["system"][0]["text"] == "System prompt"
 
     def test_convert_openai_to_claude37_with_stop_sequences(self):
         """Test conversion with stop sequences."""
@@ -736,7 +737,6 @@ class TestConvertersStreamingChunks:
         assert '"finish_reason": "stop"' in result
 
 
-
 class TestConvertersErrorHandling:
     """Test error handling in conversion methods."""
 
@@ -883,11 +883,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
 
     def test_convert_openai_to_claude37_missing_content(self):
         """Test handling of missing content field."""
-        payload = {
-            "messages": [
-                {"role": "user"}  # No content
-            ]
-        }
+        payload = {"messages": [{"role": "user"}]}  # No content
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
             _result = Converters.convert_openai_to_claude37(payload)
@@ -905,9 +901,11 @@ class TestConvertersOpenAIToClaude37EdgeCases:
 
         with patch("proxy_helpers.logger.warning") as _mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
-            # System should be converted to first user message, tool should be skipped
-            # Should have system as first user message + user message
-            assert len(result["messages"]) == 2
+            # System should be moved to top-level parameter, tool should be skipped
+            # Should have only the user message in messages array
+            assert len(result["messages"]) == 1
+            assert result["messages"][0]["role"] == "user"
+            assert "system" in result
 
 
 class TestConvertersClaudeStreaming:
@@ -1245,7 +1243,6 @@ class TestConvertersClaudeToGeminiEdgeCases:
         assert result["tools"][0]["function_declarations"][0]["name"] == "search"
 
 
-
 class TestConvertersClaude37ResponseEdgeCases:
     """Test edge cases for Claude 3.7 response conversion."""
 
@@ -1338,9 +1335,7 @@ class TestConvertersStreamingEdgeCases:
     def test_convert_gemini_chunk_to_claude_delta_no_text(self):
         """Test when Gemini chunk has no text."""
         chunk = {
-            "candidates": [
-                {"content": {"parts": [{}]}}  # Empty part, no text field
-            ]
+            "candidates": [{"content": {"parts": [{}]}}]  # Empty part, no text field
         }
 
         result = Converters.convert_gemini_chunk_to_claude_delta(chunk)

@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from copy import deepcopy
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -19,12 +20,16 @@ from handlers.streaming_generators import (
     generate_bedrock_streaming_response,
 )
 from load_balancer import load_balance_url
-from proxy_helpers import Detector
+from proxy_helpers import Detector, Converters
 from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
 from utils.circuit_breaker import CircuitBreakerOpenError, get_ssl_circuit_breaker
 from utils.anthropic_usage import AnthropicTokenUsageParser
-from utils.logging_utils import extract_log_identity, get_server_logger, get_transport_logger
+from utils.logging_utils import (
+    extract_log_identity,
+    get_server_logger,
+    get_transport_logger,
+)
 from config import SubAccountConfig
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
@@ -93,7 +98,9 @@ def _handle_certificate_recovery(
     return breaker.call(_do_recovery)
 
 
-@router.post("/v1/messages", dependencies=[Depends(verify_request_token)], response_model=None)
+@router.post(
+    "/v1/messages", dependencies=[Depends(verify_request_token)], response_model=None
+)
 async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResponse:
     """Handles requests compatible with the Anthropic Claude Messages API."""
     tid: str = str(uuid.uuid4())
@@ -192,7 +199,43 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
             isinstance(thinking_cfg_preview, dict),
         )
 
-        for message in conversation:
+        # Claude's Messages API requires system prompts at top-level, never inside messages.
+        system_message = None
+        messages_list = []
+        if isinstance(conversation, list):
+            for message in conversation:
+                if not isinstance(message, dict):
+                    messages_list.append(message)
+                    continue
+
+                if message.get("role") != "system":
+                    messages_list.append(message)
+                    continue
+
+                system_content = message.get("content", "")
+                extracted_system_message = ""
+                if isinstance(system_content, str):
+                    extracted_system_message = system_content
+                elif isinstance(system_content, list):
+                    extracted_system_message = Converters.extract_text_from_content(
+                        system_content
+                    )
+
+                if not system_message:
+                    system_message = extracted_system_message
+                elif extracted_system_message:
+                    system_message = f"{system_message}\n\n{extracted_system_message}"
+
+                logger.info(
+                    "Extracted system message from messages array: %s...",
+                    (
+                        extracted_system_message[:100]
+                        if extracted_system_message
+                        else "(empty)"
+                    ),
+                )
+
+        for message in messages_list:
             content = message.get("content")
             if isinstance(content, list):
                 items_to_remove = []
@@ -204,11 +247,19 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
                 for i in reversed(items_to_remove):
                     content.pop(i)
 
-        body = request_body_json.copy()
+        body = deepcopy(request_body_json)
         logger.info("Original request body keys: %s", list(body.keys()))
         body.pop("model", None)
         body.pop("stream", None)
         body["anthropic_version"] = API_VERSION_BEDROCK_2023_05_31
+
+        # Ensure messages array doesn't contain system message
+        body["messages"] = messages_list
+
+        # Add system message as top-level parameter if extracted
+        if system_message:
+            body["system"] = [{"text": system_message}]
+            logger.info("Added system message to top-level parameter")
 
         unsupported_fields = ["context_management", "metadata", "output_config"]
         for field in unsupported_fields:
@@ -256,6 +307,16 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
                         required_min_tokens,
                         budget_tokens,
                     )
+
+        logger.debug(
+            "Final Bedrock Claude payload summary: message_roles=%s, has_system=%s",
+            [
+                message.get("role")
+                for message in body.get("messages", [])
+                if isinstance(message, dict)
+            ],
+            bool(body.get("system")),
+        )
 
         body_json = json.dumps(body)
 
@@ -508,7 +569,9 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
             logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
 
             if isinstance(response_json.get("usage"), dict):
-                AnthropicTokenUsageParser.normalize_usage_cache_fields(response_json["usage"])
+                AnthropicTokenUsageParser.normalize_usage_cache_fields(
+                    response_json["usage"]
+                )
 
             user_id, ip_address = extract_log_identity(request)
             try:
