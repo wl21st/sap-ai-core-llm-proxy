@@ -298,7 +298,7 @@ class TestConvertersOpenAIToClaudeRequests:
         assert result["inferenceConfig"]["temperature"] == 0.5
 
     def test_convert_openai_to_claude37_with_system_message(self):
-        """Test Claude 3.7 conversion with system message prepended."""
+        """Test Claude 3.7 conversion with system message as top-level field."""
         payload = {
             "messages": [
                 {"role": "system", "content": "System prompt"},
@@ -308,11 +308,14 @@ class TestConvertersOpenAIToClaudeRequests:
 
         result = Converters.convert_openai_to_claude37(payload)
 
-        # System message should be prepended as first user message
-        assert len(result["messages"]) == 2
+        # System message must be a top-level field, not a message with role "system"
+        # inside messages[]. Sending role "system" in messages[] causes:
+        #   ValidationException: Unexpected role "system". The Messages API accepts a
+        #   top-level 'system' parameter, not 'system' as an input message role.
+        assert result["system"] == [{"text": "System prompt"}]
+        assert len(result["messages"]) == 1
         assert result["messages"][0]["role"] == "user"
-        assert result["messages"][0]["content"][0]["text"] == "System prompt"
-        assert result["messages"][1]["content"][0]["text"] == "User message"
+        assert result["messages"][0]["content"][0]["text"] == "User message"
 
     def test_convert_openai_to_claude37_with_stop_sequences(self):
         """Test conversion with stop sequences."""
@@ -905,9 +908,11 @@ class TestConvertersOpenAIToClaude37EdgeCases:
 
         with patch("proxy_helpers.logger.warning") as _mock_warning:
             result = Converters.convert_openai_to_claude37(payload)
-            # System should be converted to first user message, tool should be skipped
-            # Should have system as first user message + user message
-            assert len(result["messages"]) == 2
+            # System is extracted to top-level field; tool role is skipped (unsupported);
+            # only the user message remains in messages[].
+            assert result["system"] == [{"text": "System"}]
+            assert len(result["messages"]) == 1
+            assert result["messages"][0]["role"] == "user"
 
 
 class TestConvertersClaudeStreaming:
