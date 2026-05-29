@@ -25,7 +25,11 @@ from utils.auth_retry import log_auth_error_retry
 from utils.cert_errors import is_certificate_error
 from utils.circuit_breaker import CircuitBreakerOpenError, get_ssl_circuit_breaker
 from utils.anthropic_usage import AnthropicTokenUsageParser
-from utils.logging_utils import extract_log_identity, get_server_logger, get_transport_logger
+from utils.logging_utils import (
+    extract_log_identity,
+    get_server_logger,
+    get_transport_logger,
+)
 from config import SubAccountConfig
 from utils.sdk_pool import get_bedrock_client, invalidate_bedrock_client
 from utils.sdk_utils import extract_deployment_id
@@ -94,7 +98,9 @@ def _handle_certificate_recovery(
     return breaker.call(_do_recovery)
 
 
-@router.post("/v1/messages", dependencies=[Depends(verify_request_token)], response_model=None)
+@router.post(
+    "/v1/messages", dependencies=[Depends(verify_request_token)], response_model=None
+)
 async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResponse:
     """Handles requests compatible with the Anthropic Claude Messages API."""
     tid: str = str(uuid.uuid4())
@@ -211,18 +217,22 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
                 if isinstance(system_content, str):
                     extracted_system_message = system_content
                 elif isinstance(system_content, list):
-                    extracted_system_message = Converters._extract_text_from_content(
+                    extracted_system_message = Converters.extract_text_from_content(
                         system_content
                     )
 
-                if system_message is None:
+                if not system_message:
                     system_message = extracted_system_message
                 elif extracted_system_message:
-                    system_message = f"{system_message}\n\n{extracted_system_message}" if system_message else extracted_system_message
+                    system_message = f"{system_message}\n\n{extracted_system_message}"
 
                 logger.info(
                     "Extracted system message from messages array: %s...",
-                    extracted_system_message[:100] if extracted_system_message else "(empty)",
+                    (
+                        extracted_system_message[:100]
+                        if extracted_system_message
+                        else "(empty)"
+                    ),
                 )
 
         for message in messages_list:
@@ -242,13 +252,13 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
         body.pop("model", None)
         body.pop("stream", None)
         body["anthropic_version"] = API_VERSION_BEDROCK_2023_05_31
-        
+
         # Ensure messages array doesn't contain system message
         body["messages"] = messages_list
 
         # Add system message as top-level parameter if extracted
         if system_message:
-            body["system"] = system_message
+            body["system"] = [{"text": system_message}]
             logger.info("Added system message to top-level parameter")
 
         unsupported_fields = ["context_management", "metadata", "output_config"]
@@ -559,7 +569,9 @@ async def proxy_claude_request(request: Request) -> JSONResponse | StreamingResp
             logger.info("OUT_RSP_BODY: tid=%s, %s", tid, json.dumps(response_json))
 
             if isinstance(response_json.get("usage"), dict):
-                AnthropicTokenUsageParser.normalize_usage_cache_fields(response_json["usage"])
+                AnthropicTokenUsageParser.normalize_usage_cache_fields(
+                    response_json["usage"]
+                )
 
             user_id, ip_address = extract_log_identity(request)
             try:

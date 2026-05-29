@@ -285,7 +285,9 @@ class TestStreamingDefault:
             "body": None,
         }.get(key, default)
 
-        with patch("routers.messages.invoke_bedrock_non_streaming", return_value=ok_response) as mock_non_stream:
+        with patch(
+            "routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
+        ) as mock_non_stream:
             with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
                 with patch(
                     "routers.messages.read_response_body_stream",
@@ -337,7 +339,9 @@ class TestStreamingDefault:
             "body": None,
         }.get(key, default)
 
-        with patch("routers.messages.invoke_bedrock_non_streaming", return_value=ok_response) as mock_non_stream:
+        with patch(
+            "routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
+        ) as mock_non_stream:
             with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
                 with patch(
                     "routers.messages.read_response_body_stream",
@@ -389,9 +393,16 @@ class TestStreamingDefault:
             "body": MagicMock(),
         }.get(key, default)
 
-        with patch("routers.messages.invoke_bedrock_streaming", return_value=ok_response) as mock_stream:
-            with patch("routers.messages.invoke_bedrock_non_streaming") as mock_non_stream:
-                with patch("routers.messages.generate_bedrock_streaming_response", return_value=iter([])):
+        with patch(
+            "routers.messages.invoke_bedrock_streaming", return_value=ok_response
+        ) as mock_stream:
+            with patch(
+                "routers.messages.invoke_bedrock_non_streaming"
+            ) as mock_non_stream:
+                with patch(
+                    "routers.messages.generate_bedrock_streaming_response",
+                    return_value=iter([]),
+                ):
                     client.post(
                         "/v1/messages",
                         json={
@@ -442,7 +453,7 @@ class TestSystemMessageHandling:
         sdk_client,
     ):
         """Test that empty system messages are removed from messages array.
-        
+
         Regression test: empty system messages were not being removed,
         causing "Unexpected role 'system'" ValidationException from Bedrock.
         """
@@ -464,7 +475,9 @@ class TestSystemMessageHandling:
             "body": MagicMock(),
         }.get(key, default)
 
-        with patch("routers.messages.invoke_bedrock_non_streaming", return_value=ok_response) as mock_invoke:
+        with patch(
+            "routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
+        ) as mock_invoke:
             client.post(
                 "/v1/messages",
                 json={
@@ -478,18 +491,20 @@ class TestSystemMessageHandling:
 
         # Verify that invoke_bedrock_non_streaming was called
         mock_invoke.assert_called_once()
-        
+
         # Extract the body_json argument that was passed to invoke_bedrock_non_streaming
         call_args = mock_invoke.call_args
         body_json_str = call_args[0][1]  # Second positional argument
-        
+
         import json
+
         body = json.loads(body_json_str)
-        
+
         # Verify that no system role messages are in the messages array
-        assert not any(m.get("role") == "system" for m in body["messages"]), \
-            "System message should have been removed from messages array"
-        
+        assert not any(
+            m.get("role") == "system" for m in body["messages"]
+        ), "System message should have been removed from messages array"
+
         # Verify that the messages array contains only the user message
         assert len(body["messages"]) == 1
         assert body["messages"][0]["role"] == "user"
@@ -527,8 +542,13 @@ class TestSystemMessageHandling:
             "body": MagicMock(),
         }.get(key, default)
 
-        with patch("routers.messages.invoke_bedrock_streaming", return_value=ok_response) as mock_invoke:
-            with patch("routers.messages.generate_bedrock_streaming_response", return_value=iter([])):
+        with patch(
+            "routers.messages.invoke_bedrock_streaming", return_value=ok_response
+        ) as mock_invoke:
+            with patch(
+                "routers.messages.generate_bedrock_streaming_response",
+                return_value=iter([]),
+            ):
                 client.post(
                     "/v1/messages",
                     json={
@@ -548,4 +568,4 @@ class TestSystemMessageHandling:
         body = json.loads(mock_invoke.call_args[0][1])
         assert not any(m.get("role") == "system" for m in body["messages"])
         assert body["messages"] == [{"role": "user", "content": "Hello"}]
-        assert body["system"] == "Be concise"
+        assert body["system"] == [{"text": "Be concise"}]

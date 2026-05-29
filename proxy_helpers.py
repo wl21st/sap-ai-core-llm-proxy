@@ -367,6 +367,11 @@ class Converters:
         return ""
 
     @staticmethod
+    def extract_text_from_content(content) -> str:
+        """Public wrapper for content text extraction used outside Converters."""
+        return Converters._extract_text_from_content(content)
+
+    @staticmethod
     def convert_openai_to_claude(payload):
         """
         Converts an OpenAI API request payload to Claude Messages API format (older models).
@@ -527,10 +532,10 @@ class Converters:
                     )
             else:
                 # Skip any other unsupported roles
-                 logger.warning(
-                     f"Skipping message with unsupported role for Claude /converse: {role}"
-                 )
-                 continue
+                logger.warning(
+                    f"Skipping message with unsupported role for Claude /converse: {role}"
+                )
+                continue
 
         # Construct the final Claude 3.7 payload
         claude_payload = {"messages": converted_messages}
@@ -626,9 +631,9 @@ class Converters:
             else:
                 first_user_content_text = first_user_content
 
-            claude_messages[0]["content"] = (
-                f"{system_prompt}\\n\\n{first_user_content_text}"
-            )
+            claude_messages[0][
+                "content"
+            ] = f"{system_prompt}\\n\\n{first_user_content_text}"
 
         for message in claude_messages:
             role = "user" if message["role"] == "user" else "model"
@@ -891,9 +896,9 @@ class Converters:
 
             # Add prompt_tokens_details if cache tokens are present
             if prompt_tokens_details:
-                openai_response["usage"]["prompt_tokens_details"] = (
-                    prompt_tokens_details
-                )
+                openai_response["usage"][
+                    "prompt_tokens_details"
+                ] = prompt_tokens_details
                 logger.debug(
                     f"Added prompt_tokens_details to response: {prompt_tokens_details}"
                 )

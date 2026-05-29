@@ -92,7 +92,7 @@ class TestDetector:
             # --- bare claude prefix ---
             "claude-4",
             "claude-4.5",
-            "claude-4-5",           # version with dash instead of dot
+            "claude-4-5",  # version with dash instead of dot
             "claude-4.5-sonnet",
             "claude-4-5-sonnet",
             "claude-4.5-haiku",
@@ -737,7 +737,6 @@ class TestConvertersStreamingChunks:
         assert '"finish_reason": "stop"' in result
 
 
-
 class TestConvertersErrorHandling:
     """Test error handling in conversion methods."""
 
@@ -884,11 +883,7 @@ class TestConvertersOpenAIToClaude37EdgeCases:
 
     def test_convert_openai_to_claude37_missing_content(self):
         """Test handling of missing content field."""
-        payload = {
-            "messages": [
-                {"role": "user"}  # No content
-            ]
-        }
+        payload = {"messages": [{"role": "user"}]}  # No content
 
         with patch("proxy_helpers.logger.warning") as mock_warning:
             _result = Converters.convert_openai_to_claude37(payload)
@@ -911,7 +906,6 @@ class TestConvertersOpenAIToClaude37EdgeCases:
             assert len(result["messages"]) == 1
             assert result["messages"][0]["role"] == "user"
             assert "system" in result
-
 
 
 class TestConvertersClaudeStreaming:
@@ -1249,7 +1243,6 @@ class TestConvertersClaudeToGeminiEdgeCases:
         assert result["tools"][0]["function_declarations"][0]["name"] == "search"
 
 
-
 class TestConvertersClaude37ResponseEdgeCases:
     """Test edge cases for Claude 3.7 response conversion."""
 
@@ -1342,9 +1335,7 @@ class TestConvertersStreamingEdgeCases:
     def test_convert_gemini_chunk_to_claude_delta_no_text(self):
         """Test when Gemini chunk has no text."""
         chunk = {
-            "candidates": [
-                {"content": {"parts": [{}]}}  # Empty part, no text field
-            ]
+            "candidates": [{"content": {"parts": [{}]}}]  # Empty part, no text field
         }
 
         result = Converters.convert_gemini_chunk_to_claude_delta(chunk)
