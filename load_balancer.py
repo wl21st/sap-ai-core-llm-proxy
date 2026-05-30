@@ -11,7 +11,7 @@ from utils.logging_utils import get_server_logger
 logger = get_server_logger(__name__)
 
 # Default model constants
-DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.5-sonnet"
+DEFAULT_CLAUDE_MODEL = "anthropic--claude-4.6-sonnet"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
 DEFAULT_GPT_MODEL = "gpt-4.1"
 
@@ -81,7 +81,9 @@ def resolve_model_name(model_name: str, proxy_config) -> str | None:
     return None
 
 
-def load_balance_url(selected_model_name: str, proxy_config) -> tuple[str, str, str, str]:
+def load_balance_url(
+    selected_model_name: str, proxy_config
+) -> tuple[str, str, str, str]:
     """
     Load balance requests for a model across all subAccounts that have it deployed.
 
@@ -241,4 +243,3 @@ def reset_counters():
     """Reset all load balancing counters. Useful for testing."""
     global _load_balance_counters
     _load_balance_counters.clear()
-
