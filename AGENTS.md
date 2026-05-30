@@ -148,7 +148,7 @@ make version-bump-patch      # Bump version (0.1.0 → 0.1.1)
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (6184 symbols, 8685 relationships, 71 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (6208 symbols, 8716 relationships, 72 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -188,4 +188,3 @@ This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (6184 symbols, 
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
-

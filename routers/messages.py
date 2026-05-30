@@ -39,7 +39,7 @@ transport_logger = get_transport_logger(__name__)
 
 router = APIRouter()
 
-DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.5-sonnet"
+DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.6-sonnet"
 API_VERSION_BEDROCK_2023_05_31 = "bedrock-2023-05-31"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
 API_VERSION_2023_05_15 = "2023-05-15"

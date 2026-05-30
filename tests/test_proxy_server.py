@@ -880,16 +880,16 @@ class TestResolveModelName:
         """Test resolve_model_name resolves sonnet aliases to sonnet fallback."""
         # Setup with sonnet model
         proxy_server.proxy_config.model_to_subaccounts = {
-            "anthropic--claude-4.5-sonnet": ["account1"]
+            "anthropic--claude-4.6-sonnet": ["account1"]
         }
 
         # Test sonnet-4 alias resolves to sonnet fallback
         result = resolve_model_name("sonnet-4", proxy_server.proxy_config)
-        assert result == "anthropic--claude-4.5-sonnet"
+        assert result == "anthropic--claude-4.6-sonnet"
 
         # Test claude-4.5 (no variant) defaults to sonnet fallback
         result = resolve_model_name("claude-4.5", proxy_server.proxy_config)
-        assert result == "anthropic--claude-4.5-sonnet"
+        assert result == "anthropic--claude-4.6-sonnet"
 
     def test_resolve_model_name_claude_haiku_fallback(self, reset_proxy_config):
         """Test resolve_model_name resolves haiku aliases to haiku fallback."""

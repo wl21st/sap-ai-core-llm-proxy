@@ -23,7 +23,7 @@ API_VERSION_2023_05_15 = "2023-05-15"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
 API_VERSION_BEDROCK_2023_05_31 = "bedrock-2023-05-31"
 
-DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.5-sonnet"
+DEFAULT_CLAUDE_MODEL: str = "anthropic--claude-4.6-sonnet"
 DEFAULT_GEMINI_MODEL: str = "gemini-2.5-pro"
 DEFAULT_EMBEDDING_MODEL: str = "text-embedding-3-small"
 DEFAULT_GPT_MODEL = "gpt-4.1"

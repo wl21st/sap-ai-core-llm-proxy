@@ -96,12 +96,12 @@ class TestResolveModelName:
     def test_claude_sonnet_fallback(self, mock_proxy_config):
         """Test Claude sonnet model fallback resolution (default Claude)."""
         mock_proxy_config.model_to_subaccounts = {
-            "anthropic--claude-4.5-sonnet": ["account1"]
+            "anthropic--claude-4.6-sonnet": ["account1"]
         }
 
         result = resolve_model_name("claude-3", mock_proxy_config)
 
-        assert result == "anthropic--claude-4.5-sonnet"
+        assert result == "anthropic--claude-4.6-sonnet"
 
     def test_gemini_fallback(self, mock_proxy_config):
         """Test Gemini model fallback resolution."""
@@ -139,9 +139,7 @@ class TestResolveModelName:
 class TestLoadBalanceUrl:
     """Tests for load_balance_url function."""
 
-    def test_single_subaccount_returns_url(
-        self, mock_proxy_config, sample_subaccount
-    ):
+    def test_single_subaccount_returns_url(self, mock_proxy_config, sample_subaccount):
         """Test load balancing with a single subaccount."""
         subaccount = sample_subaccount(
             "account1", "default", {"gpt-4": ["https://url1.com"]}
@@ -156,9 +154,7 @@ class TestLoadBalanceUrl:
         assert rg == "default"
         assert model == "gpt-4"
 
-    def test_round_robin_across_subaccounts(
-        self, mock_proxy_config, sample_subaccount
-    ):
+    def test_round_robin_across_subaccounts(self, mock_proxy_config, sample_subaccount):
         """Test round-robin load balancing across multiple subaccounts."""
         sub1 = sample_subaccount("account1", "rg1", {"gpt-4": ["https://url1.com"]})
         sub2 = sample_subaccount("account2", "rg2", {"gpt-4": ["https://url2.com"]})
@@ -213,16 +209,16 @@ class TestLoadBalanceUrl:
         subaccount = sample_subaccount(
             "account1",
             "default",
-            {"anthropic--claude-4.5-sonnet": ["https://url1.com"]},
+            {"anthropic--claude-4.6-sonnet": ["https://url1.com"]},
         )
         mock_proxy_config.model_to_subaccounts = {
-            "anthropic--claude-4.5-sonnet": ["account1"]
+            "anthropic--claude-4.6-sonnet": ["account1"]
         }
         mock_proxy_config.subaccounts = {"account1": subaccount}
 
         url, name, _, model = load_balance_url("claude-3.5-sonnet", mock_proxy_config)
 
-        assert model == "anthropic--claude-4.5-sonnet"
+        assert model == "anthropic--claude-4.6-sonnet"
         assert url == "https://url1.com"
 
     def test_gemini_model_fallback(self, mock_proxy_config, sample_subaccount):
@@ -307,7 +303,9 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="not available in any subAccount"):
             load_balance_url("gpt-4", mock_proxy_config)
 
-    def test_missing_model_in_subaccount_urls(self, mock_proxy_config, sample_subaccount):
+    def test_missing_model_in_subaccount_urls(
+        self, mock_proxy_config, sample_subaccount
+    ):
         """Test handling when subaccount doesn't have model's URLs."""
         # Create subaccount with a dict that returns empty list for the model
         subaccount = sample_subaccount("account1", "default", {})
