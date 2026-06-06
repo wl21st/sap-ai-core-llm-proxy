@@ -62,12 +62,10 @@ class TestRequestValidator:
         assert validator_no_tokens.validate(mock_request) is True
 
     def test_validate_partial_token_match(self, validator, mock_request):
-        """Test validation with partial token match."""
+        """Test that a token containing a valid token as a substring is rejected."""
         mock_request.headers = {"Authorization": "Bearer valid_token_1_extra"}
 
-        # Should fail because "valid_token_1" is contained in "valid_token_1_extra"
-        # but we want exact matching behavior
-        assert validator.validate(mock_request) is True
+        assert validator.validate(mock_request) is False
 
     def test_validate_bearer_token_without_bearer(self, validator, mock_request):
         """Test validation with token that doesn't have Bearer prefix."""
@@ -85,11 +83,11 @@ class TestRequestValidator:
         assert validator.validate(mock_request) is True
 
     def test_extract_token_authorization(self, validator, mock_request):
-        """Test token extraction from Authorization header."""
+        """Test token extraction from Authorization header strips Bearer prefix."""
         mock_request.headers = {"Authorization": "Bearer test_token"}
 
         token = validator._extract_token(mock_request)
-        assert token == "Bearer test_token"
+        assert token == "test_token"
 
     def test_extract_token_x_api_key(self, validator, mock_request):
         """Test token extraction from x-api-key header."""
@@ -106,11 +104,11 @@ class TestRequestValidator:
         assert token is None
 
     def test_extract_token_both_headers(self, validator, mock_request):
-        """Test token extraction precedence (Authorization over x-api-key)."""
+        """Test token extraction precedence (Authorization over x-api-key), Bearer stripped."""
         mock_request.headers = {
             "Authorization": "Bearer auth_token",
             "x-api-key": "api_key_token",
         }
 
         token = validator._extract_token(mock_request)
-        assert token == "Bearer auth_token"
+        assert token == "auth_token"

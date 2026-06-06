@@ -4,6 +4,7 @@ Request authentication and validation.
 This module provides request validation against configured authentication tokens.
 """
 
+import hmac
 from logging import Logger
 
 from fastapi import Header, HTTPException, Request
@@ -50,9 +51,7 @@ class RequestValidator:
             logger.error("Missing authentication token")
             return False
 
-        # Check if any valid token is in the request token
-        # Handles both "Bearer <token>" and just "<token>"
-        if not any(valid_token in token for valid_token in self.valid_tokens):
+        if not any(hmac.compare_digest(valid_token, token) for valid_token in self.valid_tokens):
             logger.error("Invalid authentication token")
             return False
 
@@ -61,12 +60,14 @@ class RequestValidator:
 
     @staticmethod
     def _extract_token(request: Request) -> str | None:
-        """Extract token from request headers."""
-        token = request.headers.get("Authorization") or request.headers.get("x-api-key")
+        """Extract token from request headers, stripping Bearer prefix if present."""
+        raw = request.headers.get("Authorization") or request.headers.get("x-api-key")
 
-        if token:
-            logger.debug("Token extracted: %s...", token[:15])
+        if not raw:
+            return None
 
+        token = raw[len("Bearer "):] if raw.startswith("Bearer ") else raw
+        logger.debug("Token extracted: %s...", token[:15])
         return token
 
 
@@ -75,8 +76,9 @@ def verify_request_token(
     authorization: str | None = Header(default=None, alias="Authorization"),
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> None:
-    token = authorization or x_api_key
-    if token:
+    raw = authorization or x_api_key
+    if raw:
+        token = raw[len("Bearer "):] if raw.startswith("Bearer ") else raw
         logger.debug("Token extracted: %s...", token[:15])
 
     config = request.app.state.proxy_config
