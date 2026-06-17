@@ -342,6 +342,7 @@ def fetch_all_deployments(
                         "url": deployment.deployment_url,
                         "created_at": str(deployment.created_at),
                         "model_name": None,
+                        "scenario_id": getattr(deployment, "scenario_id", None),
                     }
 
                     # Try to extract backend model name
@@ -366,6 +367,17 @@ def fetch_all_deployments(
                         logger.debug(
                             f"Could not extract backend model for deployment {deployment.id}: {e}"
                         )
+
+                    # Fall back to configuration_name for orchestration deployments
+                    if info["model_name"] is None:
+                        try:
+                            config_name = getattr(deployment, "configuration_name", None)
+                            if config_name:
+                                info["model_name"] = config_name
+                        except Exception as e:
+                            logger.debug(
+                                f"Could not extract configuration_name for deployment {deployment.id}: {e}"
+                            )
 
                     results.append(info)
 
@@ -413,3 +425,36 @@ def fetch_all_deployments(
             extra={"error_id": ErrorIDs.CACHE_OS_ERROR},
         )
         raise CacheError(f"Cache operation failed: {e}") from e
+
+
+def fetch_foundation_models(
+    service_key: ServiceKey,
+    resource_group: str = "default",
+) -> list[str]:
+    """Fetch all available foundation model names from SAP AI Core.
+
+    Calls /v2/lm/scenarios/foundation-models/models and returns the model
+    names. These are the models that an orchestration deployment can route to.
+
+    Args:
+        service_key: SAP AI Core service key credentials
+        resource_group: Resource group, defaults to "default"
+
+    Returns:
+        List of model name strings (e.g. ["anthropic--claude-4.5-sonnet", ...])
+    """
+    from utils.exceptions import DeploymentFetchError
+
+    try:
+        client = __get_ai_api_client(service_key, resource_group)
+        response = client.model.query(resource_group=resource_group)
+        model_names = [m.model for m in response.resources if m.model]
+        logger.info(
+            f"Fetched {len(model_names)} foundation models for resource group: {resource_group}"
+        )
+        return model_names
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch foundation models for resource group {resource_group}: {e}"
+        )
+        raise DeploymentFetchError(f"Failed to fetch foundation models: {e}") from e

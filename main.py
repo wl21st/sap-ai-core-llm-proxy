@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from cli import parse_arguments
 from config import ProxyConfig, ProxyGlobalContext, load_proxy_config
+from discovery import run_discovery
 from routers import chat, embeddings, logging as logging_router, messages, models, status
 from utils.logging_utils import init_logging
 from utils.metrics import MetricsCollector
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config_path = app.state.config_path
     config = load_proxy_config(config_path)
     init_logging(debug=True)
+    run_discovery(config)
     context = ProxyGlobalContext()
     context.initialize(config)
     app.state.proxy_config = config

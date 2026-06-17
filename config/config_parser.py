@@ -17,6 +17,7 @@ from utils.sdk_utils import (
     extract_deployment_id,
     fetch_deployment_url,
     fetch_all_deployments,
+    fetch_foundation_models,
 )
 from utils.exceptions import (
     ConfigValidationError,
@@ -67,6 +68,7 @@ class SubAccountConfigSchema(BaseModel):
     service_key_json: str = ""
     deployment_models: dict[str, list[str]] = Field(default_factory=dict)
     deployment_ids: dict[str, list[str]] = Field(default_factory=dict)
+    auto_discover: bool = False
 
 
 class ProxyConfigSchema(BaseModel):
@@ -270,6 +272,7 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
             service_key_json=sub_config_schema.service_key_json,
             model_to_deployment_urls=deployment_models,
             model_to_deployment_ids=sub_config_schema.deployment_ids,
+            auto_discover=sub_config_schema.auto_discover,
         )
         proxy_config.subaccounts[sub_name] = sub_account_config
 
@@ -312,6 +315,45 @@ def _load_service_key_for_subaccount(sub_account_config: SubAccountConfig):
         identity_zone_id=service_key_json.get("identityzoneid"),
         api_url=service_key_json.get("serviceurls", {}).get("AI_API_URL"),
     )
+
+
+def _register_orchestration_models(
+    sub_account_config: SubAccountConfig, orchestration_url: str
+) -> None:
+    """Register all foundation models under an orchestration deployment URL.
+
+    Queries the SAP AI Core foundation-models scenario to get all available
+    model names, then registers each under the given orchestration URL. This
+    allows clients to address foundation models via the orchestration endpoint.
+
+    Args:
+        sub_account_config: The subaccount config to update
+        orchestration_url: The orchestration deployment URL to register models under
+    """
+    try:
+        foundation_models = fetch_foundation_models(
+            service_key=sub_account_config.service_key,
+            resource_group=sub_account_config.resource_group,
+        )
+        for model_name in foundation_models:
+            if model_name not in sub_account_config.model_to_deployment_urls:
+                sub_account_config.model_to_deployment_urls[model_name] = []
+            if orchestration_url not in sub_account_config.model_to_deployment_urls[model_name]:
+                sub_account_config.model_to_deployment_urls[model_name].append(orchestration_url)
+                logger.info(f"Registered orchestration model: {model_name} -> {orchestration_url}")
+
+            # Register aliases
+            if model_name in MODEL_ALIASES:
+                for alias in MODEL_ALIASES[model_name]:
+                    if alias not in sub_account_config.model_to_deployment_urls:
+                        sub_account_config.model_to_deployment_urls[alias] = []
+                    if orchestration_url not in sub_account_config.model_to_deployment_urls[alias]:
+                        sub_account_config.model_to_deployment_urls[alias].append(orchestration_url)
+                        logger.debug(f"Registered orchestration alias: {alias} -> {orchestration_url}")
+    except Exception as e:
+        logger.warning(
+            f"Could not fetch foundation models for orchestration URL {orchestration_url}: {e}"
+        )
 
 
 def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dict]:
@@ -368,6 +410,7 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
         for dep in discovered_deployments:
             url = dep.get("url")
             backend_model = dep.get("model_name")
+            scenario_id = dep.get("scenario_id")
 
             if url and backend_model:
                 # Register under raw backend model name
@@ -397,6 +440,11 @@ def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dic
                                 url
                             )
                             logger.debug(f"Auto-aliased: {alias} -> {url}")
+
+                # For orchestration deployments, also register all foundation models
+                # under this URL so clients can address them via the orchestration endpoint
+                if scenario_id == "orchestration":
+                    _register_orchestration_models(sub_account_config, url)
 
         return discovered_deployments
 
@@ -592,19 +640,30 @@ def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
     """Build deployment ID mapping for a subaccount.
 
     This orchestrates the deployment mapping process:
-    1. Auto-discovers deployments from SAP AI Core
-    2. Resolves configured deployment IDs to URLs
-    3. Extracts deployment IDs from configured URLs (backward compatibility)
+    1. Resolves configured deployment IDs to URLs
+    2. Extracts deployment IDs from configured URLs (backward compatibility)
+
+    Note: Auto-discovery of deployments from SAP AI Core is handled separately
+    by run_discovery() in discovery.py, called during the startup lifespan hook.
 
     Args:
         sub_account_config: The subaccount config to update
     """
-    # Step 1: Auto-discover deployments from SAP AI Core
-    discovered_deployments = _auto_discover_deployments(sub_account_config)
+    # Step 1: Fetch all deployments for validation purposes (if service key available)
+    discovered_deployments: list[dict] = []
+    try:
+        discovered_deployments = fetch_all_deployments(
+            service_key=sub_account_config.service_key,
+            resource_group=sub_account_config.resource_group,
+        )
+    except Exception as e:
+        logger.debug(
+            f"Could not fetch deployments for validation in subaccount '{sub_account_config.name}': {e}"
+        )
 
     # Build lookup map for validation (ID -> Model Name)
-    deployment_id_to_model = {
-        d["id"]: d.get("model_name") for d in discovered_deployments if d.get("id")
+    deployment_id_to_model: dict[str, str] = {
+        d["id"]: d["model_name"] for d in discovered_deployments if d.get("id") and d.get("model_name")
     }
 
     # Step 2: Resolve configured deployment IDs to URLs

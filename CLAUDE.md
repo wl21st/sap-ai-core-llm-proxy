@@ -112,6 +112,11 @@ The `config.json` uses multi-subaccount structure:
         "gpt-4o": ["https://api.ai..."],
         "claude-4.5": ["https://api..."]
       }
+    },
+    "account2": {
+      "resource_group": "default",
+      "service_key_json": "key2.json",
+      "auto_discover": true
     }
   },
   "secret_authentication_tokens": ["token1", "token2"],

@@ -66,6 +66,7 @@ class SubAccountConfig:
     service_key: ServiceKey = field(init=False)
     token_info: TokenInfo = field(default_factory=TokenInfo)
     model_to_deployment_ids: dict[str, list[str]] = field(default_factory=dict)
+    auto_discover: bool = False
 
 
 @dataclass
