@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from routers.chat import proxy_openai_stream, _handle_non_streaming_request
+from saip.routers.chat import proxy_openai_stream, _handle_non_streaming_request
 
 
 @pytest.mark.skip(reason="Tests require complex mocking of internal implementation")
@@ -35,11 +35,10 @@ class TestChatRouterRequestHandling:
         mock_request.json = AsyncMock(return_value=json.loads(request_body))
         mock_request.headers = {}
 
-        with patch(
-            "handlers.model_handlers.handle_default_request",
+        with patch("saip.handlers.model_handlers.handle_default_request",
             return_value=("http://test.com", {"model": "gpt-4"}, "test"),
         ):
-            with patch("routers.chat.generate_streaming_response") as mock_gen:
+            with patch("saip.routers.chat.generate_streaming_response") as mock_gen:
 
                 async def mock_stream():
                     yield "data: test\n\n"
@@ -71,12 +70,10 @@ class TestChatRouterRequestHandling:
         mock_request.json = AsyncMock(return_value={"messages": []})
         mock_request.headers = {}
 
-        with patch(
-            "handlers.model_handlers.handle_default_request",
+        with patch("saip.handlers.model_handlers.handle_default_request",
             return_value=("http://test.com", {"model": "gpt-4.1"}, "test"),
         ):
-            with patch(
-                "routers.chat._handle_non_streaming_request",
+            with patch("saip.routers.chat._handle_non_streaming_request",
                 return_value=JSONResponse({}),
             ) as mock_handle:
                 await proxy_openai_stream(mock_request)
@@ -98,8 +95,7 @@ class TestChatRouterErrorHandling:
         mock_request.headers = {}
         mock_request.app.state = Mock()
 
-        with patch(
-            "load_balancer.resolve_model_name", side_effect=ValueError("Invalid model")
+        with patch("saip.load_balancer.resolve_model_name", side_effect=ValueError("Invalid model")
         ):
             response = await proxy_openai_stream(mock_request)
 
@@ -123,7 +119,7 @@ class TestChatRouterErrorHandling:
         mock_request.json = AsyncMock(return_value={"model": "unknown-model"})
         mock_request.headers = {}
 
-        with patch("load_balancer.resolve_model_name", return_value="unknown-model"):
+        with patch("saip.load_balancer.resolve_model_name", return_value="unknown-model"):
             response = await proxy_openai_stream(mock_request)
 
             assert isinstance(response, JSONResponse)
@@ -161,9 +157,8 @@ class TestNonStreamingHandler:
         backend_result.response_data = {"choices": [{"message": {"content": "Hello"}}]}
         backend_result.is_sse_response = False
 
-        with patch("routers.chat.run_in_threadpool", return_value=backend_result):
-            with patch(
-                "routers.chat.Converters.convert_claude_to_openai",
+        with patch("saip.routers.chat.run_in_threadpool", return_value=backend_result):
+            with patch("saip.routers.chat.Converters.convert_claude_to_openai",
                 return_value={"converted": True},
             ):
                 response = await _handle_non_streaming_request(
@@ -192,7 +187,7 @@ class TestNonStreamingHandler:
         backend_result.status_code = 503
         backend_result.response_data = {"error": "Backend error"}
 
-        with patch("routers.chat.run_in_threadpool", return_value=backend_result):
+        with patch("saip.routers.chat.run_in_threadpool", return_value=backend_result):
             response = await _handle_non_streaming_request(
                 request=mock_request,
                 url="http://test.com",
@@ -214,8 +209,7 @@ class TestNonStreamingHandler:
         mock_request.headers = {}
         mock_request.client = Mock(host="127.0.0.1")
 
-        with patch(
-            "routers.chat.run_in_threadpool",
+        with patch("saip.routers.chat.run_in_threadpool",
             side_effect=RuntimeError("Thread pool error"),
         ):
             response = await _handle_non_streaming_request(
@@ -280,12 +274,10 @@ class TestAppStateAccess:
             mock_request.json = AsyncMock(return_value={"model": model})
             mock_request.headers = {}
 
-            with patch(
-                "handlers.model_handlers.handle_default_request",
+            with patch("saip.handlers.model_handlers.handle_default_request",
                 return_value=("http://test.com", {"model": model}, "test"),
             ):
-                with patch(
-                    "routers.chat._handle_non_streaming_request",
+                with patch("saip.routers.chat._handle_non_streaming_request",
                     return_value=JSONResponse({"model": model}),
                 ):
                     return await proxy_openai_stream(mock_request)
@@ -324,16 +316,14 @@ class TestChatStreamDefault:
         mock_state.proxy_config.subaccounts = {"acct": MagicMock(resource_group="rg", service_key=MagicMock(identity_zone_id="iz"))}
         mock_request.app.state = mock_state
 
-        with patch("routers.chat.resolve_model_name", return_value="gpt-4.1"):
-            with patch(
-                "routers.chat.handle_default_request",
+        with patch("saip.routers.chat.resolve_model_name", return_value="gpt-4.1"):
+            with patch("saip.routers.chat.handle_default_request",
                 return_value=("http://test.com", {"model": "gpt-4.1"}, "acct"),
             ):
-                with patch(
-                    "routers.chat._handle_non_streaming_request",
+                with patch("saip.routers.chat._handle_non_streaming_request",
                     return_value=JSONResponse({"choices": []}),
                 ) as mock_non_stream:
-                    with patch("routers.chat.generate_streaming_response") as mock_stream:
+                    with patch("saip.routers.chat.generate_streaming_response") as mock_stream:
                         await proxy_openai_stream(mock_request)
 
         mock_non_stream.assert_called_once()

@@ -1,8 +1,8 @@
 import pytest
 import logging
 from unittest.mock import patch
-from inspect_deployments import inspect_subaccount
-from config import SubAccountConfig, ServiceKey
+from saip.inspect_deployments import inspect_subaccount
+from saip.config import SubAccountConfig, ServiceKey
 
 
 @pytest.fixture
@@ -26,8 +26,8 @@ def mock_sub_config():
     return config
 
 
-@patch("inspect_deployments.fetch_all_deployments")
-@patch("inspect_deployments.MODEL_ALIASES", {"gpt-4": ["gpt-4-alias"]})
+@patch("saip.inspect_deployments.fetch_all_deployments")
+@patch("saip.inspect_deployments.MODEL_ALIASES", {"gpt-4": ["gpt-4-alias"]})
 def test_inspect_subaccount(mock_fetch, mock_sub_config, caplog):
     # Setup mock deployments
     mock_fetch.return_value = [

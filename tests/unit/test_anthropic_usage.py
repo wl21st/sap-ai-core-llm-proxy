@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 
-from utils.anthropic_usage import AnthropicTokenUsageParser, AnthropicUsage
+from saip.utils.anthropic_usage import AnthropicTokenUsageParser, AnthropicUsage
 
 
 class TestAnthropicUsage:
@@ -62,35 +62,35 @@ class TestAnthropicTokenUsageParserParseResponse:
 
     def test_missing_usage_key_stays_zero_and_warns(self):
         parser = AnthropicTokenUsageParser()
-        with patch("utils.anthropic_usage._logger") as mock_log:
+        with patch("saip.utils.anthropic_usage._logger") as mock_log:
             parser.parse_response({"content": []})
             assert parser.usage.total_tokens == 0
             mock_log.warning.assert_not_called()  # missing key is silent (None branch)
 
     def test_none_usage_value_warns_no_raise(self):
         parser = AnthropicTokenUsageParser()
-        with patch("utils.anthropic_usage._logger") as mock_log:
+        with patch("saip.utils.anthropic_usage._logger") as mock_log:
             parser.parse_response({"usage": None})
             assert parser.usage.total_tokens == 0
             mock_log.warning.assert_not_called()  # None is handled without warning
 
     def test_non_dict_usage_warns_no_raise(self):
         parser = AnthropicTokenUsageParser()
-        with patch("utils.anthropic_usage._logger") as mock_log:
+        with patch("saip.utils.anthropic_usage._logger") as mock_log:
             parser.parse_response({"usage": 42})
             assert parser.usage.total_tokens == 0
             mock_log.warning.assert_called_once()
 
     def test_non_dict_response_warns_no_raise(self):
         parser = AnthropicTokenUsageParser()
-        with patch("utils.anthropic_usage._logger") as mock_log:
+        with patch("saip.utils.anthropic_usage._logger") as mock_log:
             parser.parse_response("not a dict")
             assert parser.usage.total_tokens == 0
             mock_log.warning.assert_called_once()
 
     def test_exception_in_parse_is_caught_no_raise(self):
         parser = AnthropicTokenUsageParser()
-        with patch("utils.anthropic_usage._logger") as mock_log:
+        with patch("saip.utils.anthropic_usage._logger") as mock_log:
             # Cause an internal exception by making .get() blow up
             class Exploding(dict):
                 def get(self, *args, **kwargs):
@@ -181,7 +181,7 @@ class TestAnthropicTokenUsageParserFeedChunk:
             def get(self, *args, **kwargs):
                 raise RuntimeError("forced")
 
-        with patch("utils.anthropic_usage._logger") as mock_log:
+        with patch("saip.utils.anthropic_usage._logger") as mock_log:
             # feed_chunk calls chunk.get("type") — if that raises, the except fires
             parser.feed_chunk(RaisingDict({"type": "message_start"}))
             mock_log.warning.assert_called_once()
@@ -191,7 +191,7 @@ class TestAnthropicTokenUsageParserLog:
     def test_basic_log_entry_emitted(self):
         parser = AnthropicTokenUsageParser()
         parser.parse_response({"usage": {"input_tokens": 10, "output_tokens": 5}})
-        with patch("utils.anthropic_usage.token_usage_logger") as mock_logger:
+        with patch("saip.utils.anthropic_usage.token_usage_logger") as mock_logger:
             parser.log("claude-4.5", "acct1", "u1", "1.2.3.4")
             mock_logger.info.assert_called_once()
             call_args = mock_logger.info.call_args
@@ -213,7 +213,7 @@ class TestAnthropicTokenUsageParserLog:
                 "cache_read_input_tokens": 2,
             }
         })
-        with patch("utils.anthropic_usage.token_usage_logger") as mock_logger:
+        with patch("saip.utils.anthropic_usage.token_usage_logger") as mock_logger:
             parser.log("m", "s", "u", "ip")
             call_args = mock_logger.info.call_args
             msg = call_args[0][0] % call_args[0][1:]
@@ -223,7 +223,7 @@ class TestAnthropicTokenUsageParserLog:
     def test_thinking_suffix_appended_when_nonzero(self):
         parser = AnthropicTokenUsageParser()
         parser.parse_response({"usage": {"input_tokens": 10, "output_tokens": 5, "thinking_tokens": 4}})
-        with patch("utils.anthropic_usage.token_usage_logger") as mock_logger:
+        with patch("saip.utils.anthropic_usage.token_usage_logger") as mock_logger:
             parser.log("m", "s", "u", "ip")
             call_args = mock_logger.info.call_args
             msg = call_args[0][0] % call_args[0][1:]
@@ -232,7 +232,7 @@ class TestAnthropicTokenUsageParserLog:
     def test_no_cache_suffix_when_zero(self):
         parser = AnthropicTokenUsageParser()
         parser.parse_response({"usage": {"input_tokens": 10, "output_tokens": 5}})
-        with patch("utils.anthropic_usage.token_usage_logger") as mock_logger:
+        with patch("saip.utils.anthropic_usage.token_usage_logger") as mock_logger:
             parser.log("m", "s", "u", "ip")
             call_args = mock_logger.info.call_args
             msg = call_args[0][0] % call_args[0][1:]
@@ -241,7 +241,7 @@ class TestAnthropicTokenUsageParserLog:
 
     def test_suffix_parameter_appended(self):
         parser = AnthropicTokenUsageParser()
-        with patch("utils.anthropic_usage.token_usage_logger") as mock_logger:
+        with patch("saip.utils.anthropic_usage.token_usage_logger") as mock_logger:
             parser.log("m", "s", "u", "ip", suffix="Streaming")
             call_args = mock_logger.info.call_args
             msg = call_args[0][0] % call_args[0][1:]

@@ -5,8 +5,8 @@ Unit tests for TokenManager class.
 import pytest
 import time
 from unittest.mock import Mock, patch
-from config import SubAccountConfig, ServiceKey
-from auth import TokenManager
+from saip.config import SubAccountConfig, ServiceKey
+from saip.auth import TokenManager
 
 
 class TestTokenManager:

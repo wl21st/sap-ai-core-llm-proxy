@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from handlers.streaming_generators import generate_bedrock_streaming_response
-from routers.messages import router
+from saip.handlers.streaming_generators import generate_bedrock_streaming_response
+from saip.routers.messages import router
 
 
 # ---------------------------------------------------------------------------
@@ -187,12 +187,12 @@ def _make_router_client():
     return TestClient(app, raise_server_exceptions=False), mock_config
 
 
-@patch("routers.messages.verify_request_token", return_value=True)
-@patch("routers.messages.load_balance_url")
-@patch("routers.messages.get_bedrock_client")
-@patch("routers.messages.invalidate_bedrock_client")
-@patch("routers.messages.Detector")
-@patch("routers.messages.extract_deployment_id")
+@patch("saip.routers.messages.verify_request_token", return_value=True)
+@patch("saip.routers.messages.load_balance_url")
+@patch("saip.routers.messages.get_bedrock_client")
+@patch("saip.routers.messages.invalidate_bedrock_client")
+@patch("saip.routers.messages.Detector")
+@patch("saip.routers.messages.extract_deployment_id")
 class TestNonStreamingTokenLogging:
 
     def _setup_mocks(self, mock_extract_id, mock_detector, mock_invalidate, mock_get_client, mock_load_balance, response_body_json: dict):
@@ -217,8 +217,8 @@ class TestNonStreamingTokenLogging:
         }
         body_str = self._setup_mocks(mock_extract_id, mock_detector, mock_invalidate, mock_get_client, mock_load_balance, response_json)
 
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke, \
-             patch("routers.messages.read_response_body_stream", return_value=body_str), \
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming") as mock_invoke, \
+             patch("saip.routers.messages.read_response_body_stream", return_value=body_str), \
              caplog.at_level(logging.INFO, logger="token_usage"):
             mock_invoke.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}, "body": MagicMock()}
             client.post("/v1/messages", json={
@@ -247,8 +247,8 @@ class TestNonStreamingTokenLogging:
         }
         body_str = self._setup_mocks(mock_extract_id, mock_detector, mock_invalidate, mock_get_client, mock_load_balance, response_json)
 
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke, \
-             patch("routers.messages.read_response_body_stream", return_value=body_str), \
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming") as mock_invoke, \
+             patch("saip.routers.messages.read_response_body_stream", return_value=body_str), \
              caplog.at_level(logging.INFO, logger="token_usage"):
             mock_invoke.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}, "body": MagicMock()}
             client.post("/v1/messages", json={
@@ -274,8 +274,8 @@ class TestNonStreamingTokenLogging:
         }
         body_str = self._setup_mocks(mock_extract_id, mock_detector, mock_invalidate, mock_get_client, mock_load_balance, response_json)
 
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke, \
-             patch("routers.messages.read_response_body_stream", return_value=body_str), \
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming") as mock_invoke, \
+             patch("saip.routers.messages.read_response_body_stream", return_value=body_str), \
              caplog.at_level(logging.INFO, logger="token_usage"):
             mock_invoke.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}, "body": MagicMock()}
             resp = client.post("/v1/messages", json={

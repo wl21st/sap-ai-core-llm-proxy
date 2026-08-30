@@ -9,10 +9,10 @@ import tempfile
 from unittest.mock import Mock, patch
 import pytest
 
-from auth import TokenManager
-from config import SubAccountConfig, ServiceKey, TokenInfo
-from utils.sdk_pool import resolve_ca_cert_bundle
-from utils.exceptions import ConfigValidationError
+from saip.auth import TokenManager
+from saip.config import SubAccountConfig, ServiceKey, TokenInfo
+from saip.utils.sdk_pool import resolve_ca_cert_bundle
+from saip.utils.exceptions import ConfigValidationError
 
 
 class TestResolveCaCertBundle:
@@ -134,7 +134,7 @@ class TestResolveCaCertBundle:
 
         with patch("certifi.where", side_effect=ImportError):
             # All system path checks return False
-            with patch("utils.sdk_pool.Path.exists", return_value=False):
+            with patch("saip.utils.sdk_pool.Path.exists", return_value=False):
                 # ssl.get_default_verify_paths().cafile will be checked and found valid
                 result = resolve_ca_cert_bundle(None)
                 # When system paths don't exist, ssl module path should be used
@@ -355,49 +355,49 @@ class TestCertificateErrorDetection:
 
     def test_is_certificate_error_oserror_with_cert_keyword(self):
         """Test detection of OSError with certificate keyword."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = OSError("SSL: CERTIFICATE_VERIFY_FAILED")
         assert is_certificate_error(error) is True
 
     def test_is_certificate_error_oserror_with_ssl_keyword(self):
         """Test detection of OSError with SSL keyword."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = OSError("SSL: SSLV3_ALERT_UNKNOWN_CA")
         assert is_certificate_error(error) is True
 
     def test_is_certificate_error_oserror_with_ca_keyword(self):
         """Test detection of OSError with CA certificate keyword."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = OSError("CA certificate verification failed")
         assert is_certificate_error(error) is True
 
     def test_is_certificate_error_generic_exception(self):
         """Test detection with generic Exception and cert keywords."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = Exception("certificate verification failed")
         assert is_certificate_error(error) is True
 
     def test_is_certificate_error_not_cert_error(self):
         """Test that non-certificate errors are not detected."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = OSError("Connection refused")
         assert is_certificate_error(error) is False
 
     def test_is_certificate_error_timeout_not_detected(self):
         """Test that timeout errors are not detected as certificate errors."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = TimeoutError("Request timed out")
         assert is_certificate_error(error) is False
 
     def test_is_certificate_error_case_insensitive(self):
         """Test that certificate error detection is case-insensitive."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = OSError("CERTIFICATE_VERIFY_FAILED")
         assert is_certificate_error(error) is True
@@ -414,7 +414,7 @@ class TestCertificateErrorDetection:
         This must be treated as a recoverable SSL error so the cached client is invalidated
         and retried with a fresh connection.
         """
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
         from botocore.exceptions import SSLError
 
         error = SSLError(
@@ -426,7 +426,7 @@ class TestCertificateErrorDetection:
 
     def test_is_certificate_error_ssl_validation_failed_generic(self):
         """Test detection of generic 'SSL validation failed' message."""
-        from utils.cert_errors import is_certificate_error
+        from saip.utils.cert_errors import is_certificate_error
 
         error = Exception("SSL validation failed for https://example.com No such file")
         assert is_certificate_error(error) is True
@@ -437,7 +437,7 @@ class TestSessionInvalidation:
 
     def test_invalidate_bedrock_client_is_safe(self):
         """Test that invalidate_bedrock_client can be called safely."""
-        from utils import sdk_pool
+        from saip.utils import sdk_pool
 
         # Test that the function exists and is callable
         assert hasattr(sdk_pool, "invalidate_bedrock_client")
@@ -453,7 +453,7 @@ class TestSessionInvalidation:
     def test_invalidate_bedrock_client_resets_session(self):
         """Test that invalidate_bedrock_client signature includes session handling."""
         import inspect
-        from utils import sdk_pool
+        from saip.utils import sdk_pool
 
         # Verify the function exists and has the documented behavior
         source = inspect.getsource(sdk_pool.invalidate_bedrock_client)

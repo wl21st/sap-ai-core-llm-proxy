@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from utils.circuit_breaker import (
+from saip.utils.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
     CircuitState,

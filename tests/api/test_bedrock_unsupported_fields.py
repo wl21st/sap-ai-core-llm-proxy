@@ -128,7 +128,7 @@ class TestBedrockUnsupportedFieldsDirectAPI:
         """
         global logger_module
         if logger_module is None:
-            from utils.logging_utils import get_server_logger
+            from saip.utils.logging_utils import get_server_logger
             logger_module = get_server_logger(__name__)
 
         try:

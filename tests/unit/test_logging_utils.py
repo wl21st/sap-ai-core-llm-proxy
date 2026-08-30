@@ -9,7 +9,7 @@ import time
 from typing import Generator
 from unittest.mock import patch
 from datetime import datetime, timedelta
-from utils import logging_utils
+from saip.utils import logging_utils
 
 
 class TestLoggingUtils:
@@ -55,9 +55,9 @@ class TestLoggingUtils:
             content = f.read()
         assert content == test_content
 
-    @patch("utils.logging_utils._loggers_initialized", False)
-    @patch("utils.logging_utils._log_timestamp", None)
-    @patch("utils.logging_utils._child_loggers_setup", set())
+    @patch("saip.utils.logging_utils._loggers_initialized", False)
+    @patch("saip.utils.logging_utils._log_timestamp", None)
+    @patch("saip.utils.logging_utils._child_loggers_setup", set())
     def test_init_logging_archives_old_logs(self, temp_dirs: dict[str, str]) -> None:
         """Test that init_logging gzips old log files when moving to archive."""
         # Create log files with different ages
@@ -77,7 +77,7 @@ class TestLoggingUtils:
         os.utime(new_log, (new_time, new_time))
 
         with (
-            patch("utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
+            patch("saip.utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
             patch("logging.basicConfig"),
             patch("logging.getLogger"),
         ):
@@ -90,9 +90,9 @@ class TestLoggingUtils:
                 "new.log" in archive_files
             )  # New file should be moved without gzipping
 
-    @patch("utils.logging_utils._loggers_initialized", False)
-    @patch("utils.logging_utils._log_timestamp", None)
-    @patch("utils.logging_utils._child_loggers_setup", set())
+    @patch("saip.utils.logging_utils._loggers_initialized", False)
+    @patch("saip.utils.logging_utils._log_timestamp", None)
+    @patch("saip.utils.logging_utils._child_loggers_setup", set())
     def test_init_logging_archives_new_logs_no_gzip(
         self, temp_dirs: dict[str, str]
     ) -> None:
@@ -108,7 +108,7 @@ class TestLoggingUtils:
         os.utime(new_log, (recent_time, recent_time))
 
         with (
-            patch("utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
+            patch("saip.utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
             patch("logging.basicConfig"),
             patch("logging.getLogger"),
         ):
@@ -118,9 +118,9 @@ class TestLoggingUtils:
             archive_files = os.listdir(temp_dirs["archive_dir"])
             assert "recent.log" in archive_files
 
-    @patch("utils.logging_utils._loggers_initialized", False)
-    @patch("utils.logging_utils._log_timestamp", None)
-    @patch("utils.logging_utils._child_loggers_setup", set())
+    @patch("saip.utils.logging_utils._loggers_initialized", False)
+    @patch("saip.utils.logging_utils._log_timestamp", None)
+    @patch("saip.utils.logging_utils._child_loggers_setup", set())
     def test_init_logging_gzips_old_archive_logs(
         self, temp_dirs: dict[str, str]
     ) -> None:
@@ -136,10 +136,10 @@ class TestLoggingUtils:
         os.utime(old_archive_log, (old_time, old_time))
 
         with (
-            patch("utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
+            patch("saip.utils.logging_utils.DEFAULT_LOG_FOLDER", temp_dirs["logs_dir"]),
             patch("logging.basicConfig"),
             patch("logging.getLogger"),
-            patch("utils.logging_utils.datetime") as mock_datetime,
+            patch("saip.utils.logging_utils.datetime") as mock_datetime,
         ):
             mock_datetime.now.return_value = datetime.fromtimestamp(time.time())
             mock_datetime.fromtimestamp = datetime.fromtimestamp
@@ -183,9 +183,9 @@ class TestLoggingUtils:
         logger = logging_utils.get_client_logger("api")
         assert logger.name == "app.client.api"
 
-    @patch("utils.logging_utils._loggers_initialized", False)
-    @patch("utils.logging_utils._log_timestamp", None)
-    @patch("utils.logging_utils._child_loggers_setup", set())
+    @patch("saip.utils.logging_utils._loggers_initialized", False)
+    @patch("saip.utils.logging_utils._log_timestamp", None)
+    @patch("saip.utils.logging_utils._child_loggers_setup", set())
     def test_init_logging_idempotent(self) -> None:
         """Test that init_logging is idempotent."""
         with (

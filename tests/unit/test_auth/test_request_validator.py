@@ -4,7 +4,7 @@ Unit tests for RequestValidator class.
 
 import pytest
 from unittest.mock import Mock
-from auth import RequestValidator
+from saip.auth import RequestValidator
 
 
 class TestRequestValidator:

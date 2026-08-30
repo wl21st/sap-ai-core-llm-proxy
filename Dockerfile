@@ -56,10 +56,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application source
-COPY proxy_server.py proxy_helpers.py ./
-COPY auth ./auth
-COPY config ./config
-COPY utils ./utils
+COPY src ./src
 
 # Expose default port
 EXPOSE 3001
@@ -76,4 +73,4 @@ ENV CONFIG_PATH=/app/config.json \
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -fsS http://localhost:${PORT}/v1/models || exit 1
 
 # Start the proxy server (host/port can be changed via env)
-CMD ["python", "proxy_server.py", "--config", "/app/config.json"]
+CMD ["python", "-m", "saip", "--config", "/app/config.json"]

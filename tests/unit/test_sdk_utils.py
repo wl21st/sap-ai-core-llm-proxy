@@ -4,14 +4,14 @@ from unittest.mock import Mock, patch, MagicMock
 import requests
 from diskcache import Cache
 
-from utils.sdk_utils import (
+from saip.utils.sdk_utils import (
     fetch_all_deployments,
     fetch_deployment_url,
     extract_deployment_id,
     _clear_client_caches_for_testing,
 )
-from config.config_models import ServiceKey
-from utils.exceptions import (
+from saip.config.config_models import ServiceKey
+from saip.utils.exceptions import (
     DeploymentFetchError,
     AuthenticationError,
     DeploymentResolutionError,
@@ -37,8 +37,8 @@ def clear_client_caches():
     _clear_client_caches_for_testing()
 
 
-@patch("utils.sdk_utils.Cache")
-@patch("utils.sdk_utils.AIAPIV2Client")
+@patch("saip.utils.sdk_utils.Cache")
+@patch("saip.utils.sdk_utils.AIAPIV2Client")
 def test_fetch_all_deployments_basic(mock_client_cls, mock_cache_cls, mock_service_key):
     # Setup mock cache to simulate cache miss
     mock_cache = MagicMock()
@@ -92,7 +92,7 @@ def test_fetch_all_deployments_basic(mock_client_cls, mock_cache_cls, mock_servi
 
 def test_fetch_all_deployments_authentication_failure(mock_service_key):
     """Test that authentication failures are raised with proper error ID."""
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_get_client.side_effect = AuthenticationError("Invalid credentials")
 
         with pytest.raises(DeploymentFetchError) as exc_info:
@@ -108,7 +108,7 @@ def test_fetch_all_deployments_authentication_failure(mock_service_key):
 
 def test_fetch_all_deployments_authentication_failure_logging(mock_service_key, caplog):
     """Verify authentication failures are logged with error ID."""
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_get_client.side_effect = AuthenticationError("Invalid credentials")
 
         with pytest.raises(DeploymentFetchError):
@@ -126,7 +126,7 @@ def test_fetch_all_deployments_authentication_failure_logging(mock_service_key, 
 
 def test_fetch_all_deployments_network_timeout(mock_service_key):
     """Test handling of network timeouts during deployment query."""
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_client = Mock()
         mock_client.deployment.query.side_effect = requests.exceptions.Timeout(
             "Connection timed out after 30s"
@@ -143,7 +143,7 @@ def test_fetch_all_deployments_network_timeout(mock_service_key):
 
 def test_fetch_all_deployments_connection_error(mock_service_key):
     """Test handling of network connection errors."""
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_client = Mock()
         mock_client.deployment.query.side_effect = requests.exceptions.ConnectionError(
             "Failed to establish connection"
@@ -163,7 +163,7 @@ def test_fetch_all_deployments_connection_error(mock_service_key):
 
 def test_fetch_all_deployments_malformed_response(mock_service_key):
     """Test handling of unexpected deployment response structure."""
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_client = Mock()
         # Return unexpected structure (e.g., dict instead of list)
         mock_query_response = Mock()
@@ -186,14 +186,14 @@ def test_fetch_all_deployments_cache_write_failure(mock_service_key):
     mock_deployment.created_at = "2026-01-01T00:00:00Z"
     mock_deployment.details = {}
 
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_client = Mock()
         mock_query_response = Mock()
         mock_query_response.resources = [mock_deployment]
         mock_client.deployment.query.return_value = mock_query_response
         mock_get_client.return_value = mock_client
 
-        with patch("utils.sdk_utils.Cache") as mock_cache_class:
+        with patch("saip.utils.sdk_utils.Cache") as mock_cache_class:
             mock_cache = Mock(spec=Cache)
             mock_cache.__enter__ = Mock(return_value=mock_cache)
             mock_cache.__exit__ = Mock(return_value=False)
@@ -228,8 +228,8 @@ def test_fetch_all_deployments_cache_hit(mock_service_key):
         }
     ]
 
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
-        with patch("utils.sdk_utils.Cache") as mock_cache_class:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+        with patch("saip.utils.sdk_utils.Cache") as mock_cache_class:
             mock_cache = Mock(spec=Cache)
             mock_cache.__enter__ = Mock(return_value=mock_cache)
             mock_cache.__exit__ = Mock(return_value=False)
@@ -260,14 +260,14 @@ def test_fetch_all_deployments_cache_miss(mock_service_key):
     mock_deployment.created_at = "2026-01-01T00:00:00Z"
     mock_deployment.details = {}
 
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_client = Mock()
         mock_query_response = Mock()
         mock_query_response.resources = [mock_deployment]
         mock_client.deployment.query.return_value = mock_query_response
         mock_get_client.return_value = mock_client
 
-        with patch("utils.sdk_utils.Cache") as mock_cache_class:
+        with patch("saip.utils.sdk_utils.Cache") as mock_cache_class:
             mock_cache = Mock(spec=Cache)
             mock_cache.__enter__ = Mock(return_value=mock_cache)
             mock_cache.__exit__ = Mock(return_value=False)
@@ -301,14 +301,14 @@ def test_fetch_all_deployments_force_refresh(mock_service_key):
 
     cached_data = [{"id": "d123", "url": "https://old-url.com"}]
 
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_client = Mock()
         mock_query_response = Mock()
         mock_query_response.resources = [mock_deployment]
         mock_client.deployment.query.return_value = mock_query_response
         mock_get_client.return_value = mock_client
 
-        with patch("utils.sdk_utils.Cache") as mock_cache_class:
+        with patch("saip.utils.sdk_utils.Cache") as mock_cache_class:
             mock_cache = Mock(spec=Cache)
             mock_cache.__enter__ = Mock(return_value=mock_cache)
             mock_cache.__exit__ = Mock(return_value=False)
@@ -338,14 +338,14 @@ def test_fetch_all_deployments_cache_expiry(mock_service_key):
     mock_deployment.created_at = "2026-01-01T00:00:00Z"
     mock_deployment.details = {}
 
-    with patch("utils.sdk_utils.AIAPIV2Client") as mock_get_client:
+    with patch("saip.utils.sdk_utils.AIAPIV2Client") as mock_get_client:
         mock_client = Mock()
         mock_query_response = Mock()
         mock_query_response.resources = [mock_deployment]
         mock_client.deployment.query.return_value = mock_query_response
         mock_get_client.return_value = mock_client
 
-        with patch("utils.sdk_utils.Cache") as mock_cache_class:
+        with patch("saip.utils.sdk_utils.Cache") as mock_cache_class:
             mock_cache = Mock(spec=Cache)
             mock_cache.__enter__ = Mock(return_value=mock_cache)
             mock_cache.__exit__ = Mock(return_value=False)
@@ -470,7 +470,7 @@ def test_extract_deployment_id_with_query_and_fragment():
     assert "#" not in deployment_id
 
 
-@patch("utils.sdk_utils.AIAPIV2Client")
+@patch("saip.utils.sdk_utils.AIAPIV2Client")
 def test_fetch_all_deployments_singleton(mock_client_cls, mock_service_key):
     """Test that AIAPIV2Client is reused across multiple calls."""
     mock_client = Mock()
@@ -482,7 +482,7 @@ def test_fetch_all_deployments_singleton(mock_client_cls, mock_service_key):
     mock_client.deployment.query.return_value = mock_query_response
 
     # Call function twice with same credentials
-    with patch("utils.sdk_utils.Cache") as mock_cache_cls:
+    with patch("saip.utils.sdk_utils.Cache") as mock_cache_cls:
         mock_cache = MagicMock()
         mock_cache.__enter__.return_value.get.return_value = None
         mock_cache_cls.return_value = mock_cache
@@ -494,7 +494,7 @@ def test_fetch_all_deployments_singleton(mock_client_cls, mock_service_key):
     assert mock_client_cls.call_count == 1
 
 
-@patch("utils.sdk_utils.AICoreV2Client")
+@patch("saip.utils.sdk_utils.AICoreV2Client")
 def test_fetch_deployment_url_singleton(mock_client_cls, mock_service_key):
     """Test that AICoreV2Client is reused across multiple calls."""
     mock_client = Mock()
@@ -513,7 +513,7 @@ def test_fetch_deployment_url_singleton(mock_client_cls, mock_service_key):
     assert mock_client_cls.call_count == 1
 
 
-@patch("utils.sdk_utils.AIAPIV2Client")
+@patch("saip.utils.sdk_utils.AIAPIV2Client")
 def test_fetch_all_deployments_different_resource_groups(
     mock_client_cls, mock_service_key
 ):
@@ -527,7 +527,7 @@ def test_fetch_all_deployments_different_resource_groups(
     mock_client.deployment.query.return_value = mock_query_response
 
     # Call function with different resource groups
-    with patch("utils.sdk_utils.Cache") as mock_cache_cls:
+    with patch("saip.utils.sdk_utils.Cache") as mock_cache_cls:
         mock_cache = MagicMock()
         mock_cache.__enter__.return_value.get.return_value = None
         mock_cache_cls.return_value = mock_cache
@@ -539,7 +539,7 @@ def test_fetch_all_deployments_different_resource_groups(
     assert mock_client_cls.call_count == 2
 
 
-@patch("utils.sdk_utils.AIAPIV2Client")
+@patch("saip.utils.sdk_utils.AIAPIV2Client")
 def test_fetch_all_deployments_thread_safety(mock_client_cls, mock_service_key):
     """Test that client caching is thread-safe."""
     mock_client = Mock()
@@ -564,7 +564,7 @@ def test_fetch_all_deployments_thread_safety(mock_client_cls, mock_service_key):
     num_threads = 10
 
     def worker():
-        with patch("utils.sdk_utils.Cache") as mock_cache_cls:
+        with patch("saip.utils.sdk_utils.Cache") as mock_cache_cls:
             mock_cache = MagicMock()
             mock_cache.__enter__.return_value.get.return_value = None
             mock_cache_cls.return_value = mock_cache
@@ -582,7 +582,7 @@ def test_fetch_all_deployments_thread_safety(mock_client_cls, mock_service_key):
     assert len(call_count) == 1
 
 
-@patch("utils.sdk_utils.AICoreV2Client")
+@patch("saip.utils.sdk_utils.AICoreV2Client")
 def test_fetch_deployment_url_thread_safety(mock_client_cls, mock_service_key):
     """Test that AICoreV2Client caching is thread-safe."""
     mock_client = Mock()

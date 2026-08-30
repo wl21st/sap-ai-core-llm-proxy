@@ -1,7 +1,7 @@
 # Configuration
 APP_NAME := proxy
 UV := uv
-MAIN_SCRIPT := ./proxy_server.py
+MAIN_SCRIPT := src/saip/main.py
 ICON_FILE := assets/icon.ico
 DIST_DIR := dist
 BUILD_DIR := build
@@ -41,8 +41,8 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: default help all build build-debug build-gui build-bundle clean clean-all \
-        install install-build install-test-deps test test-cov test-verbose \
-        test-file test-pattern test-integration test-integration-smoke \
+        install install-build install-test-deps check lint format typecheck test-unit build-wheel \
+        test test-cov test-verbose test-file test-pattern test-integration test-integration-smoke \
         test-integration-streaming test-integration-model test-api build-tested \
         package sync version-show version-bump-patch version-bump-minor \
         version-bump-major tag tag-push workflow-commit-and-tag release-prepare \
@@ -58,9 +58,32 @@ all: build
 # DEPENDENCY MANAGEMENT
 # ============================================================================
 
-# Ensure dependencies are synced
+# Ensure all dependencies are synced
 sync:
-	$(UV) sync
+	$(UV) sync --all-groups
+
+# Quality and Lifecycle targets
+check: lint typecheck test-unit
+
+lint:
+	@echo "Running linter (ruff)..."
+	$(UV) run ruff check .
+
+format:
+	@echo "Running code formatting (ruff)..."
+	$(UV) run ruff format .
+
+typecheck:
+	@echo "Running type checker (basedpyright)..."
+	$(UV) run basedpyright
+
+test-unit:
+	@echo "Running unit tests..."
+	$(UV) run pytest tests/unit/ -v
+
+build-wheel:
+	@echo "Building distribution package (wheel & sdist)..."
+	$(UV) build
 
 # Add PyInstaller to project dependencies
 install:
@@ -102,13 +125,13 @@ build-gui: install-build generate-version
 # Build with dependencies bundled
 build-bundle: install-build generate-version
 	@echo "Building $(APP_NAME) with bundled dependencies..."
-	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --add-data "_version.txt:." --collect-all your_package $(MAIN_SCRIPT)
+	$(UV) run pyinstaller $(PYINSTALLER_OPTS) --add-data "_version.txt:." --collect-all saip $(MAIN_SCRIPT)
 
 # Run tests before building (excluding integration tests)
 test:
 	@echo "Running tests (excluding integration tests)..."
 	@if [ -d "tests" ]; then \
-		$(UV) sync --group dev && $(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/; \
+		$(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/; \
 	else \
 		echo "Warning: tests/ directory not found. Skipping tests."; \
 	fi
@@ -116,12 +139,12 @@ test:
 # Run tests with coverage
 test-cov:
 	@echo "Running tests with coverage..."
-	$(UV) sync --group dev && $(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/ --cov=proxy_server --cov=proxy_helpers --cov-report=html --cov-report=term-missing
+	$(UV) run pytest tests/unit/ --cov=src/saip --cov-report=html --cov-report=term-missing
 
 # Run tests in verbose mode
 test-verbose:
 	@echo "Running tests (verbose)..."
-	$(UV) sync --group dev && $(UV) run pytest -v
+	$(UV) run pytest -v
 
 # Run specific test file
 test-file:
@@ -130,7 +153,7 @@ test-file:
 		echo "Error: Please specify FILE=path/to/test_file.py"; \
 		exit 1; \
 	fi
-	$(UV) sync --group dev && $(UV) run pytest $(FILE) -v
+	$(UV) run pytest $(FILE) -v
 
 # Run tests matching a pattern
 test-pattern:
@@ -139,22 +162,22 @@ test-pattern:
 		echo "Error: Please specify PATTERN=your_pattern"; \
 		exit 1; \
 	fi
-	$(UV) sync --group dev && $(UV) run pytest -k $(PATTERN) -v
+	$(UV) run pytest -k $(PATTERN) -v
 
 # Run integration tests
 test-integration:
 	@echo "Running integration tests against localhost..."
-	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m real -v
+	$(UV) run pytest tests/integration/ -m real -v
 
 # Run integration smoke tests
 test-integration-smoke:
 	@echo "Running integration smoke tests..."
-	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m "real and smoke" -v
+	$(UV) run pytest tests/integration/ -m "real and smoke" -v
 
 # Run integration streaming tests
 test-integration-streaming:
 	@echo "Running integration streaming tests..."
-	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m "real and streaming" -v
+	$(UV) run pytest tests/integration/ -m "real and streaming" -v
 
 # Run integration tests for specific model
 test-integration-model:
@@ -164,7 +187,7 @@ test-integration-model:
 		echo "Available models: anthropic--claude-4.5-sonnet, sonnet-4.5, gpt-4.1, gpt-5, gemini-2.5-pro"; \
 		exit 1; \
 	fi
-	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
+	$(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
 
 # Run direct Bedrock API tests
 # Config path resolution: CONFIG var > SAP_AI_PROXY_CONFIG env > config.json
@@ -182,13 +205,12 @@ test-api:
 		echo "  Install: pip install gen-ai-hub-sdk"; \
 		exit 1; \
 	}
-	$(UV) sync --group dev && $(UV) run pytest tests/api/ -v -m "bedrock" \
-		--override-ini="addopts=-v --tb=short --strict-markers --disable-warnings --color=yes --cov=proxy_helpers --cov-report=html --cov-report=term-missing --cov-report=xml" \
+	$(UV) run pytest tests/api/ -v -m "bedrock" \
+		--override-ini="addopts=-v --tb=short --strict-markers --disable-warnings --color=yes --cov=src/saip --cov-report=html --cov-report=term-missing --cov-report=xml" \
 		$(if $(CONFIG),--config $(CONFIG),)
 
 # Install test dependencies
 install-test-deps:
-	@echo "Installing test dependencies..."
 	$(UV) sync --group dev
 
 # Build after testing

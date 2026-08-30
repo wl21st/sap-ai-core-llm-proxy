@@ -5,7 +5,7 @@ Tests version information retrieval functions.
 """
 
 
-from version import get_version, get_git_hash, get_version_info, get_version_string
+from saip.version import get_version, get_git_hash, get_version_info, get_version_string
 
 
 class TestVersionInfo:

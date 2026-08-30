@@ -7,7 +7,7 @@ Tests CLI argument parsing functions.
 import sys
 import pytest
 
-from cli import parse_arguments
+from saip.cli import parse_arguments
 
 
 class TestCLIArguments:
