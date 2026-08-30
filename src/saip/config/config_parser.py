@@ -242,11 +242,13 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
         pydantic.ValidationError: If the configuration is invalid
     """
     resolved_path = resolve_config_path(file_path)
-    config_dir = (
-        os.path.dirname(os.path.abspath(resolved_path))
-        if os.path.exists(resolved_path)
-        else None
-    )
+    if not os.path.exists(resolved_path):
+        raise FileNotFoundError(
+            f"Configuration file '{file_path}' not found (resolved: '{resolved_path}', "
+            f"cwd: '{os.getcwd()}')."
+        )
+
+    config_dir = os.path.dirname(os.path.abspath(resolved_path))
 
     with open(resolved_path, "r") as file:
         config_json = json.load(file)

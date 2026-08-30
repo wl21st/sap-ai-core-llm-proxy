@@ -128,17 +128,58 @@ def create_app(config_path: str) -> FastAPI:
 
 
 def main() -> None:
+    import sys
+    import os
     import uvicorn
 
     args = parse_arguments()
     config_path: str = args.config
     init_logging(debug=args.debug)
+
+    try:
+        proxy_config = load_proxy_config(config_path)
+    except FileNotFoundError:
+        logger.error(
+            "\n"
+            "================================================================================\n"
+            "❌ CONFIGURATION ERROR: Configuration file not found!\n"
+            "================================================================================\n"
+            f"Could not find configuration file '{config_path}' in:\n"
+            f"  • Current directory: {os.getcwd()}\n"
+            f"  • Parent directories up to project root\n"
+            f"  • Environment variable: SAP_AI_PROXY_CONFIG / CONFIG_PATH\n\n"
+            "💡 Troubleshooting Tips:\n"
+            "  1. Copy the example configuration to get started:\n"
+            "       cp config.json.example config.json\n"
+            "  2. Specify a custom configuration file path:\n"
+            f"       saip -c /path/to/{config_path}\n"
+            "  3. Set the SAP_AI_PROXY_CONFIG environment variable:\n"
+            f"       export SAP_AI_PROXY_CONFIG=/path/to/{config_path}\n"
+            "================================================================================"
+        )
+        sys.exit(1)
+    except Exception as e:
+        logger.error(
+            "\n"
+            "================================================================================\n"
+            "❌ CONFIGURATION ERROR: Failed to load configuration!\n"
+            "================================================================================\n"
+            f"Error details: {e}\n\n"
+            "💡 Troubleshooting Tips:\n"
+            "  1. Validate that your configuration file is valid JSON.\n"
+            "  2. Verify all referenced service key JSON files exist and have valid credentials.\n"
+            "  3. Check the schema against config.json.example.\n"
+            "================================================================================"
+        )
+        sys.exit(1)
+
     app = create_app(config_path)
-    proxy_config = load_proxy_config(config_path)
     host = proxy_config.host
     port = proxy_config.port
     if args.port is not None:
         port = args.port
+
+    logger.info(f"Starting SAP AI Core Proxy on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
