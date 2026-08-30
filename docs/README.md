@@ -25,6 +25,7 @@ Testing strategy, test plans, and test specifications.
 
 ### 🔧 [refactoring/](./refactoring/)
 Code quality, refactoring plans, and technical debt documentation.
+- **[TECHNICAL_DEBT.md](./TECHNICAL_DEBT.md)** - Comprehensive technical debt assessment, severity matrix, and remediation roadmap
 - **REFACTORING_SUMMARY.md** - Overview of refactoring efforts
 - **REFACTORING_ANALYSIS_PR21.md** - Detailed PR #21 refactoring analysis
 - **REFACTORING_QUICK_WINS.md** - Quick wins for code improvement

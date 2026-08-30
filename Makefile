@@ -38,10 +38,19 @@ ifneq ($(wildcard $(ICON_FILE)),)
     PYINSTALLER_OPTS += --icon=$(ICON_FILE)
 endif
 
-.PHONY: all build build-debug build-universal clean install test package sync \
-        version-show version-bump-patch version-bump-minor version-bump-major \
-        tag tag-push release-prepare release-github release-docker release-all \
-        workflow-commit-and-tag build-all-platforms test-api
+.DEFAULT_GOAL := help
+
+.PHONY: default help all build build-debug build-gui build-bundle clean clean-all \
+        install install-build install-test-deps test test-cov test-verbose \
+        test-file test-pattern test-integration test-integration-smoke \
+        test-integration-streaming test-integration-model test-api build-tested \
+        package sync version-show version-bump-patch version-bump-minor \
+        version-bump-major tag tag-push workflow-commit-and-tag release-prepare \
+        release-github release-docker release-docker-multiplatform \
+        release-docker-multiplatform-push release-pypi release-all workflow-patch \
+        workflow-minor workflow-major info generate-version
+
+default: help
 
 all: build
 
