@@ -43,7 +43,7 @@ tests/integration/
 
 ### Option 1: Configuration File
 
-Create [`test_config.json`](test_config.json) (copy from [`test_config.json.example`](test_config.json.example)):
+Create `test_config.json` (copy from [`test_config.json.example`](test_config.json.example)):
 
 ```json
 {
@@ -653,7 +653,7 @@ python proxy_server.py --config config.json
 export PROXY_AUTH_TOKEN="your-valid-token"
 ```
 
-Or update [`test_config.json`](test_config.json):
+Or update `test_config.json`:
 ```json
 {
   "auth_token": "your-valid-token"
@@ -664,7 +664,7 @@ Or update [`test_config.json`](test_config.json):
 
 **Error**: `Required model 'gpt-4.1' not found in models list`
 
-**Solution**: Ensure the model is configured in your proxy server's [`config.json`](../../config.json):
+**Solution**: Ensure the model is configured in your proxy server's `config.json`:
 ```json
 {
   "subAccounts": {
@@ -681,7 +681,7 @@ Or update [`test_config.json`](test_config.json):
 
 **Error**: `requests.exceptions.Timeout`
 
-**Solution**: Increase timeout in [`test_config.json`](test_config.json):
+**Solution**: Increase timeout in `test_config.json`:
 ```json
 {
   "timeout": 60
@@ -803,9 +803,9 @@ def validate_new_format(response_data: Dict[str, Any]) -> None:
 ## Related Documentation
 
 - [Main Testing Documentation](../README.md)
-- [Proxy Server Architecture](../../docs/ARCHITECTURE.md)
-- [SAP AI Core API Documentation](../../docs/SAPAICORE_API.md)
-- [Configuration Guide](../../README.md#configuration)
+- [Proxy Server Architecture](../../docs/architecture/architecture.md)
+- [SAP AI Core API Documentation](../../docs/architecture/sapaicore-api.md)
+- [Configuration Guide](../../README.md#2-configuration-configjson)
 
 ## Support
 

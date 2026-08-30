@@ -1,149 +1,131 @@
 # PROJECT KNOWLEDGE BASE
 
-**Quick Reference** for the SAP AI Core LLM Proxy project. For detailed guidance, see `CLAUDE.md`.
+**Single Source of Truth** for AI coding assistants working in the `sap-ai-core-llm-proxy` repository.
 
-**Generated:** 2026-01-19
-**Commit:** f358537
-**Branch:** main
+---
 
-## OVERVIEW
-SAP AI Core LLM Proxy - transforms SAP AI Core APIs into OpenAI/Anthropic-compatible endpoints with multi-model load balancing.
+## 1. Overview
+The **SAP AI Core LLM Proxy** transforms heterogeneous SAP AI Core APIs into standard OpenAI- and Anthropic-compatible endpoints with multi-model round-robin load balancing.
 
-## STRUCTURE
+---
+
+## 2. Codebase Structure
 ```
 ./
-├── proxy_server.py (2563 lines) - Main Flask app, endpoints, load balancing
-├── proxy_helpers.py (1430 lines) - Model detection, format conversion
-├── routers/ - FastAPI routers for individual endpoints
-├── handlers/ - Bedrock, streaming, format conversion handlers
-├── auth/ - Token management, request validation (thread-safe)
-├── config/ - Pydantic-based configuration parsing
-├── utils/ - Logging, error handlers, SDK pooling
-└── tests/ - Unit (tests/unit/) and integration (tests/integration/) tests
+├── main.py                    # FastAPI application entrypoint & app factory
+├── proxy_server.py            # Legacy/compatibility entrypoint
+├── proxy_helpers.py           # Format converters & model detection helpers
+├── load_balancer.py           # Multi-subaccount round-robin distribution
+├── routers/                   # Modular FastAPI routers
+│   ├── chat.py                # /v1/chat/completions (OpenAI format)
+│   ├── messages.py            # /v1/messages (Anthropic Messages API)
+│   ├── models.py              # /v1/models (OpenAI format)
+│   ├── embeddings.py          # /v1/embeddings (OpenAI format)
+│   └── status.py              # /health, /info, /stats observability endpoints
+├── handlers/                  # Model handlers & SSE streaming generators
+├── auth/                      # OAuth token manager (thread-safe) & request validator
+├── config/                    # Pydantic configuration parser & models
+├── utils/                     # SDK pool, logger setup, circuit breaker, retry logic
+├── docs/                      # Comprehensive repository documentation
+└── tests/                     # Test suites (unit/, api/, integration/)
 ```
 
-## WHERE TO LOOK
+---
 
-| Task | Location | Notes |
-|------|----------|-------|
-| Add endpoint | routers/ or proxy_server.py | Add Flask/FastAPI route, use verify_request_token() |
-| Add model provider | proxy_helpers.py | Add detection function + converters |
-| Modify format conversion | proxy_helpers.py:Converters | Bidirectional converters for OpenAI/Claude/Gemini |
-| Token caching | auth/token_manager.py:TokenManager | 5-min buffer before expiry, thread-safe |
-| Load balancing | proxy_server.py:load_balance_url() | Round-robin across subaccounts + deployments |
-| Configuration | config/config_parser.py | Multi-subaccount JSON config |
-| SDK client caching | utils/sdk_pool.py | Thread-safe lazy initialization |
-| Streaming | routers/messages.py, handlers/ | SSE with on-the-fly format conversion |
+## 3. Architecture & Key Implementation Details
 
-## CRITICAL IMPLEMENTATION DETAILS
+### Model Detection (`proxy_helpers.py:Detector`)
+- `is_claude_37_or_4()` — Claude 3.7/4/4.5 → uses `/converse` endpoint
+- `is_claude_model()` — All Claude models (`claude-*`, `sonnet-*`, `anthropic--*`)
+- `is_gemini_model()` — Gemini models (`gemini-*`)
 
-### Model Detection (proxy_helpers.py:Detector)
-- `is_claude_37_or_4()` - Claude 3.7/4/4.5 → uses `/converse` endpoint
-- `is_claude_model()` - All Claude models (claude-*, sonnet-*, anthropic--)
-- `is_gemini_model()` - Gemini models (gemini-*)
-
-### Endpoint Selection (based on model type)
+### Endpoint & Protocol Selection
 - **Claude 3.7/4/4.5**: `/converse` or `/converse-stream` → parsed with `convert_claude37_to_openai()`
 - **Claude 3.5/older**: `/invoke` or `/invoke-with-response-stream` → parsed with `convert_claude_to_openai()`
-- **Gemini**: `/generateContent` → parsed with `convert_gemini_to_openai()`
-- **GPT/OpenAI**: `/chat/completions` → standard format
+- **Gemini**: `/generateContent` or `/streamGenerateContent` → parsed with `convert_gemini_to_openai()`
+- **OpenAI/GPT**: `/chat/completions` → standard format
+- **Anthropic Messages API (`/v1/messages`)**: Direct Bedrock SDK dispatch with unsupported fields (`metadata`, `output_config`, `context_management`) automatically stripped.
 
-### Token Management
-- Cached per subaccount with 5-minute buffer before expiry
-- Thread-safe using `threading.Lock()`
-- Fetch from SAP AI Core OAuth endpoint per subaccount
+### Multi-Tenant Token Management & Load Balancing
+- Tokens cached per subaccount with a 5-minute safety buffer before expiry (`auth/token_manager.py`).
+- Thread-safe caching using `threading.Lock()`.
+- Load balancing rotates requests across configured subaccounts and deployment URLs with model fallback (`load_balancer.py`).
 
-### Load Balancing
-- Round-robin across subaccounts
-- Round-robin across deployment URLs within each subaccount
-- Model fallback: tries normalized model names if exact match not found
-- Counter per subaccount: `proxy_config.subaccounts[name].counter`
+### Resilience & Retries
+- Retry logic with exponential backoff on HTTP 429 / ThrottlingException using `tenacity`.
+- Automatic TLS certificate auto-discovery and recovery fallback (`utils/sdk_pool.py`).
 
-### Retry Logic
-- Only retries on rate limit errors (429, "too many tokens")
-- Exponential backoff: 4 attempts max, 4s-16s wait
-- Uses `tenacity` library with `@bedrock_retry` decorator
+---
 
-## CONVENTIONS
+## 4. Development Conventions
 
 ### Python (PEP 8)
-- Variables/functions: `snake_case` (e.g., `fetch_token`)
-- Classes: `PascalCase` (e.g., `ProxyConfig`, `TokenManager`)
-- Constants: `UPPER_SNAKE_CASE` (e.g., `DEFAULT_CLAUDE_MODEL`)
-- Private members: `_leading_underscore`
-- Type hints: Required for all function signatures
-- Import order: stdlib → third-party → SAP AI SDK imports
+- Variables & Functions: `snake_case` (e.g., `fetch_token`)
+- Classes & Models: `PascalCase` (e.g., `SubAccountConfig`, `TokenManager`)
+- Constants: `UPPER_SNAKE_CASE` (e.g., `DEFAULT_CLAUDE_MODEL`, `MAX_RETRIES`)
+- Private Members: `_leading_underscore` (e.g., `_internal_helper`)
+- Booleans: Prefix with `is_`, `has_`, `can_`, `should_` (e.g., `is_valid`)
+- Type Hints: Required for all function signatures.
 
-### Data Structures
-- Use Pydantic models for configuration (ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig)
-- Use @dataclass with field() for other data structures
+### Anti-Patterns
+1. **Never bypass token validation**: All endpoints must verify request tokens via `RequestValidator`.
+2. **Never create redundant connections**: Reuse SDK clients from `utils/sdk_pool.py`.
+3. **Never hardcode model names**: Use detection functions from `proxy_helpers.py:Detector`.
+4. **Never modify global state without locks**: Shared state must be protected by `threading.Lock()`.
 
-### Error Handling
-- Always use try-except with `logging.error()`
-- Handle HTTP 429 with conservative retry logic (tenacity)
+---
 
-### Threading
-- Use `threading.Lock` for shared state (tokens, SDK clients)
-- See `_sdk_session_lock` pattern in utils/sdk_pool.py
+## 5. Developer Commands
 
-### FastAPI/Flask Routes
-- Add `logging.info()` at start of each route handler
-- Verify tokens with `verify_request_token()` (auth/request_validator.py)
-
-## ANTI-PATTERNS (THIS PROJECT)
-
-1. **Don't bypass token validation** - All endpoints must call `verify_request_token()`
-2. **Don't create new connections per request** - Reuse SDK clients from utils/sdk_pool.py
-3. **Don't hardcode model names** - Use detection functions from proxy_helpers.py:Detector
-4. **Don't suppress type errors** - Never use `as any` or `@ts-ignore` equivalents
-5. **Don't modify global state without locks** - Use `threading.Lock` for shared variables
-
-## COMMANDS
-
-### Setup & Running
+### Environment & Dependencies
 ```bash
 uv sync                                    # Install dependencies (uses uv, not pip)
-uvx --from . sap-ai-proxy -c config.json    # Run server (primary method - recommended)
+uv sync --group dev                        # Install with development tools
+```
+
+### Running the Proxy
+```bash
+uvx --from . sap-ai-proxy -c config.json    # Run server (recommended)
 uvx --from . sap-ai-proxy -c config.json -d # Debug mode
-python proxy_server.py -c config.json    # Alternative method (legacy)
+python main.py -c config.json              # Direct run
 ```
 
 ### Testing
 ```bash
-make test                    # Unit tests only (600+ tests)
-make test-integration         # Integration tests (requires running server)
-make test-cov                # With coverage report
-uv run pytest tests/test_name.py::test_function  # Single test
+uv run pytest tests/unit/ -v               # Run all unit tests (285+ tests)
+make test                                  # Unit tests via make
+make test-integration                      # Integration tests (requires running proxy)
+uv run pytest tests/unit/ --cov=.          # Coverage report
 ```
 
-### Building
+### Linting & Formatting
 ```bash
-make build                    # Build binary with PyInstaller
-make build-tested             # Build + test
-make version-bump-patch      # Bump version (0.1.0 → 0.1.1)
+uv run ruff check .                        # Lint code with ruff
+uv run ruff check . --fix                  # Auto-fix lint issues
+uv run basedpyright                        # Type check with basedpyright
 ```
 
-## NOTES
+### Building & Releasing
+```bash
+make build-tested                          # Run tests and build PyInstaller binary
+make version-bump-patch                    # Bump patch version (0.1.0 → 0.1.1)
+make release-prepare                       # Package release archives
+make release-github                        # Publish GitHub release
+```
 
-### Known Technical Debt (High Priority)
-1. **Monolithic proxy_server.py** - 2563 lines, needs refactoring (see docs/ARCHITECTURE.md)
-2. **Hardcoded model normalization** - `normalize_model_names()` has `if False:` at line 56
-3. **Limited logging configuration** - Logging levels are hardcoded
+---
 
-### Global State
-- `proxy_config` - Loaded ProxyConfig from config.json
-- `_bedrock_clients` - Dict of cached Bedrock SDK clients per deployment ID
+## 6. Documentation Map
 
-### SDK Integration
-- Uses SAP AI SDK (`gen_ai_hub.proxy.native.amazon.clients.ClientWrapper`) for Bedrock
-- Config loaded from `~/.aicore/config.json`
-- SDK clients cached per deployment ID with thread-safe lazy initialization
-
-### Additional Documentation
-- **CLAUDE.md** - Detailed development guidance for Claude Code
-- **docs/ARCHITECTURE.md** - Comprehensive architecture documentation
-- **docs/TESTING.md** - Testing guide
-- **docs/RELEASE_WORKFLOW.md** - Release process
+- **Master Index**: [`docs/README.md`](./docs/README.md)
+- **Architecture**: [`docs/architecture/architecture.md`](./docs/architecture/architecture.md)
+- **Technical Debt**: [`docs/architecture/technical-debt.md`](./docs/architecture/technical-debt.md)
+- **Configuration & Validation**: [`docs/configuration/config-validation.md`](./docs/configuration/config-validation.md)
+- **Logging System**: [`docs/configuration/logging-system.md`](./docs/configuration/logging-system.md)
+- **Troubleshooting**: [`docs/guides/troubleshooting.md`](./docs/guides/troubleshooting.md)
+- **Release Workflows**: [`docs/guides/release-quick-start.md`](./docs/guides/release-quick-start.md)
+- **Python Conventions**: [`docs/guides/python-conventions.md`](./docs/guides/python-conventions.md)
+- **Testing Guide**: [`docs/testing/testing.md`](./docs/testing/testing.md)
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
@@ -175,16 +157,5 @@ This project is indexed by GitNexus as **sap-ai-core-llm-proxy** (6208 symbols, 
 | `gitnexus://repo/sap-ai-core-llm-proxy/clusters` | All functional areas |
 | `gitnexus://repo/sap-ai-core-llm-proxy/processes` | All execution flows |
 | `gitnexus://repo/sap-ai-core-llm-proxy/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
