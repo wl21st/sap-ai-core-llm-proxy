@@ -24,8 +24,8 @@ RUN uv sync --frozen --no-dev && \
     find /app/.venv -type d -name "*.dist-info" -exec rm -rf {}/RECORD {} + 2>/dev/null || true && \
     find /app/.venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
     find /app/.venv -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
-    # Remove pip, setuptools, wheel (not needed at runtime)
-    uv pip uninstall pip setuptools wheel -y 2>/dev/null || true
+    # Remove pip and wheel; setuptools is required by sap-ai-sdk-gen at runtime
+    uv pip uninstall pip wheel -y 2>/dev/null || true
 
 # Runtime stage - minimal image
 FROM python:3.13-slim

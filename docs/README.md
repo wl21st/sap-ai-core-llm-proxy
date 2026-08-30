@@ -1,93 +1,39 @@
-# SAP AI Core LLM Proxy - Documentation
+# SAP AI Core LLM Proxy — Documentation
 
-This directory is organized by category to help you navigate documentation quickly.
-
-## 📋 Directory Structure
-
-### 🏗️ [architecture/](./architecture/)
-High-level design and technical architecture documentation.
-- **ARCHITECTURE.md** - System overview, design decisions, and component relationships
-- **SAPAICORE_API.md** - SAP AI Core API integration details
-- **SSE_Implementation_Analysis.md** - Server-Sent Events implementation specifics
-- **SSE_Payload_Analysis.md** - SSE payload structure and formats
-
-### ⚙️ [configuration/](./configuration/)
-Configuration, logging, and system setup documentation.
-- **CONFIG_VALIDATION.md** - Configuration validation and filtering logic
-- **LOGGING_SYSTEM.md** - Logging architecture and log level configuration
-- **LOG_KEYWORDS.md** - Log keywords reference for searching and filtering
-
-### 🧪 [testing/](./testing/)
-Testing strategy, test plans, and test specifications.
-- **TESTING.md** - Testing guide and best practices
-- **TEST_COVERAGE_IMPROVEMENT_PLAN.md** - Coverage targets and improvement strategy
-- **SDK_SESSION_TESTS_SPEC.md** - SDK session testing specifications
-
-### 🔧 [refactoring/](./refactoring/)
-Code quality, refactoring plans, and technical debt documentation.
-- **REFACTORING_SUMMARY.md** - Overview of refactoring efforts
-- **REFACTORING_ANALYSIS_PR21.md** - Detailed PR #21 refactoring analysis
-- **REFACTORING_QUICK_WINS.md** - Quick wins for code improvement
-- **CONVERTERS_EXTRACTION_PLAN.md** - Plan for extracting converters module
-- **DUPLICATION_HEATMAP.md** - Code duplication severity analysis
-- **SOLID_REFACTORING_PLAN.md** - SOLID principles refactoring plan
-- **PR21_REVIEW.md** - Review notes from PR #21
-
-### 📚 [guides/](./guides/)
-Quick-start guides and usage documentation.
-- **RELEASE_QUICK_START.md** - Quick start for release procedures
-- **UVX_USAGE.md** - Universal Python Executable (UVX) usage guide
-- **UNIVERSAL_BUILD.md** - Build process documentation
-
-### 🚀 [releases/](./releases/)
-Release management and changelog information.
-- **RELEASE_WORKFLOW.md** - Release workflow and procedures
-- **CHANGELOG_UVX.md** - Changes and updates related to UVX support
-
-### 📖 [reference/](./reference/)
-Planning documents, backlogs, and reference material.
-- **Backlog.md** - Development backlog and roadmap
-- **PHASE5_IMPLEMENTATION_STATUS.md** - Phase 5 implementation progress
-- **model-manifest-plan.md** - Model manifest planning document
-- **REMOVE_DEPRECATED.md** - Deprecated features and removal plans
-
-### 🐛 [issues/](./issues/)
-Issue tracking and problem documentation.
-- Issue-specific documentation and analysis
-
-### 🧪 [tests/](./tests/)
-Test result reports and test documentation.
-- Test execution results and reports
-
-### 🗂️ [history/](./history/)
-Archived explorations and dated test reports.
-- **2026-05-16-cache-control-exploration.md** - Archived cache-control exploration notes
-- **2025-12-04-claude-code-2-0-field-support-tests.md** - Archived Claude Code field support test report
+Welcome to the documentation for the SAP AI Core LLM Proxy.
 
 ---
 
-## 🎯 Quick Navigation
+## 📋 Documentation Index
 
-**Getting Started?**
-- Start with [architecture/ARCHITECTURE.md](./architecture/ARCHITECTURE.md)
-- Then read [guides/RELEASE_QUICK_START.md](./guides/RELEASE_QUICK_START.md)
+### 🏗️ [Architecture](./architecture/)
+System design, component relationships, API specifications, and technical debt assessments.
+- **[System Architecture](./architecture/architecture.md)** — Core components, FastAPI routers, and proxy lifecycle.
+- **[SAP AI Core Hub API Reference](./architecture/sapaicore-api.md)** — Upstream endpoint specs for OpenAI, Claude, and Gemini on SAP AI Core.
+- **[Streaming & SSE Analysis](./architecture/streaming-sse-analysis.md)** — Server-Sent Events protocols and cross-provider streaming transforms.
+- **[Technical Debt & Refactoring Roadmap](./architecture/technical-debt.md)** — Critical debt analysis and SOLID converter extraction plan.
 
-**Writing Tests?**
-- Read [testing/TESTING.md](./testing/TESTING.md)
-- Check [testing/TEST_COVERAGE_IMPROVEMENT_PLAN.md](./testing/TEST_COVERAGE_IMPROVEMENT_PLAN.md)
+### ⚙️ [Configuration](./configuration/)
+Setup, configuration models, deployment validation, and structured logging.
+- **[Configuration Validation & Filtering](./configuration/config-validation.md)** — Startup model validation, mismatch detection, and deployment inspection.
+- **[Logging System & Keywords](./configuration/logging-system.md)** — Structured logger architecture, keyword dictionary, and debugging grep commands.
 
-**Configuring the System?**
-- See [configuration/CONFIG_VALIDATION.md](./configuration/CONFIG_VALIDATION.md)
-- Review [configuration/LOGGING_SYSTEM.md](./configuration/LOGGING_SYSTEM.md)
+### 📚 [Guides](./guides/)
+Developer guides, execution instructions, release workflows, and troubleshooting.
+- **[Running with uvx](./guides/uvx-usage.md)** — Recommended execution method locally and from GitHub.
+- **[Troubleshooting Guide](./guides/troubleshooting.md)** — TLS certificate auto-discovery, auth error recovery, and rate limit handling.
+- **[Release Quick Start & Packaging](./guides/release-quick-start.md)** — Versioning, standalone binary builds, make targets, and release steps.
+- **[Python Coding Conventions](./guides/python-conventions.md)** — PEP 8 style guide, naming rules, type annotations, and module vs class scoping.
 
-**Refactoring Code?**
-- Review [refactoring/REFACTORING_SUMMARY.md](./refactoring/REFACTORING_SUMMARY.md)
-- Check [refactoring/DUPLICATION_HEATMAP.md](./refactoring/DUPLICATION_HEATMAP.md)
+### 📖 [Reference](./reference/)
+Protocol formats, token accounting, backlogs, and payload examples.
+- **[Token Usage & Prompt Caching](./reference/token-usage-and-caching.md)** — Normalized usage metrics, extended thinking tokens, `cache_control` pass-through, and Bedrock wire formats.
+- **[Payload Conversion Examples](./reference/payload-examples.md)** — Inbound vs outbound payloads and unsupported field stripping.
+- **[Model Manifest & Neutral Adapter Plan](./reference/model-manifest-plan.md)** — Neutral adapter and declarative model manifest design.
+- **[Development Backlog](./reference/backlog.md)** — Active roadmap and planned features.
 
-**Planning Work?**
-- Check [reference/Backlog.md](./reference/Backlog.md)
-- See [reference/PHASE5_IMPLEMENTATION_STATUS.md](./reference/PHASE5_IMPLEMENTATION_STATUS.md)
-
----
-
-**Last Updated:** 2026-01-19
+### 🧪 [Testing](./testing/)
+Testing guidelines, pytest markers, and test suite execution.
+- **[Testing Guide](./testing/testing.md)** — Running unit, integration, and direct API test suites.
+- **[Direct Bedrock API Tests](../tests/api/README.md)** — Direct Bedrock SDK test suite and unsupported field proofs.
+- **[Integration Tests](../tests/integration/README.md)** — End-to-end localhost integration tests and response validators.

@@ -5,17 +5,17 @@ description = "SAP AI Core Service Proxy Server"
 readme = "README.md"
 requires-python = "==3.13.*"
 dependencies = [
-    "aiobotocore>=2.24.0",
-    "boto3>=1.34.0",
-    "fastapi>=0.139.0,<0.140.0",
-    "httpx>=0.27.0",
-    "pydantic>=2.13.4,<3.0.0",
-    "sap-ai-sdk-gen>=6.10.0",
-    "tenacity>=9.0.0",
+    "aiobotocore>=3.9.0",
+    "boto3>=1.43.0",
+    "fastapi>=0.141.0,<0.142.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5,<3.0.0",
+    "sap-ai-sdk-gen>=7.2.0",
+    "tenacity>=9.1.4",
     "requests>=2.34.2",
-    "uvicorn>=0.51.0,<0.52.0",
+    "uvicorn>=0.52.0,<0.53.0",
     "diskcache>=5.6.3",
-    "filelock>=3.30.2",
+    "filelock>=3.32.4",
 ]
 
 [project.scripts]
@@ -24,23 +24,23 @@ sap-ai-inspect = "inspect_deployments:main"
 
 [dependency-groups]
 dev = [
-    "basedpyright>=1.39.7,<2.0.0",
+    "basedpyright>=1.39.10,<2.0.0",
     "black>=26.5.1",
-    "mypy>=1.19.1",
+    "mypy>=2.3.1",
     "pip-audit>=2.10.1",
-    "pylint>=4.0.4",
-    "pytest>=9.0.2",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=7.0.0",
+    "pylint>=4.0.8",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
     "pytest-mock>=3.15.1",
-    "pyright>=1.1.410,<2.0.0",
-    "ruff>=0.15.17,<0.16.0",
+    "pyright>=1.1.411,<2.0.0",
+    "ruff>=0.16.0,<0.17.0",
     "types-requests>=2.33.0",
-    "pyrefly>=0.46.1",
+    "pyrefly>=1.2.0",
     "diskcache-stubs",
 ]
 build = [
-    "pyinstaller>=6.20.0",
+    "pyinstaller>=6.22.2",
 ]
 
 [tool.uv]
