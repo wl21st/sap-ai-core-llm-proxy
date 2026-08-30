@@ -24,13 +24,10 @@ def get_version_info() -> tuple[str, str]:
     """
     # First, try to read from _version.txt (for PyInstaller builds)
     try:
-        # Check if we're running in PyInstaller bundle
         if getattr(sys, "frozen", False):
-            # Running in PyInstaller bundle
             bundle_dir = sys._MEIPASS
             version_file = os.path.join(bundle_dir, "_version.txt")
         else:
-            # Running in normal Python
             version_file = "_version.txt"
 
         if os.path.exists(version_file):
@@ -42,26 +39,48 @@ def get_version_info() -> tuple[str, str]:
     except Exception:
         pass
 
-    # Fallback: Read from pyproject.toml and git (development mode)
+    # Fallback 1: Try importlib.metadata
     version = "unknown"
     git_hash = "unknown"
 
-    # Try to get version from pyproject.toml
     try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib
-        except ImportError:
-            tomllib = None
+        from importlib.metadata import version as pkg_version
 
-    if tomllib:
+        version = pkg_version("sap-ai-core-llm-proxy")
+    except Exception:
+        pass
+
+    # Fallback 2: Read from pyproject.toml
+    if version == "unknown":
         try:
-            with open("pyproject.toml", "rb") as f:
-                data = tomllib.load(f)
-                version = data.get("project", {}).get("version", "unknown")
-        except Exception:
-            pass
+            import tomllib
+        except ImportError:
+            try:
+                import tomli as tomllib
+            except ImportError:
+                tomllib = None
+
+        if tomllib:
+            candidate_dirs = [os.getcwd(), os.path.dirname(os.path.abspath(__file__))]
+            for base_dir in candidate_dirs:
+                curr = base_dir
+                for _ in range(5):
+                    toml_path = os.path.join(curr, "pyproject.toml")
+                    if os.path.exists(toml_path):
+                        try:
+                            with open(toml_path, "rb") as f:
+                                data = tomllib.load(f)
+                                version = data.get("project", {}).get("version", "unknown")
+                            if version != "unknown":
+                                break
+                        except Exception:
+                            pass
+                    parent = os.path.dirname(curr)
+                    if parent == curr:
+                        break
+                    curr = parent
+                if version != "unknown":
+                    break
 
     # Try to get git hash
     try:

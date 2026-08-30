@@ -5,6 +5,8 @@ This module handles loading and parsing configuration from JSON files.
 """
 
 import json
+import os
+from pathlib import Path
 import re
 from logging import Logger
 
@@ -180,6 +182,51 @@ def apply_model_filters(
     return filtered_models, filtered_info
 
 
+def resolve_config_path(file_path: str) -> str:
+    """Resolve configuration file path with fallback to environment and parent dirs.
+
+    Order of resolution:
+    1. file_path as-is if it exists
+    2. SAP_AI_PROXY_CONFIG or CONFIG_PATH environment variable if set and exists
+    3. Search parent directories of current working directory
+    4. Search parent directories of the saip package (up to project root)
+    """
+    if os.path.exists(file_path):
+        return file_path
+
+    # Check env vars
+    for env_var in ("SAP_AI_PROXY_CONFIG", "CONFIG_PATH"):
+        env_val = os.environ.get(env_var)
+        if env_val and os.path.exists(env_val):
+            return env_val
+
+    # If relative, search parent directories
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        # Check from cwd up
+        curr = Path.cwd().resolve()
+        for _ in range(5):
+            p = curr / file_path
+            if p.exists():
+                return str(p)
+            if curr.parent == curr:
+                break
+            curr = curr.parent
+
+        # Check from package dir up
+        pkg_dir = Path(__file__).resolve().parent
+        curr = pkg_dir
+        for _ in range(5):
+            p = curr / file_path
+            if p.exists():
+                return str(p)
+            if curr.parent == curr:
+                break
+            curr = curr.parent
+
+    return file_path
+
+
 def load_proxy_config(file_path: str) -> ProxyConfig:
     """Load configuration from a JSON file with support for multiple subAccounts.
 
@@ -194,7 +241,14 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
         json.JSONDecodeError: If the file contains invalid JSON
         pydantic.ValidationError: If the configuration is invalid
     """
-    with open(file_path, "r") as file:
+    resolved_path = resolve_config_path(file_path)
+    config_dir = (
+        os.path.dirname(os.path.abspath(resolved_path))
+        if os.path.exists(resolved_path)
+        else None
+    )
+
+    with open(resolved_path, "r") as file:
         config_json = json.load(file)
 
     # Validate with Pydantic
@@ -275,7 +329,7 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
 
     # Parse subaccounts: load service keys and build mappings
     for sub_name, sub_account_config in proxy_config.subaccounts.items():
-        _load_service_key_for_subaccount(sub_account_config)
+        _load_service_key_for_subaccount(sub_account_config, config_dir=config_dir)
         _build_mapping_for_subaccount(sub_account_config)
         _dump_subaccount_config(sub_account_config)
 
@@ -296,13 +350,22 @@ def load_proxy_config(file_path: str) -> ProxyConfig:
     return proxy_config
 
 
-def _load_service_key_for_subaccount(sub_account_config: SubAccountConfig):
+def _load_service_key_for_subaccount(
+    sub_account_config: SubAccountConfig, config_dir: Optional[str] = None
+):
     """Load service key from file for a subaccount.
 
     Args:
         sub_account_config: The subaccount config to update
+        config_dir: Optional directory where the config file is located
     """
-    with open(sub_account_config.service_key_json, "r") as service_key_file:
+    key_path = sub_account_config.service_key_json
+    if not os.path.exists(key_path) and config_dir:
+        candidate = os.path.join(config_dir, key_path)
+        if os.path.exists(candidate):
+            key_path = candidate
+
+    with open(key_path, "r") as service_key_file:
         service_key_json = json.load(service_key_file)
 
     sub_account_config.service_key = ServiceKey(
