@@ -42,8 +42,7 @@ If your models have different names, that's OK - tests will skip unavailable mod
 
 ```bash
 # Install project dependencies (if not already done)
-cd /Users/sfuser/PycharmProjects/sap-ai-core-llm-proxy
-uv sync --extra dev
+uv sync --group dev
 ```
 
 ## Running the Tests

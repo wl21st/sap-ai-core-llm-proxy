@@ -55,11 +55,11 @@ sync:
 
 # Add PyInstaller to project dependencies
 install:
-	$(UV) add --optional build pyinstaller
+	$(UV) add --group build pyinstaller
 
 # Sync with build dependencies
 install-build:
-	$(UV) sync --extra build
+	$(UV) sync --group build
 
 # ============================================================================
 # BUILD TARGETS (Independent of versioning)
@@ -99,7 +99,7 @@ build-bundle: install-build generate-version
 test:
 	@echo "Running tests (excluding integration tests)..."
 	@if [ -d "tests" ]; then \
-		$(UV) sync --extra dev && $(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/; \
+		$(UV) sync --group dev && $(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/; \
 	else \
 		echo "Warning: tests/ directory not found. Skipping tests."; \
 	fi
@@ -107,12 +107,12 @@ test:
 # Run tests with coverage
 test-cov:
 	@echo "Running tests with coverage..."
-	$(UV) sync --extra dev && $(UV) run pytest --cov=proxy_server --cov=proxy_helpers --cov-report=html --cov-report=term-missing
+	$(UV) sync --group dev && $(UV) run pytest tests/ --ignore=tests/integration/ --ignore=tests/api/ --cov=proxy_server --cov=proxy_helpers --cov-report=html --cov-report=term-missing
 
 # Run tests in verbose mode
 test-verbose:
 	@echo "Running tests (verbose)..."
-	$(UV) sync --extra dev && $(UV) run pytest -v
+	$(UV) sync --group dev && $(UV) run pytest -v
 
 # Run specific test file
 test-file:
@@ -121,7 +121,7 @@ test-file:
 		echo "Error: Please specify FILE=path/to/test_file.py"; \
 		exit 1; \
 	fi
-	$(UV) sync --extra dev && $(UV) run pytest $(FILE) -v
+	$(UV) sync --group dev && $(UV) run pytest $(FILE) -v
 
 # Run tests matching a pattern
 test-pattern:
@@ -130,22 +130,22 @@ test-pattern:
 		echo "Error: Please specify PATTERN=your_pattern"; \
 		exit 1; \
 	fi
-	$(UV) sync --extra dev && $(UV) run pytest -k $(PATTERN) -v
+	$(UV) sync --group dev && $(UV) run pytest -k $(PATTERN) -v
 
 # Run integration tests
 test-integration:
 	@echo "Running integration tests against localhost..."
-	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -v
+	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m real -v
 
 # Run integration smoke tests
 test-integration-smoke:
 	@echo "Running integration smoke tests..."
-	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m "real and smoke" -v
+	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m "real and smoke" -v
 
 # Run integration streaming tests
 test-integration-streaming:
 	@echo "Running integration streaming tests..."
-	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m "real and streaming" -v
+	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m "real and streaming" -v
 
 # Run integration tests for specific model
 test-integration-model:
@@ -155,7 +155,7 @@ test-integration-model:
 		echo "Available models: anthropic--claude-4.5-sonnet, sonnet-4.5, gpt-4.1, gpt-5, gemini-2.5-pro"; \
 		exit 1; \
 	fi
-	$(UV) sync --extra dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
+	$(UV) sync --group dev && $(UV) run pytest tests/integration/ -m real -k "$(MODEL)" -v
 
 # Run direct Bedrock API tests
 # Config path resolution: CONFIG var > SAP_AI_PROXY_CONFIG env > config.json
@@ -173,14 +173,14 @@ test-api:
 		echo "  Install: pip install gen-ai-hub-sdk"; \
 		exit 1; \
 	}
-	$(UV) sync --extra dev && $(UV) run pytest tests/api/ -v -m "bedrock" \
+	$(UV) sync --group dev && $(UV) run pytest tests/api/ -v -m "bedrock" \
 		--override-ini="addopts=-v --tb=short --strict-markers --disable-warnings --color=yes --cov=proxy_helpers --cov-report=html --cov-report=term-missing --cov-report=xml" \
 		$(if $(CONFIG),--config $(CONFIG),)
 
 # Install test dependencies
 install-test-deps:
 	@echo "Installing test dependencies..."
-	$(UV) sync --extra dev
+	$(UV) sync --group dev
 
 # Build after testing
 build-tested: test build

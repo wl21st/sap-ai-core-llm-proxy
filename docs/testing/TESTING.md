@@ -203,7 +203,7 @@ make install-test-deps
 ### Import Errors
 ```bash
 # Reinstall in development mode
-uv sync --extra dev
+uv sync --group dev
 ```
 
 ### Coverage Report Not Generated

@@ -175,10 +175,10 @@ See `AGENTS.md` for quick command reference. Detailed explanations below.
 uv sync
 
 # Install with dev dependencies
-uv sync --extra dev
+uv sync --group dev
 
 # Install build dependencies
-uv sync --extra build
+uv sync --group build
 ```
 
 #### Running the Server

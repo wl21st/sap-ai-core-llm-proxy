@@ -63,7 +63,7 @@ The test suite covers the following components:
 
 ```bash
 # Using uv (recommended)
-uv sync --extra dev
+uv sync --group dev
 
 # Or using pip
 pip install -e ".[dev]"
@@ -225,7 +225,7 @@ If you encounter import errors:
 
 ```bash
 # Ensure the package is installed in development mode
-uv sync --extra dev
+uv sync --group dev
 
 # Or
 pip install -e ".[dev]"
