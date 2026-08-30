@@ -19,7 +19,7 @@ def load_config(file_path):
     logger.info(f"Loading configuration from {file_path}")
     with open(file_path, 'r') as file:
         config = json.load(file)
-    logger.debug(f"Configuration loaded successfully")
+    logger.debug("Configuration loaded successfully")
     return config
 
 # Load configuration

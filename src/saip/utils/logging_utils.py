@@ -16,6 +16,10 @@ import os
 import shutil
 import threading
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastapi import Request
 
 DEFAULT_LOG_FOLDER = "logs"
 ARCHIVE_AGE_HOURS = 24  # 1 day in hours

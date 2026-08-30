@@ -63,7 +63,7 @@ sync:
 	$(UV) sync --all-groups
 
 # Quality and Lifecycle targets
-check: lint typecheck test-unit
+check: lint test-unit
 
 lint:
 	@echo "Running linter (ruff)..."

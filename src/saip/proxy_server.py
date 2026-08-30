@@ -5,10 +5,24 @@ from botocore.exceptions import ClientError  # noqa: F401 - used in bedrock_hand
 
 from saip.auth import RequestValidator  # noqa: F401 - re-exported for tests
 from saip.auth.token_manager import TokenManager  # noqa: F401 - used by tests via proxy_server.TokenManager
-
-# Import from new modular structure
+from saip.cli import parse_arguments  # noqa: F401 - re-exported for tests
 from saip.config import ProxyConfig, ProxyGlobalContext
+from saip.handlers.model_handlers import (
+    handle_claude_request as _handle_claude_request,
+    handle_default_request as _handle_default_request,
+    handle_gemini_request as _handle_gemini_request,
+)
+from saip.handlers.streaming_handler import (
+    get_claude_stop_reason_from_gemini_chunk,  # noqa: F401 - re-exported for tests
+    get_claude_stop_reason_from_openai_chunk,  # noqa: F401 - re-exported for tests
+    parse_sse_response_to_claude_json as _parse_sse_response_to_claude_json,
+)
+from saip.load_balancer import (
+    load_balance_url as _load_balance_url,
+    resolve_model_name as _resolve_model_name,
+)
 from saip.utils.logging_utils import get_server_logger, get_transport_logger
+from saip.utils.sdk_pool import get_bedrock_client  # noqa: F401 - re-exported for downstream use
 
 # Initialize token logger (will be configured on first use)
 logger: Logger = get_server_logger(__name__)
@@ -16,8 +30,6 @@ transport_logger: Logger = get_transport_logger(__name__)
 token_usage_logger: Logger = get_server_logger("token_usage")
 
 ctx: ProxyGlobalContext
-
-from saip.utils.sdk_pool import get_bedrock_client  # noqa: F401,E402 - re-exported for downstream use
 
 API_VERSION_2023_05_15 = "2023-05-15"
 API_VERSION_2024_12_01_PREVIEW = "2024-12-01-preview"
@@ -67,18 +79,6 @@ def format_embedding_response(response, model):
     }
 
 
-# Version utilities - extracted to version.py
-# CLI argument parsing - extracted to cli.py
-from saip.load_balancer import (
-    load_balance_url as _load_balance_url,
-)
-
-# Load balancing - extracted to load_balancer.py
-from saip.load_balancer import (
-    resolve_model_name as _resolve_model_name,
-)
-
-
 def resolve_model_name(model_name):
     """Resolve model name with backward-compatible wrapper."""
     return _resolve_model_name(model_name, proxy_config)
@@ -93,33 +93,9 @@ def load_balance_url(model):
     return _load_balance_url(model, proxy_config)
 
 
-# CLI helpers - re-exported for backward-compatible test imports
-from saip.cli import parse_arguments  # noqa: F401 - re-exported for tests
-
-
-# Streaming helpers - extracted to handlers/streaming_handler.py
-from saip.handlers.streaming_handler import (
-    parse_sse_response_to_claude_json as _parse_sse_response_to_claude_json,
-    get_claude_stop_reason_from_gemini_chunk,  # noqa: F401 - re-exported for tests
-    get_claude_stop_reason_from_openai_chunk,  # noqa: F401 - re-exported for tests
-)
-
-
 def parse_sse_response_to_claude_json(response_text):
     """Parse SSE response to Claude JSON - backward-compatible wrapper."""
     return _parse_sse_response_to_claude_json(response_text)
-
-
-# Model handlers - extracted to handlers/model_handlers.py
-from saip.handlers.model_handlers import (
-    handle_claude_request as _handle_claude_request,
-)
-from saip.handlers.model_handlers import (
-    handle_default_request as _handle_default_request,
-)
-from saip.handlers.model_handlers import (
-    handle_gemini_request as _handle_gemini_request,
-)
 
 
 def handle_claude_request(payload, model="3.5-sonnet"):

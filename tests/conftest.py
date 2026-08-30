@@ -41,12 +41,12 @@ def clean_cache():
     before_count = 0
     try:
         before_count = clear_deployment_cache()
-    except:
+    except Exception:
         pass
 
     yield before_count
 
     try:
         clear_deployment_cache()
-    except:
+    except Exception:
         pass

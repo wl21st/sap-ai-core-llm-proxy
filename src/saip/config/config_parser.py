@@ -161,7 +161,7 @@ def apply_model_filters(
             )
             if not matches_include:
                 keep_model = False
-                filter_reason = f"did not match include_filters"
+                filter_reason = "did not match include_filters"
 
         # Step 2: Apply exclude_filters (if model passed include or no include filters)
         # Remove any models that match exclude patterns

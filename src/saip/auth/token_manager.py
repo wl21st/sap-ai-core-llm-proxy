@@ -148,7 +148,7 @@ class TokenManager:
 
         except requests.exceptions.Timeout as err:
             logger.error(f"Timeout fetching token from {token_url}: {err}")
-            raise TimeoutError(f"Timeout connecting to token endpoint") from err
+            raise TimeoutError("Timeout connecting to token endpoint") from err
 
         except requests.exceptions.HTTPError as err:
             logger.error(f"HTTP error fetching token: {err.response.status_code}")

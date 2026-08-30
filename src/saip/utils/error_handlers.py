@@ -33,7 +33,7 @@ def handle_http_429_error(http_err: HTTPError, context: str = "request") -> tupl
         ...         return handle_http_429_error(e, "chat completion")
     """
     logger.error(f"HTTP 429 Rate Limit Error for {context}")
-    logger.error(f"HTTP 429 Response Headers:")
+    logger.error("HTTP 429 Response Headers:")
 
     # Dump all response headers to console for debugging
     for header_name, header_value in http_err.response.headers.items():

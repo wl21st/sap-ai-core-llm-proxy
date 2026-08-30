@@ -964,7 +964,7 @@ class Converters:
             return 'data: {"error": "Invalid JSON format"}\n\n'
         except Exception as e:
             logger.error(f"Error processing chunk: {e}")
-            return f'data: {{"error": "Error processing chunk"}}\n\n'
+            return 'data: {"error": "Error processing chunk"}\n\n'
 
     @staticmethod
     def convert_claude37_chunk_to_openai(claude_chunk, model_name, stream_id=None):

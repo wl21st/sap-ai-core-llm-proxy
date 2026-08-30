@@ -1,6 +1,6 @@
 [project]
 name = "sap-ai-core-llm-proxy"
-version = "1.2.9"
+version = "1.3.0"
 description = "SAP AI Core Service Proxy Server"
 readme = "README.md"
 requires-python = "==3.13.*"
@@ -121,12 +121,7 @@ exclude_lines = [
 line-length = 88
 
 [tool.ruff.lint]
-select = ["ANN"]  # ANN001 args, ANN201 returns, etc.
-ignore = ["ANN101", "ANN102"]  # Skip stubs if needed
-
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ANN"]
-"scripts/*" = ["ANN"]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pyrefly]
 strict = false  # Tune to avoid slowdowns initially

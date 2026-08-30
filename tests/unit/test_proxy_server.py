@@ -20,10 +20,19 @@ import requests.exceptions
 
 # Import the module under test
 from saip import proxy_server
+from saip.auth import TokenManager, RequestValidator
+from saip.config import (
+    ServiceKey,
+    TokenInfo,
+    SubAccountConfig,
+    ProxyConfig,
+    load_proxy_config,
+)
+from saip.load_balancer import resolve_model_name, load_balance_url, reset_counters
 from saip.proxy_helpers import Detector, Converters
+from saip.utils.error_handlers import handle_http_429_error
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from saip.load_balancer import resolve_model_name, load_balance_url, reset_counters
 
 # Create convenience aliases for the test functions
 is_claude_model = Detector.is_claude_model
@@ -35,17 +44,6 @@ convert_claude_to_openai = Converters.convert_claude_to_openai
 convert_claude37_to_openai = Converters.convert_claude37_to_openai
 convert_openai_to_gemini = Converters.convert_openai_to_gemini
 convert_gemini_to_openai = Converters.convert_gemini_to_openai
-
-# Import from modular structure
-from saip.config import (
-    ServiceKey,
-    TokenInfo,
-    SubAccountConfig,
-    ProxyConfig,
-    load_proxy_config,
-)
-from saip.auth import TokenManager, RequestValidator
-from saip.utils.error_handlers import handle_http_429_error
 
 
 # ============================================================================

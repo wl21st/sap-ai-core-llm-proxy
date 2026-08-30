@@ -25,62 +25,59 @@ def get_version_info() -> tuple[str, str]:
     # First, try to read from _version.txt (for PyInstaller builds)
     try:
         if getattr(sys, "frozen", False):
-            bundle_dir = sys._MEIPASS
+            bundle_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
             version_file = os.path.join(bundle_dir, "_version.txt")
-        else:
-            version_file = "_version.txt"
-
-        if os.path.exists(version_file):
-            with open(version_file, "r") as f:
-                lines = f.read().strip().split("\n")
-                version = lines[0] if len(lines) > 0 else "unknown"
-                git_hash = lines[1] if len(lines) > 1 else "unknown"
-                return version, git_hash
+            if os.path.exists(version_file):
+                with open(version_file, "r") as f:
+                    lines = f.read().strip().split("\n")
+                    version = lines[0] if len(lines) > 0 else "unknown"
+                    git_hash = lines[1] if len(lines) > 1 else "unknown"
+                    return version, git_hash
     except Exception:
         pass
 
-    # Fallback 1: Try importlib.metadata
+    # Fallback 1: Read from pyproject.toml (development mode)
     version = "unknown"
     git_hash = "unknown"
 
     try:
-        from importlib.metadata import version as pkg_version
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            tomllib = None
 
-        version = pkg_version("sap-ai-core-llm-proxy")
-    except Exception:
-        pass
+    if tomllib:
+        candidate_dirs = [os.getcwd(), os.path.dirname(os.path.abspath(__file__))]
+        for base_dir in candidate_dirs:
+            curr = base_dir
+            for _ in range(5):
+                toml_path = os.path.join(curr, "pyproject.toml")
+                if os.path.exists(toml_path):
+                    try:
+                        with open(toml_path, "rb") as f:
+                            data = tomllib.load(f)
+                            version = data.get("project", {}).get("version", "unknown")
+                        if version != "unknown":
+                            break
+                    except Exception:
+                        pass
+                parent = os.path.dirname(curr)
+                if parent == curr:
+                    break
+                curr = parent
+            if version != "unknown":
+                break
 
-    # Fallback 2: Read from pyproject.toml
+    # Fallback 2: Try importlib.metadata (installed package)
     if version == "unknown":
         try:
-            import tomllib
-        except ImportError:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                tomllib = None
+            from importlib.metadata import version as pkg_version
 
-        if tomllib:
-            candidate_dirs = [os.getcwd(), os.path.dirname(os.path.abspath(__file__))]
-            for base_dir in candidate_dirs:
-                curr = base_dir
-                for _ in range(5):
-                    toml_path = os.path.join(curr, "pyproject.toml")
-                    if os.path.exists(toml_path):
-                        try:
-                            with open(toml_path, "rb") as f:
-                                data = tomllib.load(f)
-                                version = data.get("project", {}).get("version", "unknown")
-                            if version != "unknown":
-                                break
-                        except Exception:
-                            pass
-                    parent = os.path.dirname(curr)
-                    if parent == curr:
-                        break
-                    curr = parent
-                if version != "unknown":
-                    break
+            version = pkg_version("sap-ai-core-llm-proxy")
+        except Exception:
+            pass
 
     # Try to get git hash
     try:

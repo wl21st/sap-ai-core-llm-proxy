@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-30
+
+### Added
+- **Hatchling `src/` Layout**: Migrated entire package to `src/saip/`, cleanly encapsulating all routers, handlers, config, auth, and utils under the isolated `saip` namespace.
+- **CLI Commands & Entry Points**: Added `saip`, `sap-ai-proxy`, and `sap-ai-inspect` executable entry points configured via Hatchling in `pyproject.toml`.
+- **Package Module Execution**: Added `src/saip/__main__.py` and `src/saip/__init__.py` to support `python -m saip`.
+- **Diagnostic Scripts Directory**: Relocated standalone tools (`load_testing.py`, `test_mmyydd_logging.py`, `test_yyyymmdd_logging.py`) into top-level `scripts/`.
+- **Automatic Hierarchical Path Resolution**: Added `resolve_config_path` in `config_parser.py` and enhanced `version.py` to automatically detect `config.json`, service keys, and `pyproject.toml` when run from subdirectories or IDEs like PyCharm.
+- **User-Friendly Startup Diagnostics**: Added formatted error messages with actionable troubleshooting tips when configuration files are missing or contain JSON syntax / Pydantic validation errors.
+- **Modernized Makefile Lifecycle**: Added standard `uv`-native targets (`make sync`, `make check`, `make lint`, `make typecheck`, `make test-unit`, `make build-wheel`).
+
+### Changed
+- **Build Backend**: Switched build backend from `setuptools` to `hatchling.build` with auto-discovery in `pyproject.toml`.
+- **Configuration Consolidation**: Retired `pytest.ini` and consolidated test running and coverage configurations directly into `pyproject.toml`.
+- **Namespaced Imports**: Updated all module imports across source, standalone scripts, and test suites to `saip.*`.
+- **Dockerfile & PyInstaller**: Updated `Dockerfile` to copy `src/` and run `python -m saip`, and updated `proxy.spec` to target `src/saip/main.py`.
+- **Test Organization**: Relocated root test files (`test_proxy_server.py`, `test_proxy_helpers.py`, `test_conservative_retry.py`, `test_config_parser.py`, `test_helpers.py`, `test_proxy_server_extended.py`) into `tests/unit/`.
+
+### Fixed
+- **PyCharm / Subdirectory Startup Error**: Fixed `FileNotFoundError: config.json` when running `proxy_server.py` or `main.py` directly from IDEs with non-root working directories.
+
 ## [1.2.7] - 2025-12-30
 
 ### Fixed
