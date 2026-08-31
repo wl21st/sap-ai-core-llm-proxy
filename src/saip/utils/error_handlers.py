@@ -1,0 +1,57 @@
+"""
+Error handling utilities for SAP AI Core LLM Proxy.
+
+This module provides consistent error handling across all endpoints.
+"""
+
+import logging
+from requests.exceptions import HTTPError
+from saip.utils.logging_utils import get_server_logger
+
+logger: logging.Logger = get_server_logger(__name__)
+
+
+def handle_http_429_error(http_err: HTTPError, context: str = "request") -> tuple:
+    """Handle HTTP 429 (Too Many Requests) errors consistently across all endpoints.
+
+    This function logs detailed information about rate limit errors and returns
+    a plain tuple of (response_dict, status_code) suitable for use in any framework.
+
+    Args:
+        http_err: The HTTPError exception from the requests library.
+        context: Description of the request context for logging (e.g., "embedding request").
+
+    Returns:
+        A tuple of (dict, int) — error body and status code 429.
+
+    Example:
+        >>> try:
+        ...     response = requests.post(url, ...)
+        ...     response.raise_for_status()
+        ... except requests.exceptions.HTTPError as e:
+        ...     if e.response.status_code == 429:
+        ...         return handle_http_429_error(e, "chat completion")
+    """
+    logger.error(f"HTTP 429 Rate Limit Error for {context}")
+    logger.error("HTTP 429 Response Headers:")
+
+    # Dump all response headers to console for debugging
+    for header_name, header_value in http_err.response.headers.items():
+        logger.error(f"  {header_name}: {header_value}")
+
+    # Log response body if available
+    try:
+        response_body = http_err.response.text
+        logger.error(f"HTTP 429 Response Body: {response_body}")
+    except Exception as body_err:
+        logger.error(f"Could not read 429 response body: {body_err}")
+
+    # Return 429 error to client with retry information
+    error_response = {
+        "error": "Rate limit exceeded",
+        "status_code": 429,
+        "message": "Too many requests. Please retry after some time.",
+        "headers": dict(http_err.response.headers),
+    }
+
+    return error_response, 429

@@ -1,4 +1,4 @@
-from proxy_helpers import Detector
+from saip.proxy_helpers import Detector
 
 
 class TestExtractVersion:

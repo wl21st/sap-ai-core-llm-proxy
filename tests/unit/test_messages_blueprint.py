@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch, Mock
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
-from routers.messages import router
+from saip.routers.messages import router
 
 
 def _make_app(proxy_config=None, proxy_context=None):
@@ -36,8 +36,8 @@ def client(mock_proxy_state):
     return TestClient(app, raise_server_exceptions=False)
 
 
-@patch("routers.messages.verify_request_token", return_value=True)
-@patch("routers.messages.load_balance_url", side_effect=ValueError("Model not found"))
+@patch("saip.routers.messages.verify_request_token", return_value=True)
+@patch("saip.routers.messages.load_balance_url", side_effect=ValueError("Model not found"))
 def test_missing_model_returns_404(mock_load_balance, mock_validate, client):
     response = client.post("/v1/messages", json={"model": "missing-model"})
 
@@ -69,12 +69,12 @@ class TestSDKReAuthenticationRetry:
         app = _make_app(proxy_config=mock_config, proxy_context=mock_ctx)
         return TestClient(app, raise_server_exceptions=False), mock_config, mock_ctx
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.invalidate_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_proxy_claude_request_sdk_retries_on_401_non_streaming(
         self,
         mock_extract_id,
@@ -106,9 +106,8 @@ class TestSDKReAuthenticationRetry:
         second_response = Mock()
         second_response.get.return_value = {"HTTPStatusCode": 200, "body": MagicMock()}
 
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
-            with patch(
-                "routers.messages.read_response_body_stream",
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
+            with patch("saip.routers.messages.read_response_body_stream",
                 return_value='{"content": [{"text": "Hello"}], "type": "message"}',
             ):
                 mock_invoke.side_effect = [first_response, second_response]
@@ -126,12 +125,12 @@ class TestSDKReAuthenticationRetry:
                 assert mock_invalidate_client.called
                 assert mock_invoke.call_count == 2
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.invalidate_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_proxy_claude_request_sdk_retries_on_403_non_streaming(
         self,
         mock_extract_id,
@@ -163,9 +162,8 @@ class TestSDKReAuthenticationRetry:
         second_response = Mock()
         second_response.get.return_value = {"HTTPStatusCode": 200, "body": MagicMock()}
 
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
-            with patch(
-                "routers.messages.read_response_body_stream",
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
+            with patch("saip.routers.messages.read_response_body_stream",
                 return_value='{"content": [{"text": "Hello"}], "type": "message"}',
             ):
                 mock_invoke.side_effect = [first_response, second_response]
@@ -183,12 +181,12 @@ class TestSDKReAuthenticationRetry:
                 assert mock_invalidate_client.called
                 assert mock_invoke.call_count == 2
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.invalidate_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_proxy_claude_request_sdk_no_retry_on_other_errors(
         self,
         mock_extract_id,
@@ -217,7 +215,7 @@ class TestSDKReAuthenticationRetry:
         error_response = Mock()
         error_response.get.return_value = {"HTTPStatusCode": 500, "body": MagicMock()}
 
-        with patch("routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming") as mock_invoke:
             mock_invoke.return_value = error_response
 
             response = client.post(
@@ -251,12 +249,12 @@ class TestStreamingDefault:
         }.get(key, default)
         return response
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.invalidate_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_omit_stream_defaults_to_non_streaming(
         self,
         mock_extract_id,
@@ -285,12 +283,10 @@ class TestStreamingDefault:
             "body": None,
         }.get(key, default)
 
-        with patch(
-            "routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
         ) as mock_non_stream:
-            with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
-                with patch(
-                    "routers.messages.read_response_body_stream",
+            with patch("saip.routers.messages.invoke_bedrock_streaming") as mock_stream:
+                with patch("saip.routers.messages.read_response_body_stream",
                     return_value='{"content": [{"text": "Hi"}], "type": "message"}',
                 ):
                     client.post(
@@ -305,12 +301,12 @@ class TestStreamingDefault:
         mock_non_stream.assert_called_once()
         mock_stream.assert_not_called()
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.invalidate_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_explicit_stream_false_uses_non_streaming(
         self,
         mock_extract_id,
@@ -339,12 +335,10 @@ class TestStreamingDefault:
             "body": None,
         }.get(key, default)
 
-        with patch(
-            "routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
         ) as mock_non_stream:
-            with patch("routers.messages.invoke_bedrock_streaming") as mock_stream:
-                with patch(
-                    "routers.messages.read_response_body_stream",
+            with patch("saip.routers.messages.invoke_bedrock_streaming") as mock_stream:
+                with patch("saip.routers.messages.read_response_body_stream",
                     return_value='{"content": [{"text": "Hi"}], "type": "message"}',
                 ):
                     client.post(
@@ -359,12 +353,12 @@ class TestStreamingDefault:
         mock_non_stream.assert_called_once()
         mock_stream.assert_not_called()
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.invalidate_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.invalidate_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_explicit_stream_true_uses_streaming(
         self,
         mock_extract_id,
@@ -393,14 +387,11 @@ class TestStreamingDefault:
             "body": MagicMock(),
         }.get(key, default)
 
-        with patch(
-            "routers.messages.invoke_bedrock_streaming", return_value=ok_response
+        with patch("saip.routers.messages.invoke_bedrock_streaming", return_value=ok_response
         ) as mock_stream:
-            with patch(
-                "routers.messages.invoke_bedrock_non_streaming"
+            with patch("saip.routers.messages.invoke_bedrock_non_streaming"
             ) as mock_non_stream:
-                with patch(
-                    "routers.messages.generate_bedrock_streaming_response",
+                with patch("saip.routers.messages.generate_bedrock_streaming_response",
                     return_value=iter([]),
                 ):
                     client.post(
@@ -438,11 +429,11 @@ class TestSystemMessageHandling:
         app = _make_app(proxy_config=mock_config, proxy_context=mock_ctx)
         return TestClient(app, raise_server_exceptions=False), mock_config, mock_ctx
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_empty_system_message_is_removed_from_array(
         self,
         mock_extract_id,
@@ -475,8 +466,7 @@ class TestSystemMessageHandling:
             "body": MagicMock(),
         }.get(key, default)
 
-        with patch(
-            "routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
+        with patch("saip.routers.messages.invoke_bedrock_non_streaming", return_value=ok_response
         ) as mock_invoke:
             client.post(
                 "/v1/messages",
@@ -510,11 +500,11 @@ class TestSystemMessageHandling:
         assert body["messages"][0]["role"] == "user"
         assert body["messages"][0]["content"] == "Hello"
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url")
-    @patch("routers.messages.get_bedrock_client")
-    @patch("routers.messages.Detector")
-    @patch("routers.messages.extract_deployment_id")
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url")
+    @patch("saip.routers.messages.get_bedrock_client")
+    @patch("saip.routers.messages.Detector")
+    @patch("saip.routers.messages.extract_deployment_id")
     def test_system_message_is_removed_even_when_not_first_and_streaming(
         self,
         mock_extract_id,
@@ -542,11 +532,9 @@ class TestSystemMessageHandling:
             "body": MagicMock(),
         }.get(key, default)
 
-        with patch(
-            "routers.messages.invoke_bedrock_streaming", return_value=ok_response
+        with patch("saip.routers.messages.invoke_bedrock_streaming", return_value=ok_response
         ) as mock_invoke:
-            with patch(
-                "routers.messages.generate_bedrock_streaming_response",
+            with patch("saip.routers.messages.generate_bedrock_streaming_response",
                 return_value=iter([]),
             ):
                 client.post(

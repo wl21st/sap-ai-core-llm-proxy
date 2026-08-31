@@ -12,13 +12,13 @@ Tests cover:
 import pytest
 from unittest.mock import MagicMock
 
-from load_balancer import (
+from saip.load_balancer import (
     resolve_model_name,
     load_balance_url,
     reset_counters,
     _load_balance_counters,
 )
-from config import ProxyConfig, SubAccountConfig
+from saip.config import ProxyConfig, SubAccountConfig
 
 
 # ============================================================================

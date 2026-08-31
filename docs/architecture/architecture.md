@@ -43,19 +43,35 @@ graph TB
 ## 2. Component Layout
 
 ```
-├── main.py                    # Application entry point & FastAPI factory
-├── routers/                   # Modular FastAPI routers
-│   ├── chat.py                # /v1/chat/completions router
-│   ├── messages.py            # /v1/messages (Anthropic Messages API) router
-│   ├── models.py              # /v1/models router
-│   ├── embeddings.py          # /v1/embeddings router
-│   └── status.py              # /health, /info, /stats observability endpoints
-├── handlers/                  # Streaming generators and model response handlers
-├── auth/                      # OAuth token caching and request authentication
-├── config/                    # Pydantic configuration models and parser
-├── utils/                     # SDK pooling, logging setup, error handlers, retry logic
-├── load_balancer.py           # Multi-subaccount round-robin distribution
-└── proxy_helpers.py           # Format converters & model detection helpers
+├── src/
+│   └── saip/                      # Core package namespace
+│       ├── __init__.py            # Version metadata
+│       ├── __main__.py            # python -m saip entry point
+│       ├── main.py                # Application entry point & FastAPI factory
+│       ├── cli.py                 # CLI argument parsing
+│       ├── inspect_deployments.py # Deployment inspector CLI
+│       ├── load_balancer.py       # Multi-subaccount round-robin distribution
+│       ├── proxy_helpers.py       # Format converters & model detection helpers
+│       ├── proxy_server.py        # Backward-compatibility facade
+│       ├── version.py             # Version detection & Git metadata
+│       ├── routers/               # Modular FastAPI routers
+│       │   ├── chat.py            # /v1/chat/completions router
+│       │   ├── messages.py        # /v1/messages (Anthropic Messages API) router
+│       │   ├── models.py          # /v1/models router
+│       │   ├── embeddings.py      # /v1/embeddings router
+│       │   ├── logging.py         # Event logging router
+│       │   └── status.py          # /health, /info, /stats observability endpoints
+│       ├── handlers/              # Streaming generators and model response handlers
+│       ├── auth/                  # OAuth token caching and request authentication
+│       ├── config/                # Pydantic configuration models and parser
+│       └── utils/                 # SDK pooling, logging setup, error handlers, retry logic
+├── scripts/                       # Standalone diagnostic & load test scripts
+│   ├── load_testing.py            # Load testing suite
+│   ├── test_mmyydd_logging.py     # Logging format validation
+│   └── test_yyyymmdd_logging.py   # Logging format validation
+├── tests/                         # Test suites (unit, integration, api)
+├── pyproject.toml                 # Hatchling build configuration
+└── Makefile                       # Lifecycle automation
 ```
 
 ---
@@ -79,5 +95,5 @@ graph TB
 
 ## 4. Multi-Tenant Token Management & Load Balancing
 
-- **Token Manager (`auth/token_manager.py`)**: Caches OAuth tokens per SAP AI Core subaccount with a 5-minute safety buffer before expiration. Token refresh is protected with thread locks.
-- **Load Balancer (`load_balancer.py`)**: Rotates traffic across configured subaccounts and deployment URLs using round-robin distribution with model fallback.
+- **Token Manager (`src/saip/auth/token_manager.py`)**: Caches OAuth tokens per SAP AI Core subaccount with a 5-minute safety buffer before expiration. Token refresh is protected with thread locks.
+- **Load Balancer (`src/saip/load_balancer.py`)**: Rotates traffic across configured subaccounts and deployment URLs using round-robin distribution with model fallback.

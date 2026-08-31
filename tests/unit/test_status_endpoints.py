@@ -4,7 +4,7 @@ Tests for status endpoints (/health, /stats, /info).
 
 import pytest
 from fastapi.testclient import TestClient
-from main import create_app
+from saip.main import create_app
 import tempfile
 import json
 
@@ -54,8 +54,8 @@ def temp_config():
 @pytest.fixture
 def client(temp_config):
     """Create a test client with temporary config."""
-    from config import ProxyConfig, SubAccountConfig, ProxyGlobalContext
-    from utils.metrics import MetricsCollector
+    from saip.config import ProxyConfig, SubAccountConfig, ProxyGlobalContext
+    from saip.utils.metrics import MetricsCollector
     from unittest.mock import MagicMock
 
     app = create_app(temp_config)

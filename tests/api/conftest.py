@@ -14,8 +14,8 @@ import os
 import pytest
 from typing import Optional
 
-from config import ProxyConfig, SubAccountConfig
-from utils.logging_utils import get_server_logger
+from saip.config import ProxyConfig, SubAccountConfig
+from saip.utils.logging_utils import get_server_logger
 
 logger = get_server_logger(__name__)
 
@@ -50,7 +50,7 @@ def proxy_config(pytestconfig) -> Optional[ProxyConfig]:
     """Load proxy config from the resolved config path."""
     config_path = _resolve_config_path(pytestconfig)
     try:
-        from config import load_proxy_config
+        from saip.config import load_proxy_config
         config = load_proxy_config(config_path)
         logger.info(f"Loaded proxy config from {config_path} with {len(config.subaccounts)} subaccounts")
         return config
@@ -61,7 +61,7 @@ def proxy_config(pytestconfig) -> Optional[ProxyConfig]:
 
 @pytest.fixture(scope="session")
 def first_subaccount(proxy_config) -> SubAccountConfig:
-    """Get first available subaccount from config. Fails if not configured."""
+    """Get first available subaccount from saip.config. Fails if not configured."""
     if not proxy_config or not proxy_config.subaccounts:
         pytest.fail("No SAP AI Core config found. Check config.json and service_key_json path.")
     subaccount_name = next(iter(proxy_config.subaccounts.keys()))
@@ -83,7 +83,7 @@ def bedrock_client_factory(first_subaccount):
 
     def get_client(model: str, deployment_id: Optional[str] = None):
         """Get a Bedrock client for the given model."""
-        from utils.sdk_pool import get_bedrock_client
+        from saip.utils.sdk_pool import get_bedrock_client
 
         # Map test model name to deployment name
         deployment_model = MODEL_MAPPING.get(model, model)

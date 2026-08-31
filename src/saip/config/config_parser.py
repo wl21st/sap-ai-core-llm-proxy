@@ -1,0 +1,698 @@
+"""
+Configuration loading utilities for SAP AI Core LLM Proxy.
+
+This module handles loading and parsing configuration from JSON files.
+"""
+
+import json
+import os
+from pathlib import Path
+import re
+from logging import Logger
+
+from typing import Optional
+from pydantic import BaseModel, Field
+
+from saip.config.config_models import ProxyConfig, SubAccountConfig, ServiceKey, ModelFilters
+from saip.utils.logging_utils import get_server_logger
+from saip.utils.sdk_utils import (
+    extract_deployment_id,
+    fetch_deployment_url,
+    fetch_all_deployments,
+)
+from saip.utils.exceptions import (
+    ConfigValidationError,
+    DeploymentFetchError,
+)
+from saip.utils.error_ids import ErrorIDs
+from saip.proxy_helpers import MODEL_ALIASES, Detector
+
+logger: Logger = get_server_logger(__name__)
+
+
+# ============================================================================
+# PYDANTIC SCHEMAS FOR JSON VALIDATION
+# ============================================================================
+#
+# NOTE: These Pydantic models intentionally duplicate the dataclasses in
+# config_models.py. This separation serves different purposes:
+#
+# 1. **Pydantic Schemas (here)**: Used for JSON validation during config loading.
+#    - Validates raw JSON structure and types from saip.config.json
+#    - Uses camelCase field names matching the JSON format (e.g., "subAccounts")
+#    - Provides clear validation error messages for user-facing config errors
+#
+# 2. **Dataclasses (config_models.py)**: Used for runtime configuration state.
+#    - Pythonic snake_case naming (e.g., "model_to_deployment_urls")
+#    - Includes runtime-only fields not in JSON (e.g., "service_key", "token_info")
+#    - Thread-safe token management and mutable state
+#
+# This two-layer approach ensures:
+# - Clean JSON validation at the boundary (Pydantic)
+# - Clean Python objects for internal use (dataclasses)
+# - Separation of concerns between serialization and runtime state
+#
+# ============================================================================
+
+
+class ModelFiltersSchema(BaseModel):
+    """Pydantic model for model filters validation."""
+
+    include_filters: Optional[list[str]] = Field(default=None)
+    exclude_filters: Optional[list[str]] = Field(default=None)
+
+
+class SubAccountConfigSchema(BaseModel):
+    """Pydantic model for subaccount configuration validation."""
+
+    resource_group: str = "default"
+    service_key_json: str = ""
+    deployment_models: dict[str, list[str]] = Field(default_factory=dict)
+    deployment_ids: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class ProxyConfigSchema(BaseModel):
+    """Pydantic model for global proxy configuration validation."""
+
+    secret_authentication_tokens: list[str] = Field(default_factory=list)
+    port: int = 3001
+    host: str = "127.0.0.1"
+    model_filters: Optional[ModelFiltersSchema] = Field(default=None)
+    subAccounts: dict[str, SubAccountConfigSchema] = Field(default_factory=dict)
+    ca_cert_bundle: Optional[str] = Field(default=None)
+
+
+def validate_regex_patterns(
+    patterns: list[str], filter_type: str
+) -> list[re.Pattern[str]]:
+    """Validate and compile regex patterns.
+
+    Args:
+        patterns: List of regex pattern strings to validate
+        filter_type: Type of filter ('include' or 'exclude') for error messages
+
+    Returns:
+        List of compiled regex Pattern objects
+
+    Raises:
+        ConfigValidationError: If any pattern is invalid
+    """
+    compiled_patterns: list[re.Pattern[str]] = []
+
+    for pattern in patterns:
+        try:
+            compiled_pattern = re.compile(pattern)
+            compiled_patterns.append(compiled_pattern)
+        except re.error as e:
+            raise ConfigValidationError(
+                f"Invalid regex pattern in {filter_type} filters: '{pattern}' - {str(e)}"
+            )
+
+    return compiled_patterns
+
+
+def apply_model_filters(
+    models: dict[str, list[str]], filters: ModelFilters
+) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Apply model filters to a dictionary of models.
+
+    Filter precedence logic:
+    1. If include_filters exist, keep only models matching at least one pattern
+    2. Then, if exclude_filters exist, remove models matching any pattern
+
+    Args:
+        models: Dictionary mapping model names to deployment URLs
+        filters: ModelFilters object with include_filters/exclude_filters patterns
+
+    Returns:
+        Tuple of (filtered_models_dict, filtered_info_dict)
+        - filtered_models_dict: Models that passed filtering
+        - filtered_info_dict: Map of model_name -> filter_reason
+    """
+    if not filters or (not filters.include_filters and not filters.exclude_filters):
+        return models, {}
+
+    # Compile regex patterns
+    include_patterns: list[re.Pattern[str]] = []
+    exclude_patterns: list[re.Pattern[str]] = []
+
+    if filters.include_filters:
+        include_patterns = validate_regex_patterns(
+            filters.include_filters, "include_filters"
+        )
+
+    if filters.exclude_filters:
+        exclude_patterns = validate_regex_patterns(
+            filters.exclude_filters, "exclude_filters"
+        )
+
+    filtered_models: dict[str, list[str]] = {}
+    filtered_info: dict[str, str] = {}
+
+    for model_name, urls in models.items():
+        keep_model = True
+        filter_reason = ""
+
+        # Step 1: Apply include_filters first (if present)
+        # If include patterns exist, only keep models that match at least one pattern
+        if include_patterns:
+            matches_include = any(
+                pattern.search(model_name) for pattern in include_patterns
+            )
+            if not matches_include:
+                keep_model = False
+                filter_reason = "did not match include_filters"
+
+        # Step 2: Apply exclude_filters (if model passed include or no include filters)
+        # Remove any models that match exclude patterns
+        if keep_model and exclude_patterns:
+            for pattern in exclude_patterns:
+                if pattern.search(model_name):
+                    keep_model = False
+                    filter_reason = (
+                        f"matched exclude_filters pattern: {pattern.pattern}"
+                    )
+                    break
+
+        if keep_model:
+            filtered_models[model_name] = urls
+        else:
+            filtered_info[model_name] = filter_reason
+
+    return filtered_models, filtered_info
+
+
+def resolve_config_path(file_path: str) -> str:
+    """Resolve configuration file path with fallback to environment and parent dirs.
+
+    Order of resolution:
+    1. file_path as-is if it exists
+    2. SAP_AI_PROXY_CONFIG or CONFIG_PATH environment variable if set and exists
+    3. Search parent directories of current working directory
+    4. Search parent directories of the saip package (up to project root)
+    """
+    if os.path.exists(file_path):
+        return file_path
+
+    # Check env vars
+    for env_var in ("SAP_AI_PROXY_CONFIG", "CONFIG_PATH"):
+        env_val = os.environ.get(env_var)
+        if env_val and os.path.exists(env_val):
+            return env_val
+
+    # If relative, search parent directories
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        # Check from cwd up
+        curr = Path.cwd().resolve()
+        for _ in range(5):
+            p = curr / file_path
+            if p.exists():
+                return str(p)
+            if curr.parent == curr:
+                break
+            curr = curr.parent
+
+        # Check from package dir up
+        pkg_dir = Path(__file__).resolve().parent
+        curr = pkg_dir
+        for _ in range(5):
+            p = curr / file_path
+            if p.exists():
+                return str(p)
+            if curr.parent == curr:
+                break
+            curr = curr.parent
+
+    return file_path
+
+
+def load_proxy_config(file_path: str) -> ProxyConfig:
+    """Load configuration from a JSON file with support for multiple subAccounts.
+
+    Args:
+        file_path: Path to the JSON configuration file
+
+    Returns:
+        ProxyConfig instance if new format with subAccounts, otherwise raw JSON dict
+
+    Raises:
+        FileNotFoundError: If the configuration file doesn't exist
+        json.JSONDecodeError: If the file contains invalid JSON
+        pydantic.ValidationError: If the configuration is invalid
+    """
+    resolved_path = resolve_config_path(file_path)
+    if not os.path.exists(resolved_path):
+        raise FileNotFoundError(
+            f"Configuration file '{file_path}' not found (resolved: '{resolved_path}', "
+            f"cwd: '{os.getcwd()}')."
+        )
+
+    config_dir = os.path.dirname(os.path.abspath(resolved_path))
+
+    with open(resolved_path, "r") as file:
+        config_json = json.load(file)
+
+    # Validate with Pydantic
+    config_schema = ProxyConfigSchema.model_validate(config_json)
+
+    # Parse model filters if present
+    model_filters: Optional[ModelFilters] = None
+    if config_schema.model_filters:
+        model_filters = ModelFilters(
+            include_filters=config_schema.model_filters.include_filters,
+            exclude_filters=config_schema.model_filters.exclude_filters,
+        )
+        # Log filter configuration
+        include_count = (
+            len(model_filters.include_filters) if model_filters.include_filters else 0
+        )
+        exclude_count = (
+            len(model_filters.exclude_filters) if model_filters.exclude_filters else 0
+        )
+        logger.info(
+            f"Model filters configured: {include_count} include_filters, {exclude_count} exclude_filters"
+        )
+        if model_filters.include_filters:
+            logger.info(f"  Include patterns: {model_filters.include_filters}")
+        if model_filters.exclude_filters:
+            logger.info(f"  Exclude patterns: {model_filters.exclude_filters}")
+
+    # Create a proper ProxyConfig instance
+    proxy_config = ProxyConfig(
+        secret_authentication_tokens=config_schema.secret_authentication_tokens,
+        port=config_schema.port,
+        host=config_schema.host,
+        model_filters=model_filters,
+        ca_cert_bundle=config_schema.ca_cert_bundle,
+    )
+
+    # Parse each subAccount
+    for sub_name, sub_config_schema in config_schema.subAccounts.items():
+        deployment_models = sub_config_schema.deployment_models
+        models_before_filter = len(deployment_models)
+
+        # Apply model filters if configured
+        filtered_model_info: dict[str, str] = {}
+        if model_filters:
+            deployment_models, filtered_model_info = apply_model_filters(
+                deployment_models, model_filters
+            )
+
+            # Log filtering results
+            models_after_filter = len(deployment_models)
+
+            logger.info(
+                f"Subaccount '{sub_name}': {models_before_filter} models available, "
+                f"{models_after_filter} models after filtering"
+            )
+
+            if filtered_model_info:
+                logger.info(
+                    f"Subaccount '{sub_name}': Filtered out {len(filtered_model_info)} models:"
+                )
+                for model_name, reason in filtered_model_info.items():
+                    logger.info(f"  - {model_name}: {reason}")
+
+            # Warn if all models filtered out
+            if models_after_filter == 0:
+                logger.warning(
+                    f"Subaccount '{sub_name}': All models filtered out (zero models remaining)"
+                )
+
+        sub_account_config: SubAccountConfig = SubAccountConfig(
+            name=sub_name,
+            resource_group=sub_config_schema.resource_group,
+            service_key_json=sub_config_schema.service_key_json,
+            model_to_deployment_urls=deployment_models,
+            model_to_deployment_ids=sub_config_schema.deployment_ids,
+        )
+        proxy_config.subaccounts[sub_name] = sub_account_config
+
+    # Parse subaccounts: load service keys and build mappings
+    for sub_name, sub_account_config in proxy_config.subaccounts.items():
+        _load_service_key_for_subaccount(sub_account_config, config_dir=config_dir)
+        _build_mapping_for_subaccount(sub_account_config)
+        _dump_subaccount_config(sub_account_config)
+
+    # Build model to subaccounts mapping
+    proxy_config.model_to_subaccounts = {}
+    for subaccount_name, subaccount in proxy_config.subaccounts.items():
+        for model in subaccount.model_to_deployment_urls.keys():
+            if model not in proxy_config.model_to_subaccounts:
+                proxy_config.model_to_subaccounts[model] = []
+            proxy_config.model_to_subaccounts[model].append(subaccount_name)
+
+    # Log configuration
+    logger.info(
+        "Proxy configured with subaccounts: %s", list(proxy_config.subaccounts.keys())
+    )
+    logger.info("Model to subaccounts mapping: %s", proxy_config.model_to_subaccounts)
+
+    return proxy_config
+
+
+def _load_service_key_for_subaccount(
+    sub_account_config: SubAccountConfig, config_dir: Optional[str] = None
+):
+    """Load service key from file for a subaccount.
+
+    Args:
+        sub_account_config: The subaccount config to update
+        config_dir: Optional directory where the config file is located
+    """
+    key_path = sub_account_config.service_key_json
+    if not os.path.exists(key_path) and config_dir:
+        candidate = os.path.join(config_dir, key_path)
+        if os.path.exists(candidate):
+            key_path = candidate
+
+    with open(key_path, "r") as service_key_file:
+        service_key_json = json.load(service_key_file)
+
+    sub_account_config.service_key = ServiceKey(
+        client_id=service_key_json.get("clientid"),
+        client_secret=service_key_json.get("clientsecret"),
+        auth_url=service_key_json.get("url"),
+        identity_zone_id=service_key_json.get("identityzoneid"),
+        api_url=service_key_json.get("serviceurls", {}).get("AI_API_URL"),
+    )
+
+
+def _auto_discover_deployments(sub_account_config: SubAccountConfig) -> list[dict]:
+    """Auto-discover deployments from SAP AI Core and register them.
+
+    This function:
+    1. Validates service key is properly initialized
+    2. Fetches all deployments for the subaccount
+    3. Registers discovered deployments under their backend model names
+    4. Registers model aliases
+
+    Args:
+        sub_account_config: The subaccount config to discover deployments for
+
+    Returns:
+        List of discovered deployment dictionaries with keys: id, url, model_name, created_at
+
+    Raises:
+        ConfigValidationError: If service key is invalid or auto-discovery fails
+    """
+    # Check if service_key is initialized and has required fields for auto-discovery
+    has_valid_service_key = (
+        hasattr(sub_account_config, "service_key")
+        and sub_account_config.service_key is not None
+        and hasattr(sub_account_config.service_key, "api_url")
+        and sub_account_config.service_key.api_url is not None
+        and hasattr(sub_account_config.service_key, "auth_url")
+        and sub_account_config.service_key.auth_url is not None
+    )
+
+    if not has_valid_service_key:
+        logger.error(
+            f"Service key not initialized for subaccount '{sub_account_config.name}': "
+            f"missing required fields (api_url, auth_url). This may indicate an authentication error in configuration.",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
+                "subaccount": sub_account_config.name,
+            },
+        )
+        raise ConfigValidationError(
+            f"Service key not properly initialized for subaccount '{sub_account_config.name}'. "
+            f"Ensure service_key_json is configured correctly with valid credentials."
+        )
+
+    try:
+        logger.info(
+            f"Starting auto-discovery for subaccount '{sub_account_config.name}'"
+        )
+        discovered_deployments = fetch_all_deployments(
+            service_key=sub_account_config.service_key,
+            resource_group=sub_account_config.resource_group,
+        )
+
+        for dep in discovered_deployments:
+            url = dep.get("url")
+            backend_model = dep.get("model_name")
+
+            if url and backend_model:
+                # Register under raw backend model name
+                if backend_model not in sub_account_config.model_to_deployment_urls:
+                    sub_account_config.model_to_deployment_urls[backend_model] = []
+
+                if (
+                    url
+                    not in sub_account_config.model_to_deployment_urls[backend_model]
+                ):
+                    sub_account_config.model_to_deployment_urls[backend_model].append(
+                        url
+                    )
+                    logger.debug(f"Auto-discovered: {backend_model} -> {url}")
+
+                # Register aliases
+                if backend_model in MODEL_ALIASES:
+                    for alias in MODEL_ALIASES[backend_model]:
+                        if alias not in sub_account_config.model_to_deployment_urls:
+                            sub_account_config.model_to_deployment_urls[alias] = []
+
+                        if (
+                            url
+                            not in sub_account_config.model_to_deployment_urls[alias]
+                        ):
+                            sub_account_config.model_to_deployment_urls[alias].append(
+                                url
+                            )
+                            logger.debug(f"Auto-aliased: {alias} -> {url}")
+
+        return discovered_deployments
+
+    except DeploymentFetchError as e:
+        logger.error(
+            f"Auto-discovery failed for subaccount '{sub_account_config.name}': {e}. "
+            f"Check service key credentials and network connectivity.",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_AUTH_FAILED,
+                "subaccount": sub_account_config.name,
+            },
+        )
+        raise ConfigValidationError(
+            f"Auto-discovery failed for '{sub_account_config.name}': {e}"
+        ) from e
+    except Exception as e:
+        logger.error(
+            f"Unexpected error during auto-discovery for '{sub_account_config.name}': {e}",
+            extra={
+                "error_id": ErrorIDs.AUTODISCOVERY_UNEXPECTED_ERROR,
+                "subaccount": sub_account_config.name,
+            },
+        )
+        raise ConfigValidationError(
+            f"Auto-discovery failed: {e}. Check service key and network connectivity."
+        ) from e
+
+
+def _resolve_deployment_ids(
+    sub_account_config: SubAccountConfig, deployment_id_to_model: dict[str, str]
+):
+    """Resolve deployment IDs to URLs using the SDK.
+
+    This function:
+    1. Iterates through configured deployment IDs
+    2. Validates each deployment against discovered deployments
+    3. Fetches the deployment URL from SAP AI Core
+    4. Adds the URL to model_to_deployment_urls
+
+    Args:
+        sub_account_config: The subaccount config to update
+        deployment_id_to_model: Lookup map from deployment ID to backend model name
+
+    Raises:
+        ConfigValidationError: If deployment resolution fails
+    """
+    for (
+        model_name,
+        deployment_ids,
+    ) in sub_account_config.model_to_deployment_ids.items():
+        model_name = model_name.strip()
+        if model_name not in sub_account_config.model_to_deployment_urls:
+            sub_account_config.model_to_deployment_urls[model_name] = []
+
+        for deployment_id in deployment_ids:
+            deployment_id = deployment_id.strip()
+
+            # Validation: Check if deployment exists and matches model
+            if deployment_id in deployment_id_to_model:
+                backend_model = deployment_id_to_model[deployment_id]
+                is_valid, reason = Detector.validate_model_mapping(
+                    model_name, backend_model
+                )
+                if not is_valid:
+                    logger.warning(
+                        "Configuration mismatch: Model '%s' mapped to deployment '%s' which is running '%s' (%s)",
+                        model_name,
+                        deployment_id,
+                        backend_model,
+                        reason,
+                    )
+            elif deployment_id_to_model:  # Only warn if discovery succeeded
+                logger.warning(
+                    "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
+                    deployment_id,
+                    model_name,
+                )
+
+            try:
+                deployment_url = fetch_deployment_url(
+                    service_key=sub_account_config.service_key,
+                    deployment_id=deployment_id,
+                    resource_group=sub_account_config.resource_group,
+                )
+                if (
+                    deployment_url
+                    not in sub_account_config.model_to_deployment_urls[model_name]
+                ):
+                    sub_account_config.model_to_deployment_urls[model_name].append(
+                        deployment_url
+                    )
+                    logger.info(
+                        "Resolved deployment ID '%s' to URL for model '%s' in subaccount '%s'",
+                        deployment_id,
+                        model_name,
+                        sub_account_config.name,
+                    )
+            except ValueError as e:
+                logger.error(
+                    f"Invalid deployment ID '{deployment_id}' for model '{model_name}': {e}",
+                    extra={"error_id": ErrorIDs.INVALID_DEPLOYMENT_ID},
+                )
+                raise ConfigValidationError(
+                    f"Invalid deployment ID '{deployment_id}' for model '{model_name}'. "
+                    f"Check your config.json and verify deployment exists in SAP AI Core console."
+                ) from e
+            except Exception as e:
+                # Check if it's a 404 error by examining the exception
+                error_msg = str(e).lower()
+                if "404" in error_msg or "not found" in error_msg:
+                    logger.error(
+                        f"Deployment '{deployment_id}' not found for model '{model_name}'",
+                        extra={"error_id": ErrorIDs.DEPLOYMENT_NOT_FOUND},
+                    )
+                    raise ConfigValidationError(
+                        f"Deployment '{deployment_id}' not found. Verify it exists in SAP AI Core."
+                    ) from e
+
+                logger.error(
+                    f"Failed to resolve deployment '{deployment_id}': {e}",
+                    extra={"error_id": ErrorIDs.DEPLOYMENT_RESOLUTION_FAILED},
+                )
+                raise ConfigValidationError(
+                    f"Could not resolve deployment '{deployment_id}' to URL. "
+                    f"Check credentials and deployment status."
+                ) from e
+
+
+def _extract_deployment_ids_from_urls(
+    sub_account_config: SubAccountConfig, deployment_id_to_model: dict[str, str]
+):
+    """Extract deployment IDs from URLs for backward compatibility.
+
+    This function:
+    1. Iterates through configured deployment URLs
+    2. Extracts the deployment ID from each URL
+    3. Validates the deployment against discovered deployments
+    4. Adds the ID to model_to_deployment_ids
+
+    Args:
+        sub_account_config: The subaccount config to update
+        deployment_id_to_model: Lookup map from deployment ID to backend model name
+    """
+    for model_name, urls in sub_account_config.model_to_deployment_urls.items():
+        model_name = model_name.strip()
+        if model_name not in sub_account_config.model_to_deployment_ids:
+            sub_account_config.model_to_deployment_ids[model_name] = []
+
+        for url in urls:
+            deployment_url = url.strip()
+            try:
+                deployment_id = extract_deployment_id(deployment_url)
+
+                # Validation: Check if deployment exists and matches model
+                if deployment_id in deployment_id_to_model:
+                    backend_model = deployment_id_to_model[deployment_id]
+                    is_valid, reason = Detector.validate_model_mapping(
+                        model_name, backend_model
+                    )
+                    if not is_valid:
+                        logger.warning(
+                            "Configuration mismatch: Model '%s' mapped to deployment '%s' which is running '%s' (%s)",
+                            model_name,
+                            deployment_id,
+                            backend_model,
+                            reason,
+                        )
+                elif deployment_id_to_model:  # Only warn if discovery succeeded
+                    logger.warning(
+                        "Configuration warning: Deployment '%s' mapped to model '%s' not found in subaccount",
+                        deployment_id,
+                        model_name,
+                    )
+
+                if (
+                    deployment_id
+                    and deployment_id
+                    not in sub_account_config.model_to_deployment_ids[model_name]
+                ):
+                    sub_account_config.model_to_deployment_ids[model_name].append(
+                        deployment_id
+                    )
+            except ValueError as e:
+                logger.warning(
+                    "Could not extract deployment ID from URL '%s' for model '%s': %s",
+                    deployment_url,
+                    model_name,
+                    e,
+                )
+
+
+def _build_mapping_for_subaccount(sub_account_config: SubAccountConfig):
+    """Build deployment ID mapping for a subaccount.
+
+    This orchestrates the deployment mapping process:
+    1. Auto-discovers deployments from SAP AI Core
+    2. Resolves configured deployment IDs to URLs
+    3. Extracts deployment IDs from configured URLs (backward compatibility)
+
+    Args:
+        sub_account_config: The subaccount config to update
+    """
+    # Step 1: Auto-discover deployments from SAP AI Core
+    discovered_deployments = _auto_discover_deployments(sub_account_config)
+
+    # Build lookup map for validation (ID -> Model Name)
+    deployment_id_to_model = {
+        d["id"]: d.get("model_name") for d in discovered_deployments if d.get("id")
+    }
+
+    # Step 2: Resolve configured deployment IDs to URLs
+    _resolve_deployment_ids(sub_account_config, deployment_id_to_model)
+
+    # Step 3: Extract deployment IDs from URLs for backward compatibility
+    _extract_deployment_ids_from_urls(sub_account_config, deployment_id_to_model)
+
+
+def _dump_subaccount_config(sub_account_config: SubAccountConfig):
+    """Dump subaccount configuration for debugging.
+
+    Args:
+        sub_account_config: The subaccount config to log
+    """
+    logger.info(
+        "Parsed subaccount '%s' with deployment_urls: %s",
+        sub_account_config.name,
+        sub_account_config.model_to_deployment_urls,
+    )
+
+    logger.info(
+        "Parsed subaccount '%s' with deployment_ids: %s",
+        sub_account_config.name,
+        sub_account_config.model_to_deployment_ids,
+    )

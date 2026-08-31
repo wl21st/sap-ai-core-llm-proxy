@@ -2,7 +2,7 @@
 
 import pytest
 from unittest.mock import Mock
-from config.config_models import ServiceKey
+from saip.config.config_models import ServiceKey
 
 
 @pytest.fixture
@@ -36,17 +36,17 @@ def mock_deployment():
 @pytest.fixture
 def clean_cache():
     """Ensure cache is clean before and after test."""
-    from utils.sdk_utils import clear_deployment_cache
+    from saip.utils.sdk_utils import clear_deployment_cache
 
     before_count = 0
     try:
         before_count = clear_deployment_cache()
-    except:
+    except Exception:
         pass
 
     yield before_count
 
     try:
         clear_deployment_cache()
-    except:
+    except Exception:
         pass

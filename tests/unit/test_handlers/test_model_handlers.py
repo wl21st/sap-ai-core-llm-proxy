@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 
-from handlers.model_handlers import handle_claude_request
+from saip.handlers.model_handlers import handle_claude_request
 
 
 def _make_proxy_config(model: str = "claude-haiku", url: str = "https://test.url/dep-id"):
@@ -15,9 +15,9 @@ def _make_proxy_config(model: str = "claude-haiku", url: str = "https://test.url
 class TestHandleClaudeRequestStreamDefault:
     """Verify handle_claude_request() defaults stream to False (non-streaming)."""
 
-    @patch("handlers.model_handlers.load_balance_url")
-    @patch("handlers.model_handlers.Detector")
-    @patch("handlers.model_handlers.Converters")
+    @patch("saip.handlers.model_handlers.load_balance_url")
+    @patch("saip.handlers.model_handlers.Detector")
+    @patch("saip.handlers.model_handlers.Converters")
     def test_omit_stream_routes_to_non_streaming_endpoint(
         self, mock_converters, mock_detector, mock_load_balance
     ):
@@ -43,9 +43,9 @@ class TestHandleClaudeRequestStreamDefault:
             f"Expected non-streaming /converse endpoint, got: {endpoint_url}"
         )
 
-    @patch("handlers.model_handlers.load_balance_url")
-    @patch("handlers.model_handlers.Detector")
-    @patch("handlers.model_handlers.Converters")
+    @patch("saip.handlers.model_handlers.load_balance_url")
+    @patch("saip.handlers.model_handlers.Detector")
+    @patch("saip.handlers.model_handlers.Converters")
     def test_explicit_stream_false_routes_to_non_streaming_endpoint(
         self, mock_converters, mock_detector, mock_load_balance
     ):
@@ -71,9 +71,9 @@ class TestHandleClaudeRequestStreamDefault:
             f"Expected non-streaming /converse endpoint, got: {endpoint_url}"
         )
 
-    @patch("handlers.model_handlers.load_balance_url")
-    @patch("handlers.model_handlers.Detector")
-    @patch("handlers.model_handlers.Converters")
+    @patch("saip.handlers.model_handlers.load_balance_url")
+    @patch("saip.handlers.model_handlers.Detector")
+    @patch("saip.handlers.model_handlers.Converters")
     def test_explicit_stream_true_routes_to_streaming_endpoint(
         self, mock_converters, mock_detector, mock_load_balance
     ):
@@ -99,9 +99,9 @@ class TestHandleClaudeRequestStreamDefault:
             f"Expected streaming /converse-stream endpoint, got: {endpoint_url}"
         )
 
-    @patch("handlers.model_handlers.load_balance_url")
-    @patch("handlers.model_handlers.Detector")
-    @patch("handlers.model_handlers.Converters")
+    @patch("saip.handlers.model_handlers.load_balance_url")
+    @patch("saip.handlers.model_handlers.Detector")
+    @patch("saip.handlers.model_handlers.Converters")
     def test_omit_stream_older_claude_routes_to_invoke(
         self, mock_converters, mock_detector, mock_load_balance
     ):

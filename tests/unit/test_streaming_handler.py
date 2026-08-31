@@ -5,7 +5,7 @@ Tests the helper functions for handling streaming responses.
 
 import pytest
 
-from handlers.streaming_handler import (
+from saip.handlers.streaming_handler import (
     get_claude_stop_reason_from_gemini_chunk,
     get_claude_stop_reason_from_openai_chunk,
     parse_sse_response_to_claude_json,
@@ -213,7 +213,7 @@ class TestBackendRequestResult:
 
     def test_default_values(self):
         """Test that default values are set correctly."""
-        from handlers.streaming_handler import BackendRequestResult
+        from saip.handlers.streaming_handler import BackendRequestResult
 
         result = BackendRequestResult(success=True, response_data={"key": "value"})
         assert result.success is True
@@ -224,7 +224,7 @@ class TestBackendRequestResult:
 
     def test_error_result(self):
         """Test creating an error result."""
-        from handlers.streaming_handler import BackendRequestResult
+        from saip.handlers.streaming_handler import BackendRequestResult
 
         result = BackendRequestResult(
             success=False,
@@ -239,7 +239,7 @@ class TestBackendRequestResult:
 
     def test_sse_response_flag(self):
         """Test SSE response flag."""
-        from handlers.streaming_handler import BackendRequestResult
+        from saip.handlers.streaming_handler import BackendRequestResult
 
         result = BackendRequestResult(
             success=True,
@@ -254,7 +254,7 @@ class TestMakeBackendRequest:
 
     def test_successful_json_response(self, mocker):
         """Test successful JSON response handling."""
-        from handlers.streaming_handler import make_backend_request
+        from saip.handlers.streaming_handler import make_backend_request
 
         mock_response = mocker.Mock()
         mock_response.text = '{"result": "success"}'
@@ -283,7 +283,7 @@ class TestMakeBackendRequest:
     def test_http_error_with_json_body(self, mocker):
         """Test HTTP error with JSON error body."""
         import requests
-        from handlers.streaming_handler import make_backend_request
+        from saip.handlers.streaming_handler import make_backend_request
 
         mock_response = mocker.Mock()
         mock_response.status_code = 400
@@ -314,7 +314,7 @@ class TestMakeBackendRequest:
     def test_connection_timeout(self, mocker):
         """Test connection timeout handling."""
         import requests
-        from handlers.streaming_handler import make_backend_request
+        from saip.handlers.streaming_handler import make_backend_request
 
         mocker.patch(
             "requests.post",
@@ -337,7 +337,7 @@ class TestMakeBackendRequest:
 
     def test_claude_model_sse_response(self, mocker):
         """Test Claude model SSE response parsing."""
-        from handlers.streaming_handler import make_backend_request
+        from saip.handlers.streaming_handler import make_backend_request
 
         sse_response = """data: {"contentBlockDelta": {"delta": {"text": "Hello"}}}
 data: {"contentBlockDelta": {"delta": {"text": " World"}}}
@@ -366,7 +366,7 @@ data: [DONE]"""
 
     def test_non_claude_model_returns_json(self, mocker):
         """Test non-Claude model returns parsed JSON."""
-        from handlers.streaming_handler import make_backend_request
+        from saip.handlers.streaming_handler import make_backend_request
 
         mock_response = mocker.Mock()
         mock_response.text = '{"choices": [{"message": {"content": "Hello"}}]}'
@@ -393,7 +393,7 @@ data: [DONE]"""
 
     def test_custom_timeout(self, mocker):
         """Test that custom timeout is passed to requests."""
-        from handlers.streaming_handler import make_backend_request
+        from saip.handlers.streaming_handler import make_backend_request
 
         mock_response = mocker.Mock()
         mock_response.text = '{"result": "ok"}'

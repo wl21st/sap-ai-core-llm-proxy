@@ -2,16 +2,17 @@
 
 ## Project Structure
 
-This Python 3.13 FastAPI proxy exposes OpenAI- and Anthropic-compatible APIs for SAP AI Core services. Top-level entry points are `main.py` (application factory and CLI) and `proxy_server.py` (compatibility entry point). API routers live in `routers/`; provider and streaming logic in `handlers/`; OAuth and request validation in `auth/`; Pydantic configuration in `config/`; and SDK pooling, retries, logging, and resilience utilities in `utils/`. Tests are organized under `tests/unit/`, `tests/integration/`, and `tests/api/`. Design and operational documentation is under `docs/`.
+This Python 3.13 FastAPI proxy exposes OpenAI- and Anthropic-compatible APIs for SAP AI Core services. All application code is organized under the `saip` package in `src/saip/`. Main entry points are `src/saip/main.py` (application factory and CLI: `saip`, `sap-ai-proxy`) and `src/saip/proxy_server.py` (compatibility entry point). API routers live in `src/saip/routers/`; provider and streaming logic in `src/saip/handlers/`; OAuth and request validation in `src/saip/auth/`; Pydantic configuration in `src/saip/config/`; and SDK pooling, retries, logging, and resilience utilities in `src/saip/utils/`. Standalone operational scripts live in `scripts/`. Tests are organized under `tests/unit/`, `tests/integration/`, and `tests/api/`. Design and operational documentation is under `docs/`.
 
 ## Development Setup and Commands
 
 Use `uv` for dependency management:
 
 ```bash
-uv sync --group dev
+uv sync --all-groups
 uvx --from . sap-ai-proxy -c config.json
 uv run pytest tests/unit/ -v
+make check
 make test-cov
 make test-integration
 make build-tested
@@ -21,7 +22,7 @@ The integration suite requires a running proxy and valid SAP AI Core configurati
 
 ## Coding Style
 
-Follow PEP 8 with four-space indentation. Use `snake_case` for functions and variables, `PascalCase` for classes, and `UPPER_SNAKE_CASE` for constants. Add type hints to function signatures. Run `uv run ruff check .` and `uv run basedpyright` before submitting changes. Reuse SDK clients from `utils/sdk_pool.py`, protect shared state with locks, and route model detection through `proxy_helpers.py` rather than hardcoding model names.
+Follow PEP 8 with four-space indentation. Use `snake_case` for functions and variables, `PascalCase` for classes, and `UPPER_SNAKE_CASE` for constants. Add type hints to function signatures. Run `uv run ruff check .` and `uv run basedpyright` before submitting changes. Reuse SDK clients from `saip.utils.sdk_pool`, protect shared state with locks, and route model detection through `saip.proxy_helpers` rather than hardcoding model names.
 
 ## Testing Guidelines
 

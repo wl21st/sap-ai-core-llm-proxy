@@ -13,8 +13,8 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.testclient import TestClient
 from starlette.status import HTTP_401_UNAUTHORIZED
 
-from auth.request_validator import verify_request_token
-from routers import chat, messages, models
+from saip.auth.request_validator import verify_request_token
+from saip.routers import chat, messages, models
 
 
 def _make_app(proxy_config=None, proxy_context=None):
@@ -46,19 +46,19 @@ def client(mock_state):
 
 
 class TestModelsRoute:
-    @patch("routers.models.verify_request_token", return_value=True)
+    @patch("saip.routers.models.verify_request_token", return_value=True)
     def test_models_returns_200(self, _mock_auth, client):
         response = client.get("/v1/models")
         assert response.status_code == 200
 
-    @patch("routers.models.verify_request_token", return_value=True)
+    @patch("saip.routers.models.verify_request_token", return_value=True)
     def test_models_returns_data_list(self, _mock_auth, client):
         response = client.get("/v1/models")
         data = response.json()
         assert "data" in data
         assert isinstance(data["data"], list)
 
-    @patch("routers.models.verify_request_token", return_value=True)
+    @patch("saip.routers.models.verify_request_token", return_value=True)
     def test_models_lists_configured_models(self, _mock_auth, client):
         response = client.get("/v1/models")
         ids = {m["id"] for m in response.json()["data"]}
@@ -67,14 +67,14 @@ class TestModelsRoute:
 
 
 class TestMessagesRoute:
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url", side_effect=ValueError("not found"))
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url", side_effect=ValueError("not found"))
     def test_missing_model_returns_404(self, _mock_lb, _mock_auth, client):
         response = client.post("/v1/messages", json={"model": "unknown-model"})
         assert response.status_code == 404
 
-    @patch("routers.messages.verify_request_token", return_value=True)
-    @patch("routers.messages.load_balance_url", side_effect=ValueError("not found"))
+    @patch("saip.routers.messages.verify_request_token", return_value=True)
+    @patch("saip.routers.messages.load_balance_url", side_effect=ValueError("not found"))
     def test_404_response_shape(self, _mock_lb, _mock_auth, client):
         response = client.post("/v1/messages", json={"model": "unknown-model"})
         data = response.json()
@@ -83,9 +83,8 @@ class TestMessagesRoute:
 
 
 class TestChatCompletionsRoute:
-     @patch("routers.chat.verify_request_token", return_value=True)
-     @patch(
-         "routers.chat.handle_default_request",
+     @patch("saip.routers.chat.verify_request_token", return_value=True)
+     @patch("saip.routers.chat.handle_default_request",
          side_effect=ValueError("model not found"),
      )
      def test_missing_model_returns_error(self, _mock_handler, _mock_auth, client):

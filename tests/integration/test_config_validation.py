@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import patch
 import logging
-from config.config_models import SubAccountConfig, ServiceKey
-from config.config_parser import _build_mapping_for_subaccount
-from utils.exceptions import ConfigValidationError
+from saip.config.config_models import SubAccountConfig, ServiceKey
+from saip.config.config_parser import _build_mapping_for_subaccount
+from saip.utils.exceptions import ConfigValidationError
 
 
 def test_validation_warning(caplog):
@@ -31,13 +31,13 @@ def test_validation_warning(caplog):
 
     # Mock fetch_all_deployments to return a mismatch
     # d123 -> gemini-pro (Family mismatch for gpt-4)
-    with patch("config.config_parser.fetch_all_deployments") as mock_fetch_all:
+    with patch("saip.config.config_parser.fetch_all_deployments") as mock_fetch_all:
         mock_fetch_all.return_value = [
             {"id": "d123", "url": "https://url/d123", "model_name": "gemini-pro"}
         ]
 
         # Also need to mock fetch_deployment_url to avoid network call in the loop
-        with patch("config.config_parser.fetch_deployment_url") as mock_fetch_url:
+        with patch("saip.config.config_parser.fetch_deployment_url") as mock_fetch_url:
             mock_fetch_url.return_value = "https://url/d123"
 
             _build_mapping_for_subaccount(sub_config)
@@ -68,12 +68,12 @@ def test_validation_success(caplog):
         identity_zone_id="i",
     )
 
-    with patch("config.config_parser.fetch_all_deployments") as mock_fetch_all:
+    with patch("saip.config.config_parser.fetch_all_deployments") as mock_fetch_all:
         mock_fetch_all.return_value = [
             {"id": "d123", "url": "https://url/d123", "model_name": "gpt-4"}
         ]
 
-        with patch("config.config_parser.fetch_deployment_url") as mock_fetch_url:
+        with patch("saip.config.config_parser.fetch_deployment_url") as mock_fetch_url:
             mock_fetch_url.return_value = "https://url/d123"
 
             _build_mapping_for_subaccount(sub_config)
@@ -101,13 +101,13 @@ def test_deployment_not_found_warning(caplog):
         identity_zone_id="i",
     )
 
-    with patch("config.config_parser.fetch_all_deployments") as mock_fetch_all:
+    with patch("saip.config.config_parser.fetch_all_deployments") as mock_fetch_all:
         # Discovery succeeds but returns unrelated deployment
         mock_fetch_all.return_value = [
             {"id": "d123", "url": "https://url/d123", "model_name": "gpt-4"}
         ]
 
-        with patch("config.config_parser.fetch_deployment_url") as mock_fetch_url:
+        with patch("saip.config.config_parser.fetch_deployment_url") as mock_fetch_url:
             mock_fetch_url.return_value = "https://url/d999"
 
             _build_mapping_for_subaccount(sub_config)
@@ -147,10 +147,10 @@ def test_config_load_auth_failure(tmp_path):
     }
     config_file.write_text(json.dumps(config_data))
 
-    from config.config_parser import load_proxy_config
-    from utils.exceptions import AuthenticationError
+    from saip.config.config_parser import load_proxy_config
+    from saip.utils.exceptions import AuthenticationError
 
-    with patch("config.config_parser.fetch_all_deployments") as mock_fetch:
+    with patch("saip.config.config_parser.fetch_all_deployments") as mock_fetch:
         mock_fetch.side_effect = AuthenticationError("Invalid credentials")
 
         with pytest.raises((ConfigValidationError, AuthenticationError)) as exc_info:
@@ -190,10 +190,10 @@ def test_config_load_network_failure(tmp_path):
     }
     config_file.write_text(json.dumps(config_data))
 
-    from config.config_parser import load_proxy_config
+    from saip.config.config_parser import load_proxy_config
     import requests
 
-    with patch("config.config_parser.fetch_all_deployments") as mock_fetch:
+    with patch("saip.config.config_parser.fetch_all_deployments") as mock_fetch:
         mock_fetch.side_effect = requests.exceptions.ConnectionError(
             "Network unreachable"
         )
@@ -235,9 +235,9 @@ def test_config_load_invalid_deployment_id(tmp_path):
     }
     config_file.write_text(json.dumps(config_data))
 
-    from config.config_parser import load_proxy_config
+    from saip.config.config_parser import load_proxy_config
 
-    with patch("config.config_parser.extract_deployment_id") as mock_extract:
+    with patch("saip.config.config_parser.extract_deployment_id") as mock_extract:
         mock_extract.side_effect = ValueError("Invalid deployment ID format")
 
         # This should raise ConfigValidationError during config parsing

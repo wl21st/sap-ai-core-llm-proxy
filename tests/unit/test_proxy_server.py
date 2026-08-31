@@ -1,0 +1,1980 @@
+"""
+Comprehensive test suite for proxy_server.py
+
+Tests cover:
+- Dataclasses (ServiceKey, TokenInfo, SubAccountConfig, ProxyConfig)
+- Utility functions (model detection, conversion functions)
+- Token management (fetch_token, verify_request_token)
+- Load balancing (load_balance_url)
+- Flask endpoints (chat completions, messages, models, embeddings)
+- Streaming response handlers
+"""
+
+import json
+import threading
+import time
+from unittest.mock import Mock, patch
+
+import pytest
+import requests.exceptions
+
+# Import the module under test
+from saip import proxy_server
+from saip.auth import TokenManager, RequestValidator
+from saip.config import (
+    ServiceKey,
+    TokenInfo,
+    SubAccountConfig,
+    ProxyConfig,
+    load_proxy_config,
+)
+from saip.load_balancer import resolve_model_name, load_balance_url, reset_counters
+from saip.proxy_helpers import Detector, Converters
+from saip.utils.error_handlers import handle_http_429_error
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+# Create convenience aliases for the test functions
+is_claude_model = Detector.is_claude_model
+is_claude_37_or_4 = Detector.is_claude_family
+is_gemini_model = Detector.is_gemini_model
+convert_openai_to_claude = Converters.convert_openai_to_claude
+convert_openai_to_claude37 = Converters.convert_openai_to_claude37
+convert_claude_to_openai = Converters.convert_claude_to_openai
+convert_claude37_to_openai = Converters.convert_claude37_to_openai
+convert_openai_to_gemini = Converters.convert_openai_to_gemini
+convert_gemini_to_openai = Converters.convert_gemini_to_openai
+
+
+# ============================================================================
+# BACKWARD COMPATIBILITY HELPERS
+# ============================================================================
+
+
+def fetch_token(subaccount_name: str, proxy_config: ProxyConfig) -> str:
+    """
+    Fetch token for a subaccount (backward compatibility wrapper).
+
+    Args:
+        subaccount_name: Name of the subaccount
+        proxy_config: ProxyConfig instance
+
+    Returns:
+        Authentication token
+
+    Raises:
+        ValueError: If subaccount not found
+        ConnectionError: If token fetch fails
+        TimeoutError: If connection times out
+        RuntimeError: For other token processing errors
+    """
+    if subaccount_name not in proxy_config.subaccounts:
+        raise ValueError(f"SubAccount {subaccount_name} not found in configuration")
+
+    subaccount = proxy_config.subaccounts[subaccount_name]
+    token_manager = TokenManager(subaccount)
+
+    try:
+        return token_manager.get_token()
+    except Exception as e:
+        # Re-raise with appropriate error type for backward compatibility
+        error_msg = str(e).lower()
+        if "timeout" in error_msg or "timed out" in error_msg:
+            raise TimeoutError(f"Timeout connecting to token server: {e}") from e
+        elif "http error" in error_msg or "httperror" in error_msg:
+            raise ConnectionError(f"HTTP Error fetching token: {e}") from e
+        elif "empty" in error_msg or "token is required" in error_msg:
+            raise RuntimeError(
+                f"Unexpected error processing token response: {e}"
+            ) from e
+        else:
+            raise
+
+
+def verify_request_token(request, proxy_config: ProxyConfig) -> bool:
+    """
+    Verify request token (backward compatibility wrapper).
+
+    Args:
+        request: Flask request object
+        proxy_config: ProxyConfig instance
+
+    Returns:
+        True if token is valid or no auth configured, False otherwise
+    """
+    validator = RequestValidator(proxy_config.secret_authentication_tokens)
+    return validator.validate(request)
+
+
+# ============================================================================
+# FIXTURES
+# ============================================================================
+# FIXTURES
+# ============================================================================
+
+
+@pytest.fixture
+def sample_service_key():
+    """Sample service key data for testing (Python format with snake_case)."""
+    return {
+        "client_id": "test-client-id",
+        "client_secret": "test-client-secret",
+        "auth_url": "https://test.authentication.sap.hana.ondemand.com",
+        "api_url": "https://test.api.sap.hana.ondemand.com",
+        "identity_zone_id": "test-zone-id",
+    }
+
+
+@pytest.fixture
+def sample_service_key_raw():
+    """Sample service key data in raw SAP JSON format (camelCase)."""
+    return {
+        "clientid": "test-client-id",
+        "clientsecret": "test-client-secret",
+        "url": "https://test.authentication.sap.hana.ondemand.com",
+        "identityzoneid": "test-zone-id",
+        "serviceurls": {
+            "AI_API_URL": "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com"
+        },
+    }
+
+
+@pytest.fixture
+def sample_config():
+    """Sample proxy configuration for testing."""
+    return {
+        "subAccounts": {
+            "account1": {
+                "resource_group": "default",
+                "service_key_json": "account1_key.json",
+                "deployment_models": {
+                    "gpt-4o": [
+                        "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d123"
+                    ],
+                    "anthropic--claude-4.5-sonnet": [
+                        "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d456"
+                    ],
+                },
+            },
+            "account2": {
+                "resource_group": "default",
+                "service_key_json": "account2_key.json",
+                "deployment_models": {
+                    "gpt-4o": [
+                        "https://api.ai.prod.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d789"
+                    ],
+                    "gemini-2.5-pro": [
+                        "https://api.ai.prod.eu-central-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d101"
+                    ],
+                },
+            },
+        },
+        "secret_authentication_tokens": ["test-token-123", "test-token-456"],
+        "port": 3001,
+        "host": "127.0.0.1",
+    }
+
+
+@pytest.fixture
+def mock_service_key_file(sample_service_key, tmp_path):
+    """Create a temporary service key file."""
+    key_file = tmp_path / "test_key.json"
+    key_file.write_text(json.dumps(sample_service_key))
+    return str(key_file)
+
+
+def _make_fastapi_app(config, ctx):
+    """Create a minimal FastAPI app with all routers and injected state."""
+    from saip.routers import chat, embeddings, logging as logging_router, messages, models
+
+    app = FastAPI()
+    app.include_router(chat.router)
+    app.include_router(messages.router)
+    app.include_router(embeddings.router)
+    app.include_router(models.router)
+    app.include_router(logging_router.router)
+    app.state.proxy_config = config
+    app.state.proxy_context = ctx
+    return app
+
+
+@pytest.fixture
+def flask_client():
+    """FastAPI test client (replaces Flask test client).
+
+    Creates a FastAPI app using the CURRENT proxy_server.proxy_config object so
+    that tests which also use reset_proxy_config can mutate the shared config
+    object and have the changes reflected in the test client's app state.
+    """
+    from saip.config import ProxyGlobalContext
+
+    # Ensure proxy_server globals are initialised but keep the existing
+    # proxy_config object so that reset_proxy_config (if used in the same test)
+    # can mutate it in-place and the FastAPI app will see the changes.
+    if not hasattr(proxy_server, "ctx") or proxy_server.ctx is None:
+        ctx = ProxyGlobalContext()
+        ctx.initialize(proxy_server.proxy_config)
+        proxy_server.ctx = ctx
+
+    app = _make_fastapi_app(proxy_server.proxy_config, proxy_server.ctx)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture
+def reset_proxy_config():
+    """Reset global proxy_config before each test."""
+    from saip.config import ProxyGlobalContext
+
+    # Store original state
+    original_ctx = getattr(proxy_server, "ctx", None)
+    original_subaccounts = proxy_server.proxy_config.subaccounts.copy()
+    original_model_mapping = proxy_server.proxy_config.model_to_subaccounts.copy()
+    original_tokens = (
+        proxy_server.proxy_config.secret_authentication_tokens.copy()
+        if proxy_server.proxy_config.secret_authentication_tokens
+        else []
+    )
+
+    # Reset to clean state by mutating in-place (preserves object identity for flask_client)
+    proxy_server.proxy_config.subaccounts = {}
+    proxy_server.proxy_config.model_to_subaccounts = {}
+    proxy_server.proxy_config.secret_authentication_tokens = []
+
+    proxy_server.ctx = ProxyGlobalContext()
+    proxy_server.ctx.initialize(proxy_server.proxy_config)
+
+    yield
+
+    # Restore original state
+    if original_ctx is not None:
+        proxy_server.ctx = original_ctx
+    proxy_server.proxy_config.subaccounts = original_subaccounts
+    proxy_server.proxy_config.model_to_subaccounts = original_model_mapping
+    proxy_server.proxy_config.secret_authentication_tokens = original_tokens
+
+
+# ============================================================================
+# DATACLASS TESTS
+# ============================================================================
+
+
+class TestServiceKey:
+    """Tests for ServiceKey dataclass."""
+
+    def test_service_key_creation(self):
+        """Test ServiceKey can be created with all fields."""
+        key = ServiceKey(
+            client_id="test-id",
+            client_secret="test-secret",
+            auth_url="https://test.url",
+            api_url="https://test.api.url",
+            identity_zone_id="test-zone",
+        )
+        assert key.client_id == "test-id"
+        assert key.client_secret == "test-secret"
+        assert key.auth_url == "https://test.url"
+        assert key.api_url == "https://test.api.url"
+        assert key.identity_zone_id == "test-zone"
+
+
+class TestTokenInfo:
+    """Tests for TokenInfo dataclass."""
+
+    def test_token_info_default_values(self):
+        """Test TokenInfo has correct default values."""
+        token_info = TokenInfo()
+        assert token_info.token == ""
+        assert token_info.expiry == 0
+        assert isinstance(token_info.lock, threading.Lock)
+
+    def test_token_info_with_values(self):
+        """Test TokenInfo can be created with custom values."""
+        token_info = TokenInfo(token="test-token", expiry=12345.0)
+        assert token_info.token == "test-token"
+        assert token_info.expiry == 12345.0
+
+
+class TestSubAccountConfig:
+    """Tests for SubAccountConfig dataclass."""
+
+    def test_subaccount_creation(self):
+        """Test SubAccountConfig can be created."""
+        config = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"gpt-4": ["url1", "url2"]},
+        )
+        assert config.name == "test-account"
+        assert config.resource_group == "default"
+        assert config.service_key_json == "key.json"
+        assert "gpt-4" in config.model_to_deployment_urls
+
+    def test_load_service_key(self, sample_service_key_raw, tmp_path):
+        """Test loading service key from file."""
+        from saip.config.config_parser import _load_service_key_for_subaccount
+
+        # Create temp key file
+        key_file = tmp_path / "test_key.json"
+        key_file.write_text(json.dumps(sample_service_key_raw))
+
+        config = SubAccountConfig(
+            name="test",
+            resource_group="default",
+            service_key_json=str(key_file),
+            model_to_deployment_urls={},
+        )
+
+        _load_service_key_for_subaccount(config)
+
+        assert config.service_key is not None
+        assert config.service_key.client_id == sample_service_key_raw["clientid"]
+        assert (
+            config.service_key.client_secret == sample_service_key_raw["clientsecret"]
+        )
+
+    def test_normalize_model_names(self, mocker, sample_service_key_raw, tmp_path):
+        """Test model name normalization."""
+        from saip.config.config_parser import (
+            _build_mapping_for_subaccount,
+            _load_service_key_for_subaccount,
+        )
+
+        # Create temp key file
+        key_file = tmp_path / "test_key.json"
+        key_file.write_text(json.dumps(sample_service_key_raw))
+
+        config = SubAccountConfig(
+            name="test",
+            resource_group="default",
+            service_key_json=str(key_file),
+            model_to_deployment_urls={
+                "anthropic--claude-3.5-sonnet": [
+                    "https://api.ai.com/v2/inference/deployments/deployment1"
+                ],
+                "gpt-4": ["https://api.ai.com/v2/inference/deployments/deployment2"],
+            },
+        )
+
+        # Load service key and mock auto-discovery
+        _load_service_key_for_subaccount(config)
+        mocker.patch("saip.config.config_parser.fetch_all_deployments", return_value=[])
+
+        _build_mapping_for_subaccount(config)
+
+        # Check that build_mapping populates model_to_deployment_ids
+        assert "anthropic--claude-3.5-sonnet" in config.model_to_deployment_ids
+        assert "gpt-4" in config.model_to_deployment_ids
+
+
+class TestProxyConfig:
+    """Tests for ProxyConfig dataclass."""
+
+    def test_proxy_config_defaults(self):
+        """Test ProxyConfig has correct default values."""
+        config = ProxyConfig()
+        assert config.subaccounts == {}
+        assert config.secret_authentication_tokens == []
+        assert config.port == 3001
+        assert config.host == "127.0.0.1"
+        assert config.model_to_subaccounts == {}
+
+    def test_build_model_mapping(self, mocker, sample_service_key_raw, tmp_path):
+        """Test building model to subaccounts mapping."""
+        from saip.config.config_parser import load_proxy_config
+
+        # Mock auto-discovery to avoid real API calls
+        mocker.patch("saip.config.config_parser.fetch_all_deployments", return_value=[])
+
+        # Create temp key files
+        key1_file = tmp_path / "key1.json"
+        key1_file.write_text(json.dumps(sample_service_key_raw))
+        key2_file = tmp_path / "key2.json"
+        key2_file.write_text(json.dumps(sample_service_key_raw))
+
+        # Create a temp config file
+        config_data = {
+            "subAccounts": {
+                "sub1": {
+                    "resource_group": "default",
+                    "service_key_json": str(key1_file),
+                    "deployment_models": {
+                        "gpt-4": [
+                            "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d1"
+                        ],
+                        "claude": [
+                            "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d2"
+                        ],
+                    },
+                },
+                "sub2": {
+                    "resource_group": "default",
+                    "service_key_json": str(key2_file),
+                    "deployment_models": {
+                        "gpt-4": [
+                            "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2/inference/deployments/d3"
+                        ]
+                    },
+                },
+            }
+        }
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps(config_data))
+
+        config = load_proxy_config(str(config_file))
+
+        # gpt-4 should be in both subaccounts
+        assert "gpt-4" in config.model_to_subaccounts
+        assert set(config.model_to_subaccounts["gpt-4"]) == {"sub1", "sub2"}
+
+        # claude should only be in sub1
+        assert "claude" in config.model_to_subaccounts
+        assert config.model_to_subaccounts["claude"] == ["sub1"]
+
+
+# ============================================================================
+# UTILITY FUNCTION TESTS
+# ============================================================================
+
+
+class TestModelDetection:
+    """Tests for model detection functions."""
+
+    @pytest.mark.parametrize(
+        "model_name,expected",
+        [
+            ("claude-3.5-sonnet", True),
+            ("anthropic--claude-4-sonnet", True),
+            ("claude", True),
+            ("sonnet", True),
+            ("CLAUDE", True),
+            ("gpt-4", False),
+            ("gemini-pro", False),
+        ],
+    )
+    def test_is_claude_model(self, model_name, expected):
+        """Test Claude model detection."""
+        assert is_claude_model(model_name) == expected
+
+    @pytest.mark.parametrize(
+        "model_name,expected",
+        [
+            ("claude-3.7-sonnet", True),
+            ("claude-4-opus", True),
+            ("claude-4.5-sonnet", True),
+            ("claude-3.5-sonnet", False),
+            ("claude-2", True),  # Fixed: claude-2 doesn't contain "3.5" so returns True
+        ],
+    )
+    def test_is_claude_37_or_4(self, model_name, expected):
+        """Test Claude 3.7/4 detection."""
+        assert is_claude_37_or_4(model_name) == expected
+
+    @pytest.mark.parametrize(
+        "model_name,expected",
+        [
+            ("gemini-pro", True),
+            ("gemini-1.5-pro", True),
+            ("gemini-2.5-flash", True),
+            ("GEMINI-PRO", True),
+            ("gpt-4", False),
+            ("claude", False),
+        ],
+    )
+    def test_is_gemini_model(self, model_name, expected):
+        """Test Gemini model detection."""
+        assert is_gemini_model(model_name) == expected
+
+
+class TestConversionFunctions:
+    """Tests for payload conversion functions."""
+
+    def test_convert_openai_to_claude(self):
+        """Test OpenAI to Claude conversion."""
+        openai_payload = {
+            "messages": [
+                {"role": "system", "content": "You are helpful"},
+                {"role": "user", "content": "Hello"},
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.7,
+        }
+
+        result = convert_openai_to_claude(openai_payload)
+
+        assert result["anthropic_version"] == "bedrock-2023-05-31"
+        assert result["max_tokens"] == 1000
+        assert result["temperature"] == 0.7
+        assert result["system"] == "You are helpful"
+        assert len(result["messages"]) == 1
+        assert result["messages"][0]["role"] == "user"
+
+    def test_convert_openai_to_claude37(self):
+        """Test OpenAI to Claude 3.7 conversion."""
+        openai_payload = {
+            "messages": [
+                {"role": "system", "content": "System prompt"},
+                {"role": "user", "content": "User message"},
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.5,
+        }
+
+        result = convert_openai_to_claude37(openai_payload)
+
+        assert "messages" in result
+        assert "inferenceConfig" in result
+        assert result["inferenceConfig"]["maxTokens"] == 2000
+        assert result["inferenceConfig"]["temperature"] == 0.5
+        # System message should be moved to top-level parameter
+        assert len(result["messages"]) == 1
+        assert result["messages"][0]["role"] == "user"
+        assert result["messages"][0]["content"][0]["text"] == "User message"
+        assert "system" in result
+        assert result["system"][0]["text"] == "System prompt"
+
+    def test_convert_claude_to_openai(self):
+        """Test Claude to OpenAI conversion."""
+        claude_response = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello!"}],
+            "model": "claude-3.5-sonnet",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        }
+
+        result = convert_claude_to_openai(claude_response, "claude-3.5-sonnet")
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Hello!"
+        assert result["choices"][0]["message"]["role"] == "assistant"
+        # Claude 3.5 uses standard conversion, which maps end_turn to end_turn (not stop)
+        assert result["choices"][0]["finish_reason"] == "end_turn"
+        assert result["usage"]["prompt_tokens"] == 10
+        assert result["usage"]["completion_tokens"] == 20
+        assert result["usage"]["total_tokens"] == 30
+
+    def test_convert_claude37_to_openai(self):
+        """Test Claude 3.7 to OpenAI conversion."""
+        claude37_response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Response text"}],
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 15, "outputTokens": 25, "totalTokens": 40},
+        }
+
+        result = convert_claude37_to_openai(claude37_response, "claude-3.7-sonnet")
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Response text"
+        assert result["choices"][0]["finish_reason"] == "stop"
+        assert result["usage"]["prompt_tokens"] == 15
+        assert result["usage"]["completion_tokens"] == 25
+        assert result["usage"]["total_tokens"] == 40
+
+    def test_convert_openai_to_gemini(self):
+        """Test OpenAI to Gemini conversion."""
+        openai_payload = {
+            "messages": [{"role": "user", "content": "Hello Gemini"}],
+            "max_tokens": 1500,
+            "temperature": 0.8,
+        }
+
+        result = convert_openai_to_gemini(openai_payload)
+
+        assert "contents" in result
+        assert result["contents"]["role"] == "user"
+        assert result["contents"]["parts"]["text"] == "Hello Gemini"
+        assert result["generation_config"]["maxOutputTokens"] == 1500
+        assert result["generation_config"]["temperature"] == 0.8
+
+    def test_convert_gemini_to_openai(self):
+        """Test Gemini to OpenAI conversion."""
+        gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Gemini response"}],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 10,
+                "totalTokenCount": 15,
+            },
+        }
+
+        result = convert_gemini_to_openai(gemini_response, "gemini-pro")
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Gemini response"
+        assert result["choices"][0]["finish_reason"] == "stop"
+        assert result["usage"]["prompt_tokens"] == 5
+        assert result["usage"]["completion_tokens"] == 10
+        assert result["usage"]["total_tokens"] == 15
+
+
+class TestHTTP429Handler:
+    """Tests for HTTP 429 error handling."""
+
+    def test_handle_http_429_error(self, flask_client):
+        """Test HTTP 429 error handler."""
+        # Create mock HTTP error
+        mock_response = Mock()
+        mock_response.status_code = 429
+        mock_response.headers = {"Retry-After": "60", "X-RateLimit-Limit": "100"}
+        mock_response.text = "Rate limit exceeded"
+
+        mock_error = Mock()
+        mock_error.response = mock_response
+
+        result_body, status_code = handle_http_429_error(mock_error, "test request")
+
+        assert status_code == 429
+        assert result_body["error"] == "Rate limit exceeded"
+        assert "Retry-After" in result_body["headers"]
+
+
+# ============================================================================
+# TOKEN MANAGEMENT TESTS
+# ============================================================================
+
+
+class TestTokenManagement:
+    """Tests for token fetching and verification."""
+
+    def test_verify_request_token_valid(self, reset_proxy_config):
+        """Test token verification with valid token."""
+        proxy_server.proxy_config.secret_authentication_tokens = ["valid-token"]
+
+        mock_request = Mock()
+        mock_request.headers = {"Authorization": "Bearer valid-token"}
+
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
+
+    def test_verify_request_token_invalid(self, reset_proxy_config):
+        """Test token verification with invalid token."""
+        proxy_server.proxy_config.secret_authentication_tokens = ["secret-abc-123"]
+
+        mock_request = Mock()
+        mock_request.headers = {"Authorization": "Bearer wrong-token-xyz"}
+
+        # The function checks if any secret_key is IN the token string
+        # "wrong-token-xyz" doesn't contain "secret-abc-123"
+        result = verify_request_token(mock_request, proxy_server.proxy_config)
+        assert result is False
+
+    def test_verify_request_token_no_auth_configured(self, reset_proxy_config):
+        """Test token verification when no tokens configured."""
+        proxy_server.proxy_config.secret_authentication_tokens = []
+
+        mock_request = Mock()
+        mock_request.headers = {}
+
+        # Should return True when no authentication is configured
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
+
+    def test_verify_request_token_x_api_key(self, reset_proxy_config):
+        """Test token verification with x-api-key header."""
+        proxy_server.proxy_config.secret_authentication_tokens = ["api-key-123"]
+
+        mock_request = Mock()
+        mock_request.headers = {"x-api-key": "api-key-123"}
+
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
+
+    @patch("saip.proxy_server.requests.post")
+    def test_fetch_token_success(
+        self, mock_post, reset_proxy_config, sample_service_key
+    ):
+        """Test successful token fetch."""
+        # Setup mock response
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "access_token": "new-token-123",
+            "expires_in": 3600,
+        }
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        # Setup subaccount
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={},
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+
+        token = fetch_token("test-account", proxy_server.proxy_config)
+
+        assert token == "new-token-123"
+        assert subaccount.token_info.token == "new-token-123"
+        assert subaccount.token_info.expiry > time.time()
+
+    @patch("saip.proxy_server.requests.post")
+    def test_fetch_token_cached(
+        self, mock_post, reset_proxy_config, sample_service_key
+    ):
+        """Test token fetch returns cached token."""
+        # Setup subaccount with valid cached token
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={},
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        subaccount.token_info.token = "cached-token"
+        subaccount.token_info.expiry = time.time() + 3600  # Valid for 1 hour
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+
+        token = fetch_token("test-account", proxy_server.proxy_config)
+
+        assert token == "cached-token"
+        # Should not make HTTP request
+        mock_post.assert_not_called()
+
+    def test_fetch_token_invalid_subaccount(self, reset_proxy_config):
+        """Test token fetch with invalid subaccount."""
+        with pytest.raises(ValueError, match="SubAccount .* not found"):
+            fetch_token("nonexistent-account", proxy_server.proxy_config)
+
+
+# ============================================================================
+# LOAD BALANCING TESTS
+# ============================================================================
+
+
+class TestLoadBalancing:
+    """Tests for load balancing functionality."""
+
+    def test_load_balance_url_single_subaccount(self, reset_proxy_config):
+        """Test load balancing with single subaccount."""
+        # Setup
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"gpt-4": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+
+        url, subaccount_name, resource_group, model = load_balance_url(
+            "gpt-4", proxy_server.proxy_config
+        )
+
+        assert url == "https://url1.com"
+        assert subaccount_name == "account1"
+        assert resource_group == "default"
+        assert model == "gpt-4"
+
+    def test_load_balance_url_multiple_subaccounts(self, reset_proxy_config):
+        """Test load balancing across multiple subaccounts."""
+        # Setup two subaccounts with same model
+        sub1 = SubAccountConfig(
+            name="account1",
+            resource_group="rg1",
+            service_key_json="key1.json",
+            model_to_deployment_urls={"gpt-4": ["https://url1.com"]},
+        )
+        sub1.model_to_deployment_urls = sub1.model_to_deployment_urls
+
+        sub2 = SubAccountConfig(
+            name="account2",
+            resource_group="rg2",
+            service_key_json="key2.json",
+            model_to_deployment_urls={"gpt-4": ["https://url2.com"]},
+        )
+        sub2.model_to_deployment_urls = sub2.model_to_deployment_urls
+
+        proxy_server.proxy_config.subaccounts = {"account1": sub1, "account2": sub2}
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "gpt-4": ["account1", "account2"]
+        }
+
+        # Reset counters
+        reset_counters()
+
+        # First call should use account1
+        url1, sub1_name, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
+        assert sub1_name == "account1"
+
+        # Second call should use account2 (round-robin)
+        url2, sub2_name, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
+        assert sub2_name == "account2"
+
+        # Third call should cycle back to account1
+        url3, sub3_name, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
+        assert sub3_name == "account1"
+
+    def test_load_balance_url_model_not_found(self, reset_proxy_config):
+        """Test load balancing with non-existent model."""
+        proxy_server.proxy_config.model_to_subaccounts = {}
+
+        with pytest.raises(ValueError, match="not available in any subAccount"):
+            load_balance_url("nonexistent-model", proxy_server.proxy_config)
+
+    def test_load_balance_url_claude_fallback(self, reset_proxy_config):
+        """Test Claude model fallback respects opus/sonnet variant."""
+        # Setup with opus fallback model
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={
+                "anthropic--claude-4.5-opus": ["https://url1.com"]
+            },
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4.5-opus": ["account1"]
+        }
+
+        # Request non-existent opus model, should fallback to opus variant
+        url, subaccount_name, _, model = load_balance_url(
+            "claude-3-opus", proxy_server.proxy_config
+        )
+
+        assert model == "anthropic--claude-4.5-opus"
+        assert subaccount_name == "account1"
+
+
+class TestResolveModelName:
+    """Tests for resolve_model_name function."""
+
+    def test_resolve_model_name_exact_match(self, reset_proxy_config):
+        """Test resolve_model_name returns exact match when model exists."""
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+
+        result = resolve_model_name("gpt-4", proxy_server.proxy_config)
+        assert result == "gpt-4"
+
+    def test_resolve_model_name_claude_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves Claude aliases to correct variant."""
+        # Setup with opus model
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4.5-opus": ["account1"]
+        }
+
+        # Test opus-4.5 alias resolves to opus fallback
+        result = resolve_model_name("opus-4.5", proxy_server.proxy_config)
+        assert result == "anthropic--claude-4.5-opus"
+
+    def test_resolve_model_name_claude_sonnet_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves sonnet aliases to sonnet fallback."""
+        # Setup with sonnet model
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4.6-sonnet": ["account1"]
+        }
+
+        # Test sonnet-4 alias resolves to sonnet fallback
+        result = resolve_model_name("sonnet-4", proxy_server.proxy_config)
+        assert result == "anthropic--claude-4.6-sonnet"
+
+        # Test claude-4.5 (no variant) defaults to sonnet fallback
+        result = resolve_model_name("claude-4.5", proxy_server.proxy_config)
+        assert result == "anthropic--claude-4.6-sonnet"
+
+    def test_resolve_model_name_claude_haiku_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves haiku aliases to haiku fallback."""
+        # Setup with haiku model
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4-haiku": ["account1"]
+        }
+
+        # Test haiku alias resolves to haiku fallback
+        result = resolve_model_name("haiku-4", proxy_server.proxy_config)
+        assert result == "anthropic--claude-4-haiku"
+
+    def test_resolve_model_name_gemini_fallback(self, reset_proxy_config):
+        """Test resolve_model_name resolves Gemini aliases to fallback."""
+        # Setup with only the fallback model
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "gemini-2.5-pro": ["account1"]
+        }
+
+        # Test gemini alias resolves to fallback
+        result = resolve_model_name("gemini-pro", proxy_server.proxy_config)
+        assert result == "gemini-2.5-pro"
+
+    def test_resolve_model_name_no_fallback_returns_none(self, reset_proxy_config):
+        """Test resolve_model_name returns None when no fallback available."""
+        proxy_server.proxy_config.model_to_subaccounts = {}
+
+        result = resolve_model_name("opus-4.5", proxy_server.proxy_config)
+        assert result is None
+
+
+# ============================================================================
+# FLASK ENDPOINT TESTS
+# ============================================================================
+
+
+class TestFlaskEndpoints:
+    """Tests for Flask API endpoints."""
+
+    def test_list_models_endpoint(self, flask_client, reset_proxy_config):
+        """Test /v1/models endpoint."""
+        # Setup models
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "gpt-4": ["account1"],
+            "claude-3.5-sonnet": ["account2"],
+        }
+
+        response = flask_client.get("/v1/models")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert len(data["data"]) == 2
+        model_ids = [m["id"] for m in data["data"]]
+        assert "gpt-4" in model_ids
+        assert "claude-3.5-sonnet" in model_ids
+
+    def test_event_logging_endpoint(self, flask_client):
+        """Test /api/event_logging/batch endpoint."""
+        response = flask_client.post(
+            "/api/event_logging/batch", json={"events": [{"type": "test"}]}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+
+    @patch("saip.auth.request_validator.RequestValidator.validate")
+    @patch("saip.proxy_server.requests.post")
+    def test_embeddings_endpoint(
+        self, mock_post, mock_validate, flask_client, reset_proxy_config
+    ):
+        """Test /v1/embeddings endpoint."""
+        mock_validate.return_value = True
+
+        # Setup mock response
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "object": "list",
+            "data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}],
+        }
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.text = (
+            '{"object": "list", "data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]}'
+        )
+        mock_post.return_value = mock_response
+
+        # Setup subaccount
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"text-embedding-3-large": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        subaccount.service_key = ServiceKey(
+            client_id="id",
+            client_secret="secret",
+            auth_url="https://auth.url",
+            api_url="https://api.url",
+            identity_zone_id="zone",
+        )
+        subaccount.token_info.token = "test-token"
+        subaccount.token_info.expiry = time.time() + 3600
+
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "text-embedding-3-large": ["account1"]
+        }
+
+        response = flask_client.post(
+            "/v1/embeddings",
+            json={"input": "Test text", "model": "text-embedding-3-large"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 200
+
+
+# ============================================================================
+# CONFIGURATION LOADING TESTS
+# ============================================================================
+
+
+class TestConfigLoading:
+    """Tests for configuration loading."""
+
+    def test_load_config_new_format(self, mocker, sample_config, tmp_path):
+        """Test loading new multi-subaccount config format."""
+        # Mock auto-discovery to avoid real API calls
+        mocker.patch("saip.config.config_parser.fetch_all_deployments", return_value=[])
+
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps(sample_config))
+
+        # Create service key files
+        for account in sample_config["subAccounts"].keys():
+            key_file = tmp_path / f"{account}_key.json"
+            key_file.write_text(
+                json.dumps(
+                    {
+                        "clientid": f"{account}-id",
+                        "clientsecret": f"{account}-secret",
+                        "url": "https://auth.url",
+                        "identityzoneid": "zone",
+                        "serviceurls": {
+                            "AI_API_URL": "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com"
+                        },
+                    }
+                )
+            )
+
+        # Update paths in config
+        for account, config in sample_config["subAccounts"].items():
+            config["service_key_json"] = str(tmp_path / f"{account}_key.json")
+
+        config_file.write_text(json.dumps(sample_config))
+
+        result = load_proxy_config(str(config_file))
+
+        assert isinstance(result, ProxyConfig)
+        assert len(result.subaccounts) == 2
+        assert "account1" in result.subaccounts
+        assert "account2" in result.subaccounts
+        assert result.port == 3001
+        assert result.host == "127.0.0.1"
+
+
+# ============================================================================
+# INTEGRATION TESTS
+# ============================================================================
+
+
+class TestIntegration:
+    """Integration tests for complete workflows."""
+
+    @patch("saip.auth.request_validator.RequestValidator.validate")
+    @patch("saip.proxy_server.requests.post")
+    def test_chat_completion_flow(
+        self, mock_post, mock_validate, flask_client, reset_proxy_config
+    ):
+        """Test complete chat completion flow."""
+        mock_validate.return_value = True
+
+        def mock_post_side_effect(*args, **kwargs):
+            url = args[0] if args else kwargs.get("url", "")
+            if "oauth/token" in url:
+                # Token response
+                mock_response = Mock()
+                mock_response.json.return_value = {
+                    "access_token": "test-token",
+                    "expires_in": 3600,
+                }
+                mock_response.raise_for_status = Mock()
+                return mock_response
+            else:
+                # Chat completion response
+                mock_response = Mock()
+                mock_response.json.return_value = {
+                    "id": "chatcmpl-123",
+                    "object": "chat.completion",
+                    "created": 1234567890,
+                    "model": "gpt-4",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "Hello!"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                }
+                mock_response.raise_for_status = Mock()
+                mock_response.status_code = 200
+                mock_response.headers = {}
+                mock_response.text = (
+                    '{"id": "chatcmpl-123", "object": "chat.completion"}'
+                )
+                mock_response.content = b'{"id": "chatcmpl-123"}'
+                return mock_response
+
+        mock_post.side_effect = mock_post_side_effect
+
+        # Setup subaccount
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"gpt-4": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        subaccount.service_key = ServiceKey(
+            client_id="id",
+            client_secret="secret",
+            auth_url="https://auth.url",
+            api_url="https://api.url",
+            identity_zone_id="zone",
+        )
+
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+
+        response = flask_client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": False,
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["choices"][0]["message"]["content"] == "Hello!"
+
+
+# ============================================================================
+# ADDITIONAL EDGE CASE TESTS
+# ============================================================================
+
+
+class TestConversionEdgeCases:
+    """Tests for edge cases in conversion functions."""
+
+    def test_convert_openai_to_claude_with_tools(self):
+        """Test OpenAI to Claude conversion with tools."""
+        openai_payload = {
+            "messages": [{"role": "user", "content": "Use a tool"}],
+            "max_tokens": 1000,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        }
+
+        result = convert_openai_to_claude(openai_payload)
+        assert "messages" in result
+        assert result["max_tokens"] == 1000
+
+    def test_convert_claude37_with_stop_sequences(self):
+        """Test Claude 3.7 conversion with stop sequences."""
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stop": ["STOP", "END"],
+        }
+
+        result = convert_openai_to_claude37(payload)
+        assert "inferenceConfig" in result
+        assert result["inferenceConfig"]["stopSequences"] == ["STOP", "END"]
+
+    def test_convert_claude37_with_single_stop_string(self):
+        """Test Claude 3.7 conversion with single stop string."""
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "stop": "STOP"}
+
+        result = convert_openai_to_claude37(payload)
+        assert result["inferenceConfig"]["stopSequences"] == ["STOP"]
+
+    def test_convert_openai_to_gemini_multiple_messages(self):
+        """Test Gemini conversion with multiple messages."""
+        payload = {
+            "messages": [
+                {"role": "user", "content": "First message"},
+                {"role": "assistant", "content": "Response"},
+                {"role": "user", "content": "Second message"},
+            ],
+            "temperature": 0.5,
+        }
+
+        result = convert_openai_to_gemini(payload)
+        assert isinstance(result["contents"], list)
+        assert len(result["contents"]) == 3
+        assert result["contents"][0]["role"] == "user"
+        assert result["contents"][1]["role"] == "model"
+
+    def test_convert_gemini_to_openai_max_tokens_stop(self):
+        """Test Gemini to OpenAI conversion with max_tokens stop."""
+        gemini_response = {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "Response"}], "role": "model"},
+                    "finishReason": "MAX_TOKENS",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+                "totalTokenCount": 150,
+            },
+        }
+
+        result = convert_gemini_to_openai(gemini_response)
+        assert result["choices"][0]["finish_reason"] == "length"
+        assert result["usage"]["total_tokens"] == 150
+
+
+class TestTokenManagementEdgeCases:
+    """Additional token management tests."""
+
+    @patch("saip.proxy_server.requests.post")
+    def test_fetch_token_http_error(
+        self, mock_post, reset_proxy_config, sample_service_key
+    ):
+        """Test token fetch with HTTP error."""
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        mock_error = requests.exceptions.HTTPError(response=mock_response)
+        mock_post.side_effect = mock_error
+
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={},
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+
+        with pytest.raises(ConnectionError, match="HTTP Error"):
+            fetch_token("test-account", proxy_server.proxy_config)
+
+    @patch("saip.proxy_server.requests.post")
+    def test_fetch_token_timeout(
+        self, mock_post, reset_proxy_config, sample_service_key
+    ):
+        """Test token fetch with timeout."""
+        mock_post.side_effect = requests.exceptions.Timeout("Connection timeout")
+
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={},
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+
+        with pytest.raises(TimeoutError, match="Timeout connecting"):
+            fetch_token("test-account", proxy_server.proxy_config)
+
+    @patch("saip.proxy_server.requests.post")
+    def test_fetch_token_empty_token(
+        self, mock_post, reset_proxy_config, sample_service_key
+    ):
+        """Test token fetch with empty token response."""
+        mock_response = Mock()
+        mock_response.json.return_value = {"access_token": ""}
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        subaccount = SubAccountConfig(
+            name="test-account",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={},
+        )
+        subaccount.service_key = ServiceKey(**sample_service_key)
+        proxy_server.proxy_config.subaccounts["test-account"] = subaccount
+
+        # The function wraps ValueError in RuntimeError
+        with pytest.raises(
+            RuntimeError, match="Unexpected error processing token response"
+        ):
+            fetch_token("test-account", proxy_server.proxy_config)
+
+    def test_verify_request_token_bearer_format(self, reset_proxy_config):
+        """Test token verification with Bearer format."""
+        proxy_server.proxy_config.secret_authentication_tokens = ["my-secret-token"]
+
+        mock_request = Mock()
+        mock_request.headers = {"Authorization": "Bearer my-secret-token"}
+
+        assert verify_request_token(mock_request, proxy_server.proxy_config) is True
+
+
+class TestLoadBalancingEdgeCases:
+    """Additional load balancing tests."""
+
+    def test_load_balance_url_multiple_urls_per_subaccount(self, reset_proxy_config):
+        """Test load balancing with multiple URLs per subaccount."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={
+                "gpt-4": ["https://url1.com", "https://url2.com", "https://url3.com"]
+            },
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+
+        reset_counters()
+
+        url1, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
+        assert url1 == "https://url1.com"
+
+        url2, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
+        assert url2 == "https://url2.com"
+
+        url3, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
+        assert url3 == "https://url3.com"
+
+        url4, _, _, _ = load_balance_url("gpt-4", proxy_server.proxy_config)
+        assert url4 == "https://url1.com"
+
+    def test_load_balance_url_gemini_fallback(self, reset_proxy_config):
+        """Test Gemini model fallback."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"gemini-2.5-pro": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "gemini-2.5-pro": ["account1"]
+        }
+
+        url, subaccount_name, _, model = load_balance_url(
+            "gemini-1.5-flash", proxy_server.proxy_config
+        )
+
+        assert model == "gemini-2.5-pro"
+        assert subaccount_name == "account1"
+
+    def test_load_balance_url_no_urls_configured(self, reset_proxy_config):
+        """Test load balancing when model has no URLs."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"gpt-4": []},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"gpt-4": ["account1"]}
+
+        with pytest.raises(ValueError, match="No URLs for model"):
+            load_balance_url("gpt-4", proxy_server.proxy_config)
+
+
+class TestFlaskEndpointsEdgeCases:
+    """Additional Flask endpoint tests."""
+
+    def test_list_models_empty(self, flask_client, reset_proxy_config):
+        """Test /v1/models with no models configured."""
+        proxy_server.proxy_config.model_to_subaccounts = {}
+
+        response = flask_client.get("/v1/models")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert len(data["data"]) == 0
+
+    @patch("saip.auth.request_validator.RequestValidator.validate")
+    def test_embeddings_missing_input(
+        self, mock_validate, flask_client, reset_proxy_config
+    ):
+        """Test embeddings endpoint with missing input."""
+        mock_validate.return_value = True
+
+        response = flask_client.post(
+            "/v1/embeddings",
+            json={"model": "text-embedding-3-large"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "error" in data
+
+    @patch("saip.auth.request_validator.RequestValidator.validate")
+    def test_embeddings_unauthorized(
+        self, mock_validate, flask_client, reset_proxy_config
+    ):
+        """Test embeddings endpoint without authorization."""
+        mock_validate.return_value = False
+
+        response = flask_client.post(
+            "/v1/embeddings", json={"input": "test", "model": "text-embedding-3-large"}
+        )
+
+        assert response.status_code == 401
+
+    def test_options_request(self, flask_client):
+        """Test OPTIONS request to chat completions."""
+        response = flask_client.options("/v1/chat/completions")
+
+        # FastAPI returns 405 for OPTIONS on a POST-only route (unlike Flask which returned 200)
+        assert response.status_code == 405
+
+
+class TestStreamingHelpersExtended:
+    """Additional tests for streaming helper functions."""
+
+    def test_convert_gemini_chunk_to_claude_delta(self):
+        """Test Gemini chunk to Claude delta conversion."""
+        gemini_chunk = {"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}
+
+        result = Converters.convert_gemini_chunk_to_claude_delta(gemini_chunk)
+
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "Hello"
+
+    def test_convert_openai_chunk_to_claude_delta(self):
+        """Test OpenAI chunk to Claude delta conversion."""
+        openai_chunk = {"choices": [{"delta": {"content": "World"}}]}
+
+        result = Converters.convert_openai_chunk_to_claude_delta(openai_chunk)
+
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "World"
+
+    def test_get_claude_stop_reason_from_gemini_chunk(self):
+        """Test extracting stop reason from Gemini chunk."""
+        gemini_chunk = {"candidates": [{"finishReason": "STOP"}]}
+
+        result = proxy_server.get_claude_stop_reason_from_gemini_chunk(gemini_chunk)
+        assert result == "end_turn"
+
+    def test_get_claude_stop_reason_from_openai_chunk(self):
+        """Test extracting stop reason from OpenAI chunk."""
+        openai_chunk = {"choices": [{"finish_reason": "length"}]}
+
+        result = proxy_server.get_claude_stop_reason_from_openai_chunk(openai_chunk)
+        assert result == "max_tokens"
+
+
+class TestRequestHandlers:
+    """Tests for request handler functions."""
+
+    def test_handle_claude_request_streaming(self, reset_proxy_config):
+        """Test Claude request handler with streaming."""
+        from saip.proxy_server import handle_claude_request
+
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={
+                "anthropic--claude-4.5-sonnet": ["https://url1.com"]
+            },
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4.5-sonnet": ["account1"]
+        }
+
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
+
+        url, modified_payload, subaccount_name = handle_claude_request(
+            payload, "anthropic--claude-4.5-sonnet"
+        )
+
+        assert "/converse-stream" in url
+        assert subaccount_name == "account1"
+        assert "messages" in modified_payload
+
+    def test_handle_gemini_request_non_streaming(self, reset_proxy_config):
+        """Test Gemini request handler without streaming."""
+        from saip.proxy_server import handle_gemini_request
+
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"gemini-2.5-pro": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "gemini-2.5-pro": ["account1"]
+        }
+
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": False}
+
+        url, modified_payload, subaccount_name = handle_gemini_request(
+            payload, "gemini-2.5-pro"
+        )
+
+        assert ":generateContent" in url
+        assert ":streamGenerateContent" not in url
+        assert subaccount_name == "account1"
+
+    def test_handle_default_request_o3_model(self, reset_proxy_config):
+        """Test default request handler with o3 model."""
+        from saip.proxy_server import handle_default_request
+
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"o3-mini": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"o3-mini": ["account1"]}
+
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.7,
+        }
+
+        url, modified_payload, subaccount_name = handle_default_request(
+            payload, "o3-mini"
+        )
+
+        assert "2024-12-01-preview" in url
+        assert "temperature" not in modified_payload
+
+
+class TestResponseConversionEdgeCases:
+    """Tests for response conversion edge cases."""
+
+    def test_convert_claude37_to_openai_with_cache_tokens(self):
+        """Test Claude 3.7 to OpenAI with cache tokens."""
+        claude37_response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Cached response"}],
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 80,
+                "cacheCreationInputTokens": 20,
+            },
+        }
+
+        result = convert_claude37_to_openai(claude37_response, "claude-3.7-sonnet")
+
+        assert "prompt_tokens_details" in result["usage"]
+        assert result["usage"]["prompt_tokens_details"]["cached_tokens"] == 80
+        assert result["usage"]["prompt_tokens_details"]["cache_creation_tokens"] == 20
+
+    def test_convert_gemini_to_openai_safety_stop(self):
+        """Test Gemini conversion with safety stop reason."""
+        gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Filtered content"}],
+                        "role": "model",
+                    },
+                    "finishReason": "SAFETY",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 5,
+                "totalTokenCount": 15,
+            },
+        }
+
+        result = convert_gemini_to_openai(gemini_response)
+        assert result["choices"][0]["finish_reason"] == "content_filter"
+
+
+# ============================================================================
+# EMBEDDING TESTS
+# ============================================================================
+
+
+class TestEmbeddingFunctions:
+    """Tests for embedding-related functions."""
+
+    def test_format_embedding_response(self):
+        """Test format_embedding_response function."""
+        response = {"embedding": [0.1, 0.2, 0.3, 0.4, 0.5]}
+
+        result = proxy_server.format_embedding_response(
+            response, "text-embedding-3-large"
+        )
+
+        assert result["object"] == "list"
+        assert result["data"][0]["object"] == "embedding"
+        assert result["data"][0]["embedding"] == [0.1, 0.2, 0.3, 0.4, 0.5]
+        assert result["data"][0]["index"] == 0
+        assert result["model"] == "text-embedding-3-large"
+        assert result["usage"]["prompt_tokens"] == 5
+        assert result["usage"]["total_tokens"] == 5
+
+
+# ============================================================================
+# CLAUDE CONVERSION TESTS
+# ============================================================================
+
+
+class TestClaudeRequestConversions:
+    """Tests for Claude request conversion functions."""
+
+    def test_convert_claude_request_to_openai(self):
+        """Test convert_claude_request_to_openai function."""
+        claude_payload = {
+            "system": "You are helpful",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "stream": True,
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+        }
+
+        result = Converters.convert_claude_request_to_openai(claude_payload)
+
+        assert result["model"] is None  # Not set in input
+        assert result["messages"][0]["role"] == "system"
+        assert result["messages"][0]["content"] == "You are helpful"
+        assert result["messages"][1]["role"] == "user"
+        assert result["messages"][1]["content"] == "Hello"
+        assert result["max_completion_tokens"] == 1000
+        assert result["temperature"] == 0.7
+        assert result["stream"] is True
+        assert len(result["tools"]) == 1
+        assert result["tools"][0]["function"]["name"] == "get_weather"
+
+    def test_convert_claude_request_to_gemini(self):
+        """Test convert_claude_request_to_gemini function."""
+        claude_payload = {
+            "system": "You are helpful",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+        }
+
+        result = Converters.convert_claude_request_to_gemini(claude_payload)
+
+        # The function returns contents as a list for multiple messages
+        assert isinstance(result["contents"], list)
+        assert (
+            len(result["contents"]) == 1
+        )  # System message is prepended to first user message
+        assert result["contents"][0]["role"] == "user"
+        assert "You are helpful" in result["contents"][0]["parts"]["text"]
+        assert "Hello" in result["contents"][0]["parts"]["text"]
+        assert result["generation_config"]["maxOutputTokens"] == 1000
+        assert result["generation_config"]["temperature"] == 0.7
+        assert len(result["tools"]) == 1
+
+
+# ============================================================================
+# RESPONSE CONVERSION TESTS
+# ============================================================================
+
+
+class TestResponseConversions:
+    """Tests for response conversion functions."""
+
+    def test_convert_claude_to_openai_standard(self):
+        """Test convert_claude_to_openai for standard Claude models."""
+        claude_response = {
+            "id": "msg_123",
+            "content": [{"text": "Hello world"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        }
+
+        result = Converters.convert_claude_to_openai(
+            claude_response, "claude-3.5-sonnet"
+        )
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Hello world"
+        assert result["choices"][0]["finish_reason"] == "end_turn"
+        assert result["usage"]["prompt_tokens"] == 10
+        assert result["usage"]["completion_tokens"] == 20
+        assert result["usage"]["total_tokens"] == 30
+
+    def test_convert_claude37_to_openai(self):
+        """Test convert_claude37_to_openai function."""
+        claude37_response = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "Hello from Claude 3.7"}],
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 15, "outputTokens": 25, "totalTokens": 40},
+        }
+
+        result = Converters.convert_claude37_to_openai(
+            claude37_response, "claude-3.7-sonnet"
+        )
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Hello from Claude 3.7"
+        assert result["choices"][0]["finish_reason"] == "stop"
+        assert result["usage"]["prompt_tokens"] == 15
+        assert result["usage"]["completion_tokens"] == 25
+        assert result["usage"]["total_tokens"] == 40
+
+    def test_convert_gemini_to_openai(self):
+        """Test convert_gemini_to_openai function."""
+        gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Hello from Gemini"}],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 10,
+                "totalTokenCount": 15,
+            },
+        }
+
+        result = Converters.convert_gemini_to_openai(gemini_response, "gemini-pro")
+
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Hello from Gemini"
+        assert result["choices"][0]["finish_reason"] == "stop"
+        assert result["usage"]["prompt_tokens"] == 5
+        assert result["usage"]["completion_tokens"] == 10
+        assert result["usage"]["total_tokens"] == 15
+
+    def test_convert_gemini_response_to_claude(self):
+        """Test convert_gemini_response_to_claude function."""
+        gemini_response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Hello from Gemini"}],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 10},
+        }
+
+        result = Converters.convert_gemini_response_to_claude(
+            gemini_response, "gemini-pro"
+        )
+
+        assert result["id"].startswith("msg_gemini_")
+        assert result["type"] == "message"
+        assert result["role"] == "assistant"
+        assert result["content"][0]["text"] == "Hello from Gemini"
+        assert result["stop_reason"] == "end_turn"
+        assert result["usage"]["input_tokens"] == 5
+        assert result["usage"]["output_tokens"] == 10
+
+    def test_convert_openai_response_to_claude(self):
+        """Test convert_openai_response_to_claude function."""
+        openai_response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Hello from OpenAI",
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": '{"location": "NYC"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+        }
+
+        result = Converters.convert_openai_response_to_claude(openai_response)
+
+        assert result["id"].startswith("msg_openai_")
+        assert result["type"] == "message"
+        assert result["role"] == "assistant"
+        assert result["content"][0]["text"] == "Hello from OpenAI"
+        assert result["content"][1]["type"] == "tool_use"
+        assert result["content"][1]["name"] == "get_weather"
+        assert result["usage"]["input_tokens"] == 10
+        assert result["usage"]["output_tokens"] == 20
+
+
+# ============================================================================
+# STREAMING HELPER TESTS
+# ============================================================================
+
+
+class TestStreamingHelpers:
+    """Tests for streaming helper functions."""
+
+    def test_convert_gemini_chunk_to_claude_delta(self):
+        """Test convert_gemini_chunk_to_claude_delta function."""
+        gemini_chunk = {"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}
+
+        result = Converters.convert_gemini_chunk_to_claude_delta(gemini_chunk)
+
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "Hello"
+
+    def test_convert_openai_chunk_to_claude_delta(self):
+        """Test convert_openai_chunk_to_claude_delta function."""
+        openai_chunk = {"choices": [{"delta": {"content": "World"}}]}
+
+        result = Converters.convert_openai_chunk_to_claude_delta(openai_chunk)
+
+        assert result is not None
+        assert result["type"] == "content_block_delta"
+        assert result["delta"]["text"] == "World"
+
+    def test_get_claude_stop_reason_from_gemini_chunk(self):
+        """Test get_claude_stop_reason_from_gemini_chunk function."""
+        gemini_chunk = {"candidates": [{"finishReason": "STOP"}]}
+
+        result = proxy_server.get_claude_stop_reason_from_gemini_chunk(gemini_chunk)
+        assert result == "end_turn"
+
+    def test_get_claude_stop_reason_from_openai_chunk(self):
+        """Test get_claude_stop_reason_from_openai_chunk function."""
+        openai_chunk = {"choices": [{"finish_reason": "stop"}]}
+
+        result = proxy_server.get_claude_stop_reason_from_openai_chunk(openai_chunk)
+        assert result == "end_turn"
+
+
+# ============================================================================
+# REQUEST HANDLER TESTS (EXTENDED)
+# ============================================================================
+
+
+class TestRequestHandlersExtended:
+    """Additional tests for request handler functions (streaming variants)."""
+
+    def test_handle_claude_request_streaming(self, reset_proxy_config):
+        """Test handle_claude_request with streaming."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={
+                "anthropic--claude-4.5-sonnet": ["https://url1.com"]
+            },
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "anthropic--claude-4.5-sonnet": ["account1"]
+        }
+
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
+
+        url, modified_payload, subaccount_name = proxy_server.handle_claude_request(
+            payload, "anthropic--claude-4.5-sonnet"
+        )
+
+        assert "/converse-stream" in url
+        assert subaccount_name == "account1"
+        assert "messages" in modified_payload
+
+    def test_handle_gemini_request_streaming(self, reset_proxy_config):
+        """Test handle_gemini_request with streaming."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"gemini-2.5-pro": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {
+            "gemini-2.5-pro": ["account1"]
+        }
+
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
+
+        url, modified_payload, subaccount_name = proxy_server.handle_gemini_request(
+            payload, "gemini-2.5-pro"
+        )
+
+        assert ":streamGenerateContent" in url
+        assert subaccount_name == "account1"
+        assert "contents" in modified_payload
+
+    def test_handle_default_request_o3_model(self, reset_proxy_config):
+        """Test handle_default_request with o3 model."""
+        subaccount = SubAccountConfig(
+            name="account1",
+            resource_group="default",
+            service_key_json="key.json",
+            model_to_deployment_urls={"o3-mini": ["https://url1.com"]},
+        )
+        subaccount.model_to_deployment_urls = subaccount.model_to_deployment_urls
+        proxy_server.proxy_config.subaccounts["account1"] = subaccount
+        proxy_server.proxy_config.model_to_subaccounts = {"o3-mini": ["account1"]}
+
+        payload = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.7,
+        }
+
+        url, modified_payload, subaccount_name = proxy_server.handle_default_request(
+            payload, "o3-mini"
+        )
+
+        assert "2024-12-01-preview" in url
+        assert "temperature" not in modified_payload
+        assert subaccount_name == "account1"
+
+
+# ============================================================================
+# RUN TESTS
+# ============================================================================
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])

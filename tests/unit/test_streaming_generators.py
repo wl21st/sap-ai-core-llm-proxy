@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import Request
 import httpx
 
-from handlers.streaming_generators import generate_streaming_response
+from saip.handlers.streaming_generators import generate_streaming_response
 
 
 class TestGenerateStreamingResponseLifecycle:
@@ -397,8 +397,7 @@ class TestTokenUsageTracking:
             mock_client_class.return_value = mock_client
 
             chunks = []
-            with patch(
-                "handlers.streaming_generators.token_usage_logger"
+            with patch("saip.handlers.streaming_generators.token_usage_logger"
             ) as mock_logger:
                 async for chunk in generate_streaming_response(
                     request=mock_request,

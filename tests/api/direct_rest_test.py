@@ -162,7 +162,7 @@ def test_model(
             return False
 
     except requests.exceptions.Timeout:
-        print(f"✗ Request timeout")
+        print("✗ Request timeout")
         return False
     except requests.exceptions.RequestException as e:
         print(f"✗ Request failed: {e}")
@@ -221,8 +221,8 @@ def main():
     else:
         models_to_test = all_models
 
-    print(f"SAP AI Core LLM Proxy Direct REST API Test")
-    print(f"==========================================")
+    print("SAP AI Core LLM Proxy Direct REST API Test")
+    print("==========================================")
     print(f"Config: {args.config}")
     print(f"Subaccount: {subaccount_name}")
     print(f"Models to test: {', '.join(models_to_test)}")

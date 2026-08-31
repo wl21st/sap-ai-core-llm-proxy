@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from routers.embeddings import handle_embedding_request
+from saip.routers.embeddings import handle_embedding_request
 
 
 @pytest.mark.skip(reason="Tests require complex mocking of internal implementation")
@@ -40,7 +40,7 @@ class TestEmbeddingsRouterRequestHandling:
             "model": "text-embedding-3-small",
         }
 
-        with patch("routers.embeddings.run_in_threadpool", return_value=backend_result):
+        with patch("saip.routers.embeddings.run_in_threadpool", return_value=backend_result):
             response = await handle_embedding_request(mock_request)
 
             assert isinstance(response, JSONResponse)
@@ -92,8 +92,7 @@ class TestEmbeddingsRouterRequestHandling:
         backend_result.status_code = 429
         backend_result.error_message = "Rate limit exceeded"
 
-        with patch(
-            "routers.embeddings.run_in_threadpool",
+        with patch("saip.routers.embeddings.run_in_threadpool",
             return_value=backend_result,
         ):
             response = await handle_embedding_request(mock_request)
@@ -130,8 +129,7 @@ class TestThreadPoolHandling:
         backend_result.success = True
         backend_result.response_data = {"data": []}
 
-        with patch(
-            "routers.embeddings.run_in_threadpool",
+        with patch("saip.routers.embeddings.run_in_threadpool",
             return_value=backend_result,
         ) as mock_threadpool:
             await handle_embedding_request(mock_request)

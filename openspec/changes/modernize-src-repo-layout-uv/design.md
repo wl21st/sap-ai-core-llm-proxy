@@ -5,10 +5,10 @@ The current repository layout has evolved from a single script to a modular Fast
 ## Goals / Non-Goals
 
 **Goals:**
-- Move all core package code into `src/sap_ai_proxy/`.
+- Move all core package code into `src/saip/`.
 - Switch build backend in `pyproject.toml` to `hatchling`.
 - Move diagnostic and operational scripts to `scripts/`.
-- Reorganize orphaned test files in `tests/` into `tests/unit/` and ensure all 770+ tests pass with `sap_ai_proxy` imports.
+- Reorganize orphaned test files in `tests/` into `tests/unit/` and ensure all 770+ tests pass with `saip` imports.
 - Consolidate test and coverage settings into `pyproject.toml` and remove `pytest.ini`.
 - Modernize `Makefile` with clean `uv`-native targets without redundant syncing.
 
@@ -18,9 +18,9 @@ The current repository layout has evolved from a single script to a modular Fast
 
 ## Decisions
 
-### 1. Package Namespace: `sap_ai_proxy`
-- **Choice**: Package code is structured under `src/sap_ai_proxy/`.
-- **Rationale**: `sap_ai_proxy` is concise, clear, and avoids verbose naming while preventing root namespace collisions.
+### 1. Package Namespace: `saip`
+- **Choice**: Package code is structured under `src/saip/`.
+- **Rationale**: `saip` is concise, clear, and avoids verbose naming while preventing root namespace collisions.
 - **Alternatives Considered**: `sap_ai_core_llm_proxy` (verbose, longer imports).
 
 ### 2. Build Backend: `hatchling`
@@ -30,14 +30,14 @@ The current repository layout has evolved from a single script to a modular Fast
   requires = ["hatchling"]
   build-backend = "hatchling.build"
   ```
-- **Rationale**: `hatchling` is the default modern standard recommended by Astral for `uv`. It auto-discovers `src/sap_ai_proxy` with zero manual package list maintenance.
+- **Rationale**: `hatchling` is the default modern standard recommended by Astral for `uv`. It auto-discovers `src/saip` with zero manual package list maintenance.
 - **Alternatives Considered**: `setuptools` with `[tool.setuptools.packages.find]` (functional, but legacy compared to modern Hatchling standard).
 
 ### 3. Source Directory Structure
 - The directory tree will be:
   ```
   src/
-  └── sap_ai_proxy/
+  └── saip/
       ├── __init__.py
       ├── __main__.py
       ├── cli.py
@@ -63,7 +63,7 @@ The current repository layout has evolved from a single script to a modular Fast
 ### 5. Test Organization & pyproject.toml Consolidation
 - Reorganize test files into `tests/unit/`, `tests/integration/`, `tests/api/`.
 - Migrate all `pytest.ini` options into `[tool.pytest.ini_options]`, `[tool.coverage.run]`, and `[tool.coverage.report]` in `pyproject.toml`.
-- Update test imports: replace `from auth import ...` with `from sap_ai_proxy.auth import ...`.
+- Update test imports: replace `from auth import ...` with `from saip.auth import ...`.
 
 ### 6. Makefile Modernization
 - Remove repetitive `$(UV) sync --group dev &&` from test commands. `uv run` handles environment checks automatically.
@@ -72,5 +72,5 @@ The current repository layout has evolved from a single script to a modular Fast
 ## Risks / Trade-offs
 
 - **[Risk: Broken imports in tests]** → **Mitigation**: Update imports across all test files systematically and run `uv run pytest` to verify 100% test pass rate.
-- **[Risk: Broken PyInstaller binary builds]** → **Mitigation**: Update `Makefile` and `proxy.spec` entry point references to `src/sap_ai_proxy/main.py`.
-- **[Risk: Backward compatibility during transition]** → **Mitigation**: `src/sap_ai_proxy/proxy_server.py` and `__main__.py` will provide seamless entry points for legacy invocations.
+- **[Risk: Broken PyInstaller binary builds]** → **Mitigation**: Update `Makefile` and `proxy.spec` entry point references to `src/saip/main.py`.
+- **[Risk: Backward compatibility during transition]** → **Mitigation**: `src/saip/proxy_server.py` and `__main__.py` will provide seamless entry points for legacy invocations.
